@@ -461,7 +461,8 @@ export default function Home() {
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <h1>glypher</h1>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/GL_Logo.svg" alt="glypher" className={styles.logo} />
         <p>
           {topMode === "grid" && "Draw directly into a letter's cell — no separate tagging step."}
           {topMode === "write" && viewMode === "draw" && "Write with a stylus, mouse, or finger. Strokes persist across reloads."}
