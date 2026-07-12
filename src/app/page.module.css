@@ -61,14 +61,6 @@
   flex-shrink: 0;
 }
 
-.header p {
-  flex: 1;
-  min-width: 200px;
-  color: var(--color-muted);
-  font-size: 13px;
-  margin: 0;
-}
-
 .canvasWrap {
   position: relative;
   flex: 1;

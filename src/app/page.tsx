@@ -591,12 +591,6 @@ export default function Home() {
           </button>
         </div>
 
-        <p>
-          {topMode === "grid" && viewMode !== "export" && "Draw directly into a letter's cell — no separate tagging step."}
-          {topMode === "write" && viewMode === "draw" && "Write with a stylus, mouse, or finger. Strokes persist across reloads."}
-          {topMode === "write" && viewMode === "review" && "Drag to lasso strokes, then give the selection a glyph name."}
-          {viewMode === "export" && "The compiled document — every tagged glyph resolved to real contours."}
-        </p>
       </header>
 
       <div className={styles.toolbar}>
