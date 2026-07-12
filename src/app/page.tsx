@@ -591,6 +591,30 @@ export default function Home() {
           </button>
         </div>
 
+        <div className={styles.undoRedo}>
+          <button
+            type="button"
+            className={`${styles.clearBtn} ${styles.iconOnlyBtn}`}
+            onClick={handleUndo}
+            disabled={strokeCount === 0}
+            aria-label="Undo"
+          >
+            <Undo2 size={16} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            className={`${styles.clearBtn} ${styles.iconOnlyBtn}`}
+            onClick={handleRedo}
+            disabled={redoCount === 0}
+            aria-label="Redo"
+          >
+            <Redo2 size={16} strokeWidth={2} />
+          </button>
+        </div>
+
+        <button className={styles.clearBtn} onClick={handleClear} type="button">
+          Clear all
+        </button>
       </header>
 
       <div className={styles.toolbar}>
@@ -762,26 +786,6 @@ export default function Home() {
               )}
             </div>
 
-            <div className={styles.undoRedo}>
-              <button
-                type="button"
-                className={`${styles.clearBtn} ${styles.iconBtn}`}
-                onClick={handleUndo}
-                disabled={strokeCount === 0}
-              >
-                <Undo2 size={14} strokeWidth={2} />
-                Undo
-              </button>
-              <button
-                type="button"
-                className={`${styles.clearBtn} ${styles.iconBtn}`}
-                onClick={handleRedo}
-                disabled={redoCount === 0}
-              >
-                <Redo2 size={14} strokeWidth={2} />
-                Redo
-              </button>
-            </div>
           </>
         )}
 
@@ -899,10 +903,6 @@ export default function Home() {
             </button>
           </div>
         )}
-
-        <button className={styles.clearBtn} onClick={handleClear} type="button">
-          Clear all
-        </button>
       </div>
 
       {viewMode === "export" && (

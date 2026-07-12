@@ -175,10 +175,11 @@
   flex-shrink: 0;
 }
 
-.iconBtn {
+.iconOnlyBtn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  padding: var(--sp-sm);
 }
 
 .sliders {
