@@ -1,35 +1,42 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
+import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokePoint } from "@/lib/strokes";
 
-type PointerSample = {
-  x: number;
-  y: number;
-  pressure: number;
+const STROKE_OPTIONS = {
+  size: 20,
+  thinning: 0.7,
+  smoothing: 0.5,
+  streamline: 0.5,
 };
 
-const MIN_WIDTH = 1.5;
-const MAX_WIDTH = 18;
+function outlineFor(points: StrokePoint[]): [number, number][] {
+  return getStroke(points, STROKE_OPTIONS) as [number, number][];
+}
 
-function widthForPressure(pressure: number) {
-  // Pointer Events spec: mouse reports 0.5 while a button is held, 0 otherwise —
-  // treat anything at or above that as "no real pressure data" and fall back to a mid-weight line.
-  const p = pressure > 0 ? pressure : 0.5;
-  return MIN_WIDTH + p * (MAX_WIDTH - MIN_WIDTH);
+function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][]) {
+  if (outline.length < 3) return;
+  ctx.beginPath();
+  ctx.moveTo(outline[0][0], outline[0][1]);
+  for (let i = 1; i < outline.length; i++) ctx.lineTo(outline[i][0], outline[i][1]);
+  ctx.closePath();
+  ctx.fillStyle = "#1f1934";
+  ctx.fill();
 }
 
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
-  const lastPointRef = useRef<PointerSample | null>(null);
 
-  const [hud, setHud] = useState({
-    pointerType: "—",
-    pressure: 0,
-    x: 0,
-    y: 0,
-  });
+  // Completed strokes + their cached outlines (recomputed only when a stroke is added, not on every move).
+  const completedRef = useRef<Stroke[]>([]);
+  const outlinesRef = useRef<[number, number][][]>([]);
+  const currentPointsRef = useRef<StrokePoint[]>([]);
+
+  const [hud, setHud] = useState({ pointerType: "—", pressure: 0, x: 0, y: 0 });
+  const [strokeCount, setStrokeCount] = useState(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -37,54 +44,70 @@ export default function Home() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    function redraw() {
+      if (!canvas || !ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (const outline of outlinesRef.current) fillOutline(ctx, outline);
+      if (currentPointsRef.current.length > 0) {
+        fillOutline(ctx, outlineFor(currentPointsRef.current));
+      }
+    }
+
     function resize() {
       if (!canvas) return;
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
       canvas.width = rect.width * dpr;
       canvas.height = rect.height * dpr;
-      const context = canvas.getContext("2d");
-      context?.scale(dpr, dpr);
+      canvas.getContext("2d")?.scale(dpr, dpr);
+      redraw();
     }
+
+    // Restore persisted strokes.
+    completedRef.current = loadStrokes();
+    outlinesRef.current = completedRef.current.map((s) => outlineFor(s.points));
+    setStrokeCount(completedRef.current.length);
+
     resize();
     window.addEventListener("resize", resize);
 
-    function pointFromEvent(e: PointerEvent): PointerSample {
+    function pointFromEvent(e: PointerEvent): StrokePoint {
       const rect = canvas!.getBoundingClientRect();
-      return { x: e.clientX - rect.left, y: e.clientY - rect.top, pressure: e.pressure };
-    }
-
-    function drawSegment(from: PointerSample, to: PointerSample) {
-      ctx!.beginPath();
-      ctx!.moveTo(from.x, from.y);
-      ctx!.lineTo(to.x, to.y);
-      ctx!.lineCap = "round";
-      ctx!.lineJoin = "round";
-      ctx!.lineWidth = widthForPressure(to.pressure);
-      ctx!.strokeStyle = "#1f1934";
-      ctx!.stroke();
+      return [e.clientX - rect.left, e.clientY - rect.top, e.pressure > 0 ? e.pressure : 0.5];
     }
 
     function onPointerDown(e: PointerEvent) {
       canvas!.setPointerCapture(e.pointerId);
       drawingRef.current = true;
-      const p = pointFromEvent(e);
-      lastPointRef.current = p;
-      setHud({ pointerType: e.pointerType, pressure: e.pressure, x: Math.round(p.x), y: Math.round(p.y) });
+      currentPointsRef.current = [pointFromEvent(e)];
+      const [x, y] = currentPointsRef.current[0];
+      setHud({ pointerType: e.pointerType, pressure: e.pressure, x: Math.round(x), y: Math.round(y) });
     }
 
     function onPointerMove(e: PointerEvent) {
       const p = pointFromEvent(e);
-      setHud({ pointerType: e.pointerType, pressure: e.pressure, x: Math.round(p.x), y: Math.round(p.y) });
-      if (!drawingRef.current || !lastPointRef.current) return;
-      drawSegment(lastPointRef.current, p);
-      lastPointRef.current = p;
+      setHud({ pointerType: e.pointerType, pressure: e.pressure, x: Math.round(p[0]), y: Math.round(p[1]) });
+      if (!drawingRef.current) return;
+      currentPointsRef.current.push(p);
+      redraw();
     }
 
     function onPointerUp(e: PointerEvent) {
+      if (drawingRef.current && currentPointsRef.current.length > 1) {
+        const stroke: Stroke = {
+          id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+          points: currentPointsRef.current,
+          createdAt: Date.now(),
+        };
+        completedRef.current = [...completedRef.current, stroke];
+        outlinesRef.current = [...outlinesRef.current, outlineFor(stroke.points)];
+        saveStrokes(completedRef.current);
+        setStrokeCount(completedRef.current.length);
+      }
       drawingRef.current = false;
-      lastPointRef.current = null;
+      currentPointsRef.current = [];
       canvas!.releasePointerCapture(e.pointerId);
+      redraw();
     }
 
     canvas.addEventListener("pointerdown", onPointerDown);
@@ -106,13 +129,17 @@ export default function Home() {
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    completedRef.current = [];
+    outlinesRef.current = [];
+    clearStrokes();
+    setStrokeCount(0);
   }
 
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <h1>glypher — phase 0 spike</h1>
-        <p>Write with a stylus, mouse, or finger. Watch pointerType and pressure below.</p>
+        <h1>glypher — phase 1 capture</h1>
+        <p>Write with a stylus, mouse, or finger. Strokes persist across reloads.</p>
       </header>
       <div className={styles.canvasWrap}>
         <canvas ref={canvasRef} className={styles.canvas} />
@@ -123,6 +150,8 @@ export default function Home() {
           <dd>{hud.pressure.toFixed(2)}</dd>
           <dt>x, y</dt>
           <dd>{hud.x}, {hud.y}</dd>
+          <dt>strokes saved</dt>
+          <dd>{strokeCount}</dd>
         </dl>
         <button className={styles.clearBtn} onClick={handleClear} type="button">
           Clear
