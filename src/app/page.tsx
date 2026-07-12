@@ -377,6 +377,26 @@ export default function Home() {
     setGlyphs((gs) => gs.filter((g) => g.id !== id));
   }
 
+  function handleDeleteSelection() {
+    if (selectedIds.length === 0) return;
+    const idsToDelete = new Set(selectedIds);
+    const survivors = completedRef.current
+      .map((stroke, i) => ({ stroke, outline: outlinesRef.current[i] }))
+      .filter(({ stroke }) => !idsToDelete.has(stroke.id));
+    completedRef.current = survivors.map((s) => s.stroke);
+    outlinesRef.current = survivors.map((s) => s.outline);
+    saveStrokes(completedRef.current);
+    setStrokeCount(completedRef.current.length);
+    // Strokes that got deleted no longer belong to any glyph; a glyph left
+    // with zero strokes doesn't mean anything, so drop it too.
+    setGlyphs((gs) =>
+      gs
+        .map((g) => ({ ...g, strokeIds: g.strokeIds.filter((id) => !idsToDelete.has(id)) }))
+        .filter((g) => g.strokeIds.length > 0)
+    );
+    setSelectedIds([]);
+  }
+
   function handleCopyJson() {
     navigator.clipboard.writeText(exportJson).then(() => {
       setCopyStatus("copied!");
@@ -616,6 +636,14 @@ export default function Home() {
               disabled={selectedIds.length === 0}
             >
               Clear selection
+            </button>
+            <button
+              type="button"
+              className={`${styles.clearBtn} ${styles.dangerBtn}`}
+              onClick={handleDeleteSelection}
+              disabled={selectedIds.length === 0}
+            >
+              Delete selection
             </button>
           </div>
         ) : (

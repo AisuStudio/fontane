@@ -78,6 +78,16 @@
   background: var(--color-lemon);
 }
 
+.dangerBtn {
+  border-color: #c0334d;
+  color: #c0334d;
+}
+
+.dangerBtn:hover:not(:disabled) {
+  background: #c0334d;
+  color: var(--color-vanilla);
+}
+
 .clearBtn:disabled {
   opacity: .4;
   cursor: not-allowed;
