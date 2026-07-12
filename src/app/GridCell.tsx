@@ -170,7 +170,14 @@ export default function GridCell({
       redraw();
     }
     resize();
-    window.addEventListener("resize", resize);
+    // The cell's box can change size from a CSS layout shift (e.g. the "Cell
+    // size" slider changing grid-template-columns) with no window resize
+    // event at all — a plain window "resize" listener misses that entirely,
+    // leaving canvas.width/height (and therefore every guide/bearing
+    // position) stuck at whatever they were on mount. ResizeObserver catches
+    // any layout-driven size change to the canvas itself.
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(canvas);
 
     function pointFromEvent(e: PointerEvent): StrokePoint {
       const rect = canvas!.getBoundingClientRect();
@@ -251,7 +258,7 @@ export default function GridCell({
     canvas.addEventListener("pointercancel", onPointerUp);
 
     return () => {
-      window.removeEventListener("resize", resize);
+      resizeObserver.disconnect();
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
