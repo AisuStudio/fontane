@@ -84,6 +84,9 @@ export default function Home() {
   const currentPointsRef = useRef<StrokePoint[]>([]);
   const lassoRef = useRef<[number, number][]>([]);
   const redrawRef = useRef<() => void>(() => {});
+  const redoStackRef = useRef<Stroke[]>([]);
+  const undoRef = useRef<() => void>(() => {});
+  const redoRef = useRef<() => void>(() => {});
 
   const [viewMode, setViewMode] = useState<ViewMode>("draw");
   const viewModeRef = useRef(viewMode);
@@ -107,6 +110,7 @@ export default function Home() {
 
   const [hud, setHud] = useState({ pointerType: "—", pressure: 0, x: 0, y: 0 });
   const [strokeCount, setStrokeCount] = useState(0);
+  const [redoCount, setRedoCount] = useState(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -195,8 +199,10 @@ export default function Home() {
           };
           completedRef.current = [...completedRef.current, stroke];
           outlinesRef.current = [...outlinesRef.current, outlineFor(stroke.points, settingsRef.current)];
+          redoStackRef.current = []; // a new stroke invalidates whatever redo history existed
           saveStrokes(completedRef.current);
           setStrokeCount(completedRef.current.length);
+          setRedoCount(0);
         }
         currentPointsRef.current = [];
       } else {
@@ -253,6 +259,44 @@ export default function Home() {
     redrawRef.current();
   }, [glyphs]);
 
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
+      if (viewModeRef.current !== "draw") return;
+      e.preventDefault();
+      if (e.shiftKey) redoRef.current();
+      else undoRef.current();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  function handleUndo() {
+    if (completedRef.current.length === 0) return;
+    const last = completedRef.current[completedRef.current.length - 1];
+    completedRef.current = completedRef.current.slice(0, -1);
+    outlinesRef.current = outlinesRef.current.slice(0, -1);
+    redoStackRef.current = [...redoStackRef.current, last];
+    saveStrokes(completedRef.current);
+    setStrokeCount(completedRef.current.length);
+    setRedoCount(redoStackRef.current.length);
+    redrawRef.current();
+  }
+  undoRef.current = handleUndo;
+
+  function handleRedo() {
+    if (redoStackRef.current.length === 0) return;
+    const stroke = redoStackRef.current[redoStackRef.current.length - 1];
+    redoStackRef.current = redoStackRef.current.slice(0, -1);
+    completedRef.current = [...completedRef.current, stroke];
+    outlinesRef.current = [...outlinesRef.current, outlineFor(stroke.points, settingsRef.current)];
+    saveStrokes(completedRef.current);
+    setStrokeCount(completedRef.current.length);
+    setRedoCount(redoStackRef.current.length);
+    redrawRef.current();
+  }
+  redoRef.current = handleRedo;
+
   function handleClear() {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
@@ -260,8 +304,10 @@ export default function Home() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     completedRef.current = [];
     outlinesRef.current = [];
+    redoStackRef.current = [];
     clearStrokes();
     setStrokeCount(0);
+    setRedoCount(0);
     setGlyphs([]);
     setSelectedIds([]);
   }
@@ -405,6 +451,15 @@ export default function Home() {
                   </label>
                 </>
               )}
+            </div>
+
+            <div className={styles.undoRedo}>
+              <button type="button" className={styles.clearBtn} onClick={handleUndo} disabled={strokeCount === 0}>
+                Undo
+              </button>
+              <button type="button" className={styles.clearBtn} onClick={handleRedo} disabled={redoCount === 0}>
+                Redo
+              </button>
             </div>
           </>
         ) : (
