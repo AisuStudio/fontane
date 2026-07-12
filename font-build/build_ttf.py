@@ -64,20 +64,12 @@ def bounds_of(contours):
     return min(xs), max(xs), min(ys), max(ys)
 
 
-def feed_pen(commands, pen, xmin, baseline_y, scale):
+def feed_pen(commands, pen, tx, ty):
     """Canvas space is x-right/y-down with no baseline; font space is x-right/
-    y-up with y=0 as the baseline. Maps the glyph's own drawn bbox to sit on
-    the baseline (bbox bottom -> y=0) at TARGET_GLYPH_HEIGHT tall, left edge
-    at SIDE_BEARING. Applied uniformly to on-curve and control points alike,
-    which is safe - an affine transform commutes with quadratic Bezier
-    evaluation."""
-
-    def tx(x):
-        return (x - xmin) * scale + SIDE_BEARING
-
-    def ty(y):
-        return (baseline_y - y) * scale
-
+    y-up with y=0 as the baseline. tx/ty carry the actual mapping - either
+    guide-based (guide_transform) or the bbox fallback (bbox_transform).
+    Applied uniformly to on-curve and control points alike, which is safe -
+    an affine transform commutes with quadratic Bezier evaluation."""
     started = False
     for c in commands:
         if c[0] == "M":
@@ -87,6 +79,54 @@ def feed_pen(commands, pen, xmin, baseline_y, scale):
             pen.qCurveTo((tx(c[1]), ty(c[2])), (tx(c[3]), ty(c[4])))
         elif started:
             pen.closePath()
+
+
+def guide_transform(entry, doc_metrics):
+    """Grid View glyphs carry a real calibration: the document's shared
+    baseline/ascender fractions plus this glyph's own draggable left/right
+    bearings, both resolved against the cell's pixel size at draw time
+    (cellWidth/cellHeight - captured once so a later window resize can't
+    shift already-drawn glyphs relative to each other)."""
+    if doc_metrics is None:
+        return None
+    left_bearing = entry.get("leftBearing")
+    right_bearing = entry.get("rightBearing")
+    cell_width = entry.get("cellWidth")
+    cell_height = entry.get("cellHeight")
+    if left_bearing is None or right_bearing is None or not cell_width or not cell_height:
+        return None
+
+    baseline_px = doc_metrics["baseline"] * cell_height
+    ascender_px = doc_metrics["ascender"] * cell_height
+    left_px = left_bearing * cell_width
+    right_px = right_bearing * cell_width
+
+    span = baseline_px - ascender_px
+    scale = ASCENT / span if span > 0 else 1
+
+    return (
+        lambda x: (x - left_px) * scale,
+        lambda y: (baseline_px - y) * scale,
+        max(round((right_px - left_px) * scale), 1),
+    )
+
+
+def bbox_transform(contours):
+    """Fallback for glyphs with no Grid View guide data (e.g. tagged via
+    Write mode's lasso-select): rescale the glyph's own drawn bounding box to
+    a fixed cap-height-ish target. No cross-glyph consistency, but nothing
+    comes out microscopic, oversized, or upside-down either."""
+    bounds = bounds_of(contours)
+    if not bounds:
+        return None
+    xmin, xmax, ymin, ymax = bounds
+    height = ymax - ymin
+    scale = TARGET_GLYPH_HEIGHT / height if height > 0 else 1
+    return (
+        lambda x: (x - xmin) * scale + SIDE_BEARING,
+        lambda y: (ymax - y) * scale,
+        max(round((xmax - xmin) * scale + 2 * SIDE_BEARING), 1),
+    )
 
 
 def glyph_name_for(entry):
@@ -102,6 +142,7 @@ def build_font(doc, family_name="Glypher Sketch"):
     cmap = {}
     glyphs = {}
     metrics = {}
+    doc_metrics = doc.get("metrics")
 
     notdef_pen = TTGlyphPen(None)
     glyphs[".notdef"] = notdef_pen.glyph()
@@ -111,24 +152,21 @@ def build_font(doc, family_name="Glypher Sketch"):
         name = glyph_name_for(entry)
         pen = TTGlyphPen(None)
         contours = [parse_path_commands(d) for d in entry.get("contours", [])]
-        bounds = bounds_of(contours)
-        if bounds:
-            xmin, _xmax, ymin, ymax = bounds
-            height = ymax - ymin
-            scale = TARGET_GLYPH_HEIGHT / height if height > 0 else 1
+        transform = guide_transform(entry, doc_metrics) or bbox_transform(contours)
+
+        advance, lsb = DEFAULT_ADVANCE, 0
+        if transform:
+            tx, ty, advance_width = transform
             for commands in contours:
-                feed_pen(commands, pen, xmin, ymax, scale)
+                feed_pen(commands, pen, tx, ty)
         glyph = pen.glyph()
         glyphs[name] = glyph
         glyph_order.append(name)
 
         if glyph.numberOfContours:
             xs = [pt[0] for pt in glyph.coordinates]
-            xmin, xmax = min(xs), max(xs)
-            lsb = int(xmin)
-            advance = int(xmax + SIDE_BEARING)
-        else:
-            advance, lsb = DEFAULT_ADVANCE, 0
+            lsb = int(min(xs))
+            advance = advance_width if transform else DEFAULT_ADVANCE
         metrics[name] = (max(advance, 1), lsb)
 
         if entry.get("kind") == "base" and entry.get("unicode"):

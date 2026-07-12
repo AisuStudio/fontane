@@ -23,11 +23,21 @@ type CompiledGlyph = {
   components?: string[];
   alternateOf?: string;
   contours: string[];
+  // Grid View guides — present only for glyphs drawn in Grid View, where a
+  // shared baseline/ascender/descender plus per-glyph bearings give a real
+  // calibration instead of a per-glyph bounding-box guess.
+  leftBearing?: number;
+  rightBearing?: number;
+  cellWidth?: number;
+  cellHeight?: number;
 };
+
+type DocMetrics = { ascender: number; baseline: number; descender: number };
 
 type CompiledDocument = {
   version: number;
   glyphs: CompiledGlyph[];
+  metrics?: DocMetrics;
 };
 
 type RawCommand =
@@ -85,19 +95,12 @@ function boundsOf(contours: RawCommand[][]): { xmin: number; xmax: number; ymin:
 }
 
 // Canvas space is x-right/y-down with no baseline; font space is x-right/y-up
-// with y=0 as the baseline. Maps each glyph's own drawn bbox to sit on the
-// baseline (bbox bottom -> y=0) at TARGET_GLYPH_HEIGHT tall, left edge at
-// SIDE_BEARING. Applied uniformly to on-curve and control points alike, which
-// is safe — an affine transform commutes with quadratic Bezier evaluation.
-function addContourToPath(
-  path: Path,
-  commands: RawCommand[],
-  xmin: number,
-  baselineY: number,
-  scale: number
-) {
-  const tx = (x: number) => (x - xmin) * scale + SIDE_BEARING;
-  const ty = (y: number) => (baselineY - y) * scale;
+// with y=0 as the baseline. tx/ty carry the actual mapping — either guide-
+// based (see glyphTransform below) or the bbox-fallback in buildFont — so this
+// stays agnostic to which. Applied uniformly to on-curve and control points
+// alike, which is safe: an affine transform commutes with quadratic Bezier
+// evaluation.
+function addContourToPath(path: Path, commands: RawCommand[], tx: (x: number) => number, ty: (y: number) => number) {
   let started = false;
   for (const c of commands) {
     if (c.type === "M") {
@@ -109,6 +112,48 @@ function addContourToPath(
       path.close();
     }
   }
+}
+
+type Transform = { tx: (x: number) => number; ty: (y: number) => number; advanceWidth: number };
+
+// Grid View glyphs carry a real calibration: the document's shared baseline/
+// ascender fractions plus this glyph's own draggable left/right bearings,
+// both resolved against the cell's pixel size at draw time (cellWidth/
+// cellHeight — captured once so a later window resize can't shift already-
+// drawn glyphs relative to each other).
+function guideTransform(entry: CompiledGlyph, metrics: DocMetrics): Transform | null {
+  const { leftBearing, rightBearing, cellWidth, cellHeight } = entry;
+  if (leftBearing == null || rightBearing == null || !cellWidth || !cellHeight) return null;
+
+  const baselinePx = metrics.baseline * cellHeight;
+  const ascenderPx = metrics.ascender * cellHeight;
+  const leftPx = leftBearing * cellWidth;
+  const rightPx = rightBearing * cellWidth;
+
+  const span = baselinePx - ascenderPx;
+  const scale = span > 0 ? ASCENT / span : 1;
+
+  return {
+    tx: (x) => (x - leftPx) * scale,
+    ty: (y) => (baselinePx - y) * scale,
+    advanceWidth: Math.max(Math.round((rightPx - leftPx) * scale), 1),
+  };
+}
+
+// Fallback for glyphs with no Grid View guide data (e.g. tagged via Write
+// mode's lasso-select): rescale the glyph's own drawn bounding box to a fixed
+// cap-height-ish target. No cross-glyph consistency, but nothing comes out
+// microscopic, oversized, or upside-down either.
+function bboxTransform(contours: RawCommand[][]): Transform | null {
+  const bbox = boundsOf(contours);
+  if (!bbox) return null;
+  const height = bbox.ymax - bbox.ymin;
+  const scale = height > 0 ? TARGET_GLYPH_HEIGHT / height : 1;
+  return {
+    tx: (x) => (x - bbox.xmin) * scale + SIDE_BEARING,
+    ty: (y) => (bbox.ymax - y) * scale,
+    advanceWidth: Math.max(Math.round((bbox.xmax - bbox.xmin) * scale + 2 * SIDE_BEARING), 1),
+  };
 }
 
 function glyphNameFor(entry: CompiledGlyph): string {
@@ -129,16 +174,14 @@ export function buildFont(doc: CompiledDocument, familyName = "Glypher Sketch"):
 
   for (const entry of doc.glyphs) {
     const contours = entry.contours.map(parseContour);
-    const bbox = boundsOf(contours);
+    const transform = (doc.metrics && guideTransform(entry, doc.metrics)) ?? bboxTransform(contours);
 
     const path = new Path();
     let advanceWidth = DEFAULT_ADVANCE;
 
-    if (bbox) {
-      const height = bbox.ymax - bbox.ymin;
-      const scale = height > 0 ? TARGET_GLYPH_HEIGHT / height : 1;
-      for (const commands of contours) addContourToPath(path, commands, bbox.xmin, bbox.ymax, scale);
-      advanceWidth = Math.max(Math.round((bbox.xmax - bbox.xmin) * scale + 2 * SIDE_BEARING), 1);
+    if (transform) {
+      for (const commands of contours) addContourToPath(path, commands, transform.tx, transform.ty);
+      advanceWidth = transform.advanceWidth;
     }
 
     const unicodes =

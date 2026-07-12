@@ -9,6 +9,15 @@ export type Glyph = {
   alternateOf?: string; // alternate only — name of the glyph this is a variant of
   strokeIds: string[];
   createdAt: number;
+  // Grid View only — left/right sidebearing guides, draggable per glyph, as
+  // fractions (0-1) of the drawing cell's own width. cellWidth/cellHeight (in
+  // CSS px) are captured once when the glyph's first stroke lands, so export
+  // can convert these fractions and the global Metrics fractions into the
+  // same pixel space the raw stroke points already live in.
+  leftBearing?: number;
+  rightBearing?: number;
+  cellWidth?: number;
+  cellHeight?: number;
 };
 
 // Only meaningful for a name that's exactly one Unicode codepoint (typed straight off a

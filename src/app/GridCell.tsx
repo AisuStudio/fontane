@@ -5,10 +5,17 @@ import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
 import { outlineToPath, type PathCommand } from "@/lib/contour";
 import type { Stroke, StrokePoint } from "@/lib/strokes";
+import type { Metrics } from "@/lib/metrics";
 
 export type StrokeOptions = { size: number; thinning: number; smoothing: number; streamline: number };
 
 const CELL_COLOR = "#1f1934";
+const GUIDE_COLOR = "#9e9c95"; // hazelnut
+const BEARING_COLOR = "#5100ff"; // grape — matches the draggable-affordance color used elsewhere
+const BEARING_HIT_PX = 8;
+
+export const DEFAULT_LEFT_BEARING = 0.15;
+export const DEFAULT_RIGHT_BEARING = 0.85;
 
 function applyPath(ctx: CanvasRenderingContext2D, commands: PathCommand[]) {
   for (const c of commands) {
@@ -26,24 +33,87 @@ function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][])
   ctx.fill();
 }
 
+function drawGuides(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  metrics: Metrics,
+  leftBearing: number,
+  rightBearing: number
+) {
+  ctx.save();
+  ctx.lineWidth = 1;
+
+  ctx.strokeStyle = GUIDE_COLOR;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  const ascY = Math.round(metrics.ascender * height) + 0.5;
+  const descY = Math.round(metrics.descender * height) + 0.5;
+  ctx.moveTo(0, ascY);
+  ctx.lineTo(width, ascY);
+  ctx.moveTo(0, descY);
+  ctx.lineTo(width, descY);
+  ctx.stroke();
+
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  const baseY = Math.round(metrics.baseline * height) + 0.5;
+  ctx.moveTo(0, baseY);
+  ctx.lineTo(width, baseY);
+  ctx.stroke();
+
+  ctx.strokeStyle = BEARING_COLOR;
+  ctx.globalAlpha = 0.6;
+  ctx.beginPath();
+  const lx = Math.round(leftBearing * width) + 0.5;
+  const rx = Math.round(rightBearing * width) + 0.5;
+  ctx.moveTo(lx, 0);
+  ctx.lineTo(lx, height);
+  ctx.moveTo(rx, 0);
+  ctx.lineTo(rx, height);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
 type Props = {
   label: string;
   outlines: [number, number][][];
   strokeOptions: StrokeOptions;
-  onStrokeComplete: (stroke: Stroke) => void;
+  onStrokeComplete: (stroke: Stroke, cellWidth: number, cellHeight: number) => void;
+  metrics: Metrics;
+  leftBearing?: number;
+  rightBearing?: number;
+  onBearingsChange: (left: number, right: number) => void;
 };
 
-export default function GridCell({ label, outlines, strokeOptions, onStrokeComplete }: Props) {
+export default function GridCell({
+  label,
+  outlines,
+  strokeOptions,
+  onStrokeComplete,
+  metrics,
+  leftBearing = DEFAULT_LEFT_BEARING,
+  rightBearing = DEFAULT_RIGHT_BEARING,
+  onBearingsChange,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const pointsRef = useRef<StrokePoint[]>([]);
   const drawingRef = useRef(false);
   const outlinesRef = useRef(outlines);
   const strokeOptionsRef = useRef(strokeOptions);
   const onStrokeCompleteRef = useRef(onStrokeComplete);
+  const metricsRef = useRef(metrics);
+  const bearingsRef = useRef({ leftBearing, rightBearing });
+  const onBearingsChangeRef = useRef(onBearingsChange);
+  const draggingRef = useRef<"left" | "right" | null>(null);
 
   outlinesRef.current = outlines;
   strokeOptionsRef.current = strokeOptions;
   onStrokeCompleteRef.current = onStrokeComplete;
+  metricsRef.current = metrics;
+  bearingsRef.current = { leftBearing, rightBearing };
+  onBearingsChangeRef.current = onBearingsChange;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -54,6 +124,14 @@ export default function GridCell({ label, outlines, strokeOptions, onStrokeCompl
     function redraw() {
       if (!canvas || !ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawGuides(
+        ctx,
+        canvas.clientWidth,
+        canvas.clientHeight,
+        metricsRef.current,
+        bearingsRef.current.leftBearing,
+        bearingsRef.current.rightBearing
+      );
       for (const outline of outlinesRef.current) fillOutline(ctx, outline);
       if (pointsRef.current.length > 0) {
         fillOutline(ctx, getStroke(pointsRef.current, strokeOptionsRef.current) as [number, number][]);
@@ -77,25 +155,61 @@ export default function GridCell({ label, outlines, strokeOptions, onStrokeCompl
       return [e.clientX - rect.left, e.clientY - rect.top, e.pressure > 0 ? e.pressure : 0.5];
     }
 
+    function bearingNear(x: number, width: number): "left" | "right" | null {
+      const lx = bearingsRef.current.leftBearing * width;
+      const rx = bearingsRef.current.rightBearing * width;
+      if (Math.abs(x - lx) <= BEARING_HIT_PX) return "left";
+      if (Math.abs(x - rx) <= BEARING_HIT_PX) return "right";
+      return null;
+    }
+
     function onPointerDown(e: PointerEvent) {
       canvas!.setPointerCapture(e.pointerId);
+      const [x] = pointFromEvent(e);
+      const hit = bearingNear(x, canvas!.clientWidth);
+      if (hit) {
+        draggingRef.current = hit;
+        return;
+      }
       drawingRef.current = true;
       pointsRef.current = [pointFromEvent(e)];
     }
 
     function onPointerMove(e: PointerEvent) {
+      if (draggingRef.current) {
+        const [x] = pointFromEvent(e);
+        const fraction = Math.min(1, Math.max(0, x / canvas!.clientWidth));
+        const { leftBearing: l, rightBearing: r } = bearingsRef.current;
+        const next =
+          draggingRef.current === "left"
+            ? { leftBearing: Math.min(fraction, r - 0.02), rightBearing: r }
+            : { leftBearing: l, rightBearing: Math.max(fraction, l + 0.02) };
+        bearingsRef.current = next;
+        redraw();
+        return;
+      }
       if (!drawingRef.current) return;
       pointsRef.current.push(pointFromEvent(e));
       redraw();
     }
 
     function onPointerUp(e: PointerEvent) {
+      if (draggingRef.current) {
+        onBearingsChangeRef.current(bearingsRef.current.leftBearing, bearingsRef.current.rightBearing);
+        draggingRef.current = null;
+        canvas!.releasePointerCapture(e.pointerId);
+        return;
+      }
       if (drawingRef.current && pointsRef.current.length > 1) {
-        onStrokeCompleteRef.current({
-          id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
-          points: pointsRef.current,
-          createdAt: Date.now(),
-        });
+        onStrokeCompleteRef.current(
+          {
+            id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+            points: pointsRef.current,
+            createdAt: Date.now(),
+          },
+          canvas!.clientWidth,
+          canvas!.clientHeight
+        );
       }
       drawingRef.current = false;
       pointsRef.current = [];
@@ -115,8 +229,9 @@ export default function GridCell({ label, outlines, strokeOptions, onStrokeCompl
       canvas.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("pointercancel", onPointerUp);
     };
-    // Mount once per cell; outlines/onStrokeComplete are read via refs above
-    // so redraws after a parent re-render don't need to tear down listeners.
+    // Mount once per cell; outlines/onStrokeComplete/metrics/bearings are read
+    // via refs above so redraws after a parent re-render don't need to tear
+    // down listeners.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -125,8 +240,9 @@ export default function GridCell({ label, outlines, strokeOptions, onStrokeCompl
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawGuides(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing);
     for (const outline of outlines) fillOutline(ctx, outline);
-  }, [outlines]);
+  }, [outlines, metrics, leftBearing, rightBearing]);
 
   return (
     <div className={styles.gridCell}>

@@ -8,8 +8,9 @@ import { loadGlyphs, saveGlyphs, unicodeFor, type Glyph, type GlyphKind } from "
 import { anyPointInPolygon } from "@/lib/geometry";
 import { outlineToPath, pathToSvgD, type PathCommand } from "@/lib/contour";
 import { downloadFont } from "@/lib/exportFont";
+import { loadMetrics, saveMetrics, type Metrics } from "@/lib/metrics";
 import { Undo2, Redo2 } from "lucide-react";
-import GridCell from "./GridCell";
+import GridCell, { DEFAULT_LEFT_BEARING, DEFAULT_RIGHT_BEARING } from "./GridCell";
 import BetaBadge from "./BetaBadge";
 import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
 
@@ -72,17 +73,22 @@ function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][],
 // path data, one per stroke), plus the identity/relationship fields from Phase 2.
 // This is what a later export step (SVG + .fea, or a direct fontTools compile)
 // would consume — nothing here writes anywhere, it's just compiled on demand.
-function compileDocument(glyphs: Glyph[], strokes: Stroke[], settings: StrokeSettings) {
+function compileDocument(glyphs: Glyph[], strokes: Stroke[], settings: StrokeSettings, metrics: Metrics) {
   const byId = new Map(strokes.map((s) => [s.id, s]));
   return {
     version: 1,
     settings: optionsFor(settings),
+    metrics,
     glyphs: glyphs.map((g) => ({
       name: g.name,
       kind: g.kind,
       unicode: g.unicode,
       components: g.components,
       alternateOf: g.alternateOf,
+      leftBearing: g.leftBearing,
+      rightBearing: g.rightBearing,
+      cellWidth: g.cellWidth,
+      cellHeight: g.cellHeight,
       contours: g.strokeIds
         .map((id) => byId.get(id))
         .filter((s): s is Stroke => Boolean(s))
@@ -143,12 +149,21 @@ export default function Home() {
   const [topMode, setTopMode] = useState<TopMode>("write");
   const [activeSetIds, setActiveSetIds] = useState<Set<string>>(new Set(DEFAULT_CHARACTER_SET_IDS));
   const gridChars = CHARACTER_SETS.filter((s) => activeSetIds.has(s.id)).flatMap((s) => s.chars);
+  const [metrics, setMetrics] = useState<Metrics>(() => loadMetrics());
 
   function toggleCharacterSet(id: string) {
     setActiveSetIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return next;
+    });
+  }
+
+  function updateMetric(key: keyof Metrics, value: number) {
+    setMetrics((prev) => {
+      const next = { ...prev, [key]: value };
+      saveMetrics(next);
       return next;
     });
   }
@@ -330,10 +345,10 @@ export default function Home() {
 
   useEffect(() => {
     if (viewMode !== "export") return;
-    const doc = compileDocument(glyphs, completedRef.current, settings);
+    const doc = compileDocument(glyphs, completedRef.current, settings, metrics);
     setExportJson(JSON.stringify(doc, null, 2));
     setExportDoc(doc);
-  }, [viewMode, glyphs, settings]);
+  }, [viewMode, glyphs, settings, metrics]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -445,7 +460,7 @@ export default function Home() {
     setSelectedIds([]);
   }
 
-  function handleGridStroke(letter: string, stroke: Stroke) {
+  function handleGridStroke(letter: string, stroke: Stroke, cellWidth: number, cellHeight: number) {
     completedRef.current = [...completedRef.current, stroke];
     outlinesRef.current = [...outlinesRef.current, outlineFor(stroke.points, settingsRef.current)];
     saveStrokes(completedRef.current);
@@ -466,9 +481,19 @@ export default function Home() {
         unicode: unicodeFor(letter),
         strokeIds: [stroke.id],
         createdAt: Date.now(),
+        leftBearing: DEFAULT_LEFT_BEARING,
+        rightBearing: DEFAULT_RIGHT_BEARING,
+        cellWidth,
+        cellHeight,
       };
       return [...gs, glyph];
     });
+  }
+
+  function handleBearingsChange(letter: string, left: number, right: number) {
+    setGlyphs((gs) =>
+      gs.map((g) => (g.kind === "base" && g.name === letter ? { ...g, leftBearing: left, rightBearing: right } : g))
+    );
   }
 
   function handleDownloadJson() {
@@ -536,6 +561,52 @@ export default function Home() {
                 {set.label}
               </label>
             ))}
+          </div>
+        )}
+
+        {topMode === "grid" && (
+          <div className={styles.sliders}>
+            <label className={styles.sliderRow}>
+              <span>Ascender</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={metrics.ascender}
+                onChange={(e) => updateMetric("ascender", Math.min(Number(e.target.value), metrics.baseline - 0.02))}
+              />
+              <span className={styles.val}>{metrics.ascender.toFixed(2)}</span>
+            </label>
+            <label className={styles.sliderRow}>
+              <span>Baseline</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={metrics.baseline}
+                onChange={(e) =>
+                  updateMetric(
+                    "baseline",
+                    Math.min(Math.max(Number(e.target.value), metrics.ascender + 0.02), metrics.descender - 0.02)
+                  )
+                }
+              />
+              <span className={styles.val}>{metrics.baseline.toFixed(2)}</span>
+            </label>
+            <label className={styles.sliderRow}>
+              <span>Descender</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={metrics.descender}
+                onChange={(e) => updateMetric("descender", Math.max(Number(e.target.value), metrics.baseline + 0.02))}
+              />
+              <span className={styles.val}>{metrics.descender.toFixed(2)}</span>
+            </label>
           </div>
         )}
 
@@ -842,7 +913,13 @@ export default function Home() {
                 label={letter}
                 outlines={cellOutlines}
                 strokeOptions={optionsFor(settings)}
-                onStrokeComplete={(stroke) => handleGridStroke(letter, stroke)}
+                onStrokeComplete={(stroke, cellWidth, cellHeight) =>
+                  handleGridStroke(letter, stroke, cellWidth, cellHeight)
+                }
+                metrics={metrics}
+                leftBearing={glyph?.leftBearing}
+                rightBearing={glyph?.rightBearing}
+                onBearingsChange={(left, right) => handleBearingsChange(letter, left, right)}
               />
             );
           })}
