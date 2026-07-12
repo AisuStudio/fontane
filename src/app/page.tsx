@@ -8,6 +8,7 @@ import { loadGlyphs, saveGlyphs, unicodeFor, type Glyph, type GlyphKind } from "
 import { anyPointInPolygon } from "@/lib/geometry";
 import { outlineToPath, pathToSvgD, unionOutlines, type PathCommand } from "@/lib/contour";
 import { downloadFont } from "@/lib/exportFont";
+import { downloadSkeletonSvg } from "@/lib/exportSkeleton";
 import { saveFile } from "@/lib/saveFile";
 import { loadMetrics, saveMetrics, type Metrics } from "@/lib/metrics";
 import { Undo2, Redo2 } from "lucide-react";
@@ -518,6 +519,10 @@ export default function Home() {
     downloadFont(exportDoc, "glypher.otf");
   }
 
+  function handleExportSkeleton() {
+    downloadSkeletonSvg(glyphs, completedRef.current);
+  }
+
   return (
     <div className={styles.page}>
       <BetaBadge />
@@ -851,6 +856,14 @@ export default function Home() {
               disabled={glyphs.length === 0}
             >
               Export OTF
+            </button>
+            <button
+              type="button"
+              className={styles.clearBtn}
+              onClick={handleExportSkeleton}
+              disabled={glyphs.length === 0}
+            >
+              Export Skeleton SVG
             </button>
           </div>
         )}
