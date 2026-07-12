@@ -7,6 +7,7 @@ import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokePoint }
 import { loadGlyphs, saveGlyphs, unicodeFor, type Glyph, type GlyphKind } from "@/lib/glyphs";
 import { anyPointInPolygon } from "@/lib/geometry";
 import { outlineToPath, pathToSvgD, type PathCommand } from "@/lib/contour";
+import { Undo2, Redo2 } from "lucide-react";
 
 type ViewMode = "draw" | "review" | "export";
 type StrokeMode = "mono" | "dynamic";
@@ -516,10 +517,22 @@ export default function Home() {
             </div>
 
             <div className={styles.undoRedo}>
-              <button type="button" className={styles.clearBtn} onClick={handleUndo} disabled={strokeCount === 0}>
+              <button
+                type="button"
+                className={`${styles.clearBtn} ${styles.iconBtn}`}
+                onClick={handleUndo}
+                disabled={strokeCount === 0}
+              >
+                <Undo2 size={14} strokeWidth={2} />
                 Undo
               </button>
-              <button type="button" className={styles.clearBtn} onClick={handleRedo} disabled={redoCount === 0}>
+              <button
+                type="button"
+                className={`${styles.clearBtn} ${styles.iconBtn}`}
+                onClick={handleRedo}
+                disabled={redoCount === 0}
+              >
+                <Redo2 size={14} strokeWidth={2} />
                 Redo
               </button>
             </div>

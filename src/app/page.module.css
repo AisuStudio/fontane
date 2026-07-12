@@ -131,6 +131,12 @@
   flex-shrink: 0;
 }
 
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .sliders {
   display: flex;
   flex-wrap: wrap;
