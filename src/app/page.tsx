@@ -8,9 +8,13 @@ import { loadGlyphs, saveGlyphs, unicodeFor, type Glyph, type GlyphKind } from "
 import { anyPointInPolygon } from "@/lib/geometry";
 import { outlineToPath, pathToSvgD, type PathCommand } from "@/lib/contour";
 import { Undo2, Redo2 } from "lucide-react";
+import GridCell from "./GridCell";
 
+type TopMode = "write" | "grid";
 type ViewMode = "draw" | "review" | "export";
 type StrokeMode = "mono" | "dynamic";
+
+const GRID_LETTERS = "abcdefghijklmnopqrstuvwxyz".split("");
 
 type StrokeSettings = {
   mode: StrokeMode;
@@ -115,6 +119,7 @@ export default function Home() {
   const undoRef = useRef<() => void>(() => {});
   const redoRef = useRef<() => void>(() => {});
 
+  const [topMode, setTopMode] = useState<TopMode>("write");
   const [viewMode, setViewMode] = useState<ViewMode>("draw");
   const viewModeRef = useRef(viewMode);
 
@@ -397,6 +402,32 @@ export default function Home() {
     setSelectedIds([]);
   }
 
+  function handleGridStroke(letter: string, stroke: Stroke) {
+    completedRef.current = [...completedRef.current, stroke];
+    outlinesRef.current = [...outlinesRef.current, outlineFor(stroke.points, settingsRef.current)];
+    saveStrokes(completedRef.current);
+    setStrokeCount(completedRef.current.length);
+
+    // Grid drawing fuses capture + tagging: the cell you draw into IS the
+    // glyph, no separate lasso-select step. First stroke creates the glyph,
+    // later strokes into the same cell just add to it.
+    setGlyphs((gs) => {
+      const existing = gs.find((g) => g.kind === "base" && g.name === letter);
+      if (existing) {
+        return gs.map((g) => (g.id === existing.id ? { ...g, strokeIds: [...g.strokeIds, stroke.id] } : g));
+      }
+      const glyph: Glyph = {
+        id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+        name: letter,
+        kind: "base",
+        unicode: unicodeFor(letter),
+        strokeIds: [stroke.id],
+        createdAt: Date.now(),
+      };
+      return [...gs, glyph];
+    });
+  }
+
   function handleCopyJson() {
     navigator.clipboard.writeText(exportJson).then(() => {
       setCopyStatus("copied!");
@@ -421,13 +452,36 @@ export default function Home() {
       <header className={styles.header}>
         <h1>glypher</h1>
         <p>
-          {viewMode === "draw" && "Write with a stylus, mouse, or finger. Strokes persist across reloads."}
-          {viewMode === "review" && "Drag to lasso strokes, then give the selection a glyph name."}
-          {viewMode === "export" && "The compiled document — every tagged glyph resolved to real contours."}
+          {topMode === "grid" && "Draw directly into a letter's cell — no separate tagging step."}
+          {topMode === "write" && viewMode === "draw" && "Write with a stylus, mouse, or finger. Strokes persist across reloads."}
+          {topMode === "write" && viewMode === "review" && "Drag to lasso strokes, then give the selection a glyph name."}
+          {topMode === "write" && viewMode === "export" && "The compiled document — every tagged glyph resolved to real contours."}
         </p>
       </header>
 
       <div className={styles.toolbar}>
+        <div className={styles.modeToggle} role="radiogroup" aria-label="Top mode">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={topMode === "write"}
+            className={`${styles.modeBtn} ${topMode === "write" ? styles.modeBtnActive : ""}`}
+            onClick={() => setTopMode("write")}
+          >
+            Write
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={topMode === "grid"}
+            className={`${styles.modeBtn} ${topMode === "grid" ? styles.modeBtnActive : ""}`}
+            onClick={() => setTopMode("grid")}
+          >
+            Grid
+          </button>
+        </div>
+
+        {topMode === "write" && (
         <div className={styles.modeToggle} role="radiogroup" aria-label="View mode">
           <button
             type="button"
@@ -457,8 +511,9 @@ export default function Home() {
             Export
           </button>
         </div>
+        )}
 
-        {viewMode === "draw" ? (
+        {topMode === "write" && (viewMode === "draw" ? (
           <>
             <div className={styles.modeToggle} role="radiogroup" aria-label="Stroke mode">
               <button
@@ -656,20 +711,20 @@ export default function Home() {
             </button>
             {copyStatus && <span id="copy-status">{copyStatus}</span>}
           </div>
-        )}
+        ))}
 
         <button className={styles.clearBtn} onClick={handleClear} type="button">
           Clear all
         </button>
       </div>
 
-      {viewMode === "export" && (
+      {topMode === "write" && viewMode === "export" && (
         <section className={styles.exportPanel}>
           <textarea className={styles.exportOutput} readOnly rows={20} value={exportJson} />
         </section>
       )}
 
-      {viewMode === "review" && glyphs.length > 0 && (
+      {topMode === "write" && viewMode === "review" && glyphs.length > 0 && (
         <ul className={styles.glyphList}>
           {glyphs.map((g) => (
             <li key={g.id} className={styles.glyphItem}>
@@ -688,7 +743,10 @@ export default function Home() {
         </ul>
       )}
 
-      <div className={styles.canvasWrap} style={viewMode === "export" ? { display: "none" } : undefined}>
+      <div
+        className={styles.canvasWrap}
+        style={topMode !== "write" || viewMode === "export" ? { display: "none" } : undefined}
+      >
         <canvas ref={canvasRef} className={styles.canvas} />
         <dl className={styles.hud}>
           <dt>pointerType</dt>
@@ -701,6 +759,28 @@ export default function Home() {
           <dd>{strokeCount}</dd>
         </dl>
       </div>
+
+      {topMode === "grid" && (
+        <div className={styles.grid}>
+          {GRID_LETTERS.map((letter) => {
+            const glyph = glyphs.find((g) => g.kind === "base" && g.name === letter);
+            const cellOutlines = glyph
+              ? glyph.strokeIds
+                  .map((id) => completedRef.current.find((s) => s.id === id))
+                  .filter((s): s is Stroke => Boolean(s))
+                  .map((s) => outlineFor(s.points, settings))
+              : [];
+            return (
+              <GridCell
+                key={letter}
+                label={letter}
+                outlines={cellOutlines}
+                onStrokeComplete={(stroke) => handleGridStroke(letter, stroke)}
+              />
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
