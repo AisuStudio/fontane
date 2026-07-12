@@ -4,11 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
 import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokePoint } from "@/lib/strokes";
+import { loadGlyphs, saveGlyphs, type Glyph } from "@/lib/glyphs";
+import { anyPointInPolygon } from "@/lib/geometry";
 
-type Mode = "mono" | "dynamic";
+type ViewMode = "draw" | "review";
+type StrokeMode = "mono" | "dynamic";
 
 type StrokeSettings = {
-  mode: Mode;
+  mode: StrokeMode;
   size: number;
   thinning: number;
   smoothing: number;
@@ -23,6 +26,10 @@ const DEFAULT_SETTINGS: StrokeSettings = {
   streamline: 0.5,
 };
 
+const COLOR_DEFAULT = "#1f1934"; // blueberry — untagged
+const COLOR_SELECTED = "#d8ff01"; // lemon — pending selection
+const COLOR_TAGGED = "#5100ff"; // grape — assigned to a glyph
+
 function optionsFor(settings: StrokeSettings) {
   return {
     size: settings.size,
@@ -36,7 +43,7 @@ function outlineFor(points: StrokePoint[], settings: StrokeSettings): [number, n
   return getStroke(points, optionsFor(settings)) as [number, number][];
 }
 
-function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][]) {
+function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][], color: string) {
   if (outline.length < 3) return;
   // Connect outline points with quadratic curves through their midpoints instead of
   // straight lines — perfect-freehand's raw polygon looks faceted otherwise.
@@ -48,8 +55,22 @@ function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][])
     ctx.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
   }
   ctx.closePath();
-  ctx.fillStyle = "#1f1934";
+  ctx.fillStyle = color;
   ctx.fill();
+}
+
+function strokeLassoPath(ctx: CanvasRenderingContext2D, points: [number, number][]) {
+  if (points.length < 2) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+  ctx.closePath();
+  ctx.setLineDash([6, 4]);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = COLOR_TAGGED;
+  ctx.stroke();
+  ctx.restore();
 }
 
 export default function Home() {
@@ -61,10 +82,22 @@ export default function Home() {
   const completedRef = useRef<Stroke[]>([]);
   const outlinesRef = useRef<[number, number][][]>([]);
   const currentPointsRef = useRef<StrokePoint[]>([]);
+  const lassoRef = useRef<[number, number][]>([]);
   const redrawRef = useRef<() => void>(() => {});
+
+  const [viewMode, setViewMode] = useState<ViewMode>("draw");
+  const viewModeRef = useRef(viewMode);
 
   const [settings, setSettings] = useState<StrokeSettings>(DEFAULT_SETTINGS);
   const settingsRef = useRef(settings);
+
+  const [glyphs, setGlyphs] = useState<Glyph[]>([]);
+  const taggedIdsRef = useRef<Set<string>>(new Set());
+
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const selectedIdsRef = useRef<Set<string>>(new Set());
+
+  const [nameInput, setNameInput] = useState("");
 
   const [hud, setHud] = useState({ pointerType: "—", pressure: 0, x: 0, y: 0 });
   const [strokeCount, setStrokeCount] = useState(0);
@@ -78,9 +111,21 @@ export default function Home() {
     function redraw() {
       if (!canvas || !ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      for (const outline of outlinesRef.current) fillOutline(ctx, outline);
-      if (currentPointsRef.current.length > 0) {
-        fillOutline(ctx, outlineFor(currentPointsRef.current, settingsRef.current));
+      const strokes = completedRef.current;
+      const outlines = outlinesRef.current;
+      for (let i = 0; i < strokes.length; i++) {
+        const color = selectedIdsRef.current.has(strokes[i].id)
+          ? COLOR_SELECTED
+          : taggedIdsRef.current.has(strokes[i].id)
+            ? COLOR_TAGGED
+            : COLOR_DEFAULT;
+        fillOutline(ctx, outlines[i], color);
+      }
+      if (viewModeRef.current === "draw" && currentPointsRef.current.length > 0) {
+        fillOutline(ctx, outlineFor(currentPointsRef.current, settingsRef.current), COLOR_DEFAULT);
+      }
+      if (viewModeRef.current === "review" && lassoRef.current.length > 1) {
+        strokeLassoPath(ctx, lassoRef.current);
       }
     }
     redrawRef.current = redraw;
@@ -95,10 +140,11 @@ export default function Home() {
       redraw();
     }
 
-    // Restore persisted strokes.
+    // Restore persisted strokes + glyph tags.
     completedRef.current = loadStrokes();
     outlinesRef.current = completedRef.current.map((s) => outlineFor(s.points, settingsRef.current));
     setStrokeCount(completedRef.current.length);
+    setGlyphs(loadGlyphs());
 
     resize();
     window.addEventListener("resize", resize);
@@ -111,33 +157,50 @@ export default function Home() {
     function onPointerDown(e: PointerEvent) {
       canvas!.setPointerCapture(e.pointerId);
       drawingRef.current = true;
-      currentPointsRef.current = [pointFromEvent(e)];
-      const [x, y] = currentPointsRef.current[0];
-      setHud({ pointerType: e.pointerType, pressure: e.pressure, x: Math.round(x), y: Math.round(y) });
+      const p = pointFromEvent(e);
+      if (viewModeRef.current === "draw") {
+        currentPointsRef.current = [p];
+      } else {
+        lassoRef.current = [[p[0], p[1]]];
+      }
+      setHud({ pointerType: e.pointerType, pressure: e.pressure, x: Math.round(p[0]), y: Math.round(p[1]) });
     }
 
     function onPointerMove(e: PointerEvent) {
       const p = pointFromEvent(e);
       setHud({ pointerType: e.pointerType, pressure: e.pressure, x: Math.round(p[0]), y: Math.round(p[1]) });
       if (!drawingRef.current) return;
-      currentPointsRef.current.push(p);
+      if (viewModeRef.current === "draw") {
+        currentPointsRef.current.push(p);
+      } else {
+        lassoRef.current.push([p[0], p[1]]);
+      }
       redraw();
     }
 
     function onPointerUp(e: PointerEvent) {
-      if (drawingRef.current && currentPointsRef.current.length > 1) {
-        const stroke: Stroke = {
-          id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
-          points: currentPointsRef.current,
-          createdAt: Date.now(),
-        };
-        completedRef.current = [...completedRef.current, stroke];
-        outlinesRef.current = [...outlinesRef.current, outlineFor(stroke.points, settingsRef.current)];
-        saveStrokes(completedRef.current);
-        setStrokeCount(completedRef.current.length);
+      if (viewModeRef.current === "draw") {
+        if (drawingRef.current && currentPointsRef.current.length > 1) {
+          const stroke: Stroke = {
+            id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+            points: currentPointsRef.current,
+            createdAt: Date.now(),
+          };
+          completedRef.current = [...completedRef.current, stroke];
+          outlinesRef.current = [...outlinesRef.current, outlineFor(stroke.points, settingsRef.current)];
+          saveStrokes(completedRef.current);
+          setStrokeCount(completedRef.current.length);
+        }
+        currentPointsRef.current = [];
+      } else {
+        const polygon = lassoRef.current;
+        const matched = completedRef.current
+          .filter((s) => anyPointInPolygon(s.points.map((p) => [p[0], p[1]]) as [number, number][], polygon))
+          .map((s) => s.id);
+        setSelectedIds(matched);
+        lassoRef.current = [];
       }
       drawingRef.current = false;
-      currentPointsRef.current = [];
       canvas!.releasePointerCapture(e.pointerId);
       redraw();
     }
@@ -164,6 +227,25 @@ export default function Home() {
     redrawRef.current();
   }, [settings]);
 
+  useEffect(() => {
+    viewModeRef.current = viewMode;
+    currentPointsRef.current = [];
+    lassoRef.current = [];
+    setSelectedIds([]);
+    redrawRef.current();
+  }, [viewMode]);
+
+  useEffect(() => {
+    selectedIdsRef.current = new Set(selectedIds);
+    redrawRef.current();
+  }, [selectedIds]);
+
+  useEffect(() => {
+    taggedIdsRef.current = new Set(glyphs.flatMap((g) => g.strokeIds));
+    saveGlyphs(glyphs);
+    redrawRef.current();
+  }, [glyphs]);
+
   function handleClear() {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
@@ -173,100 +255,189 @@ export default function Home() {
     outlinesRef.current = [];
     clearStrokes();
     setStrokeCount(0);
+    setGlyphs([]);
+    setSelectedIds([]);
   }
 
   function updateSetting<K extends keyof StrokeSettings>(key: K, value: StrokeSettings[K]) {
     setSettings((s) => ({ ...s, [key]: value }));
   }
 
+  function handleAssign() {
+    const name = nameInput.trim();
+    if (!name || selectedIds.length === 0) return;
+    const glyph: Glyph = {
+      id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+      name,
+      strokeIds: selectedIds,
+      createdAt: Date.now(),
+    };
+    setGlyphs((gs) => [...gs, glyph]);
+    setSelectedIds([]);
+    setNameInput("");
+  }
+
+  function handleUntag(id: string) {
+    setGlyphs((gs) => gs.filter((g) => g.id !== id));
+  }
+
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <h1>glypher — phase 1 capture</h1>
-        <p>Write with a stylus, mouse, or finger. Strokes persist across reloads.</p>
+        <h1>glypher — phase 2 review</h1>
+        <p>
+          {viewMode === "draw"
+            ? "Write with a stylus, mouse, or finger. Strokes persist across reloads."
+            : "Drag to lasso strokes, then give the selection a glyph name."}
+        </p>
       </header>
 
       <div className={styles.toolbar}>
-        <div className={styles.modeToggle} role="radiogroup" aria-label="Stroke mode">
+        <div className={styles.modeToggle} role="radiogroup" aria-label="View mode">
           <button
             type="button"
             role="radio"
-            aria-checked={settings.mode === "mono"}
-            className={`${styles.modeBtn} ${settings.mode === "mono" ? styles.modeBtnActive : ""}`}
-            onClick={() => updateSetting("mode", "mono")}
+            aria-checked={viewMode === "draw"}
+            className={`${styles.modeBtn} ${viewMode === "draw" ? styles.modeBtnActive : ""}`}
+            onClick={() => setViewMode("draw")}
           >
-            Mono line
+            Draw
           </button>
           <button
             type="button"
             role="radio"
-            aria-checked={settings.mode === "dynamic"}
-            className={`${styles.modeBtn} ${settings.mode === "dynamic" ? styles.modeBtnActive : ""}`}
-            onClick={() => updateSetting("mode", "dynamic")}
+            aria-checked={viewMode === "review"}
+            className={`${styles.modeBtn} ${viewMode === "review" ? styles.modeBtnActive : ""}`}
+            onClick={() => setViewMode("review")}
           >
-            Dynamic
+            Review
           </button>
         </div>
 
-        <div className={styles.sliders}>
-          <label className={styles.sliderRow}>
-            <span>Size</span>
+        {viewMode === "draw" ? (
+          <>
+            <div className={styles.modeToggle} role="radiogroup" aria-label="Stroke mode">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={settings.mode === "mono"}
+                className={`${styles.modeBtn} ${settings.mode === "mono" ? styles.modeBtnActive : ""}`}
+                onClick={() => updateSetting("mode", "mono")}
+              >
+                Mono line
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={settings.mode === "dynamic"}
+                className={`${styles.modeBtn} ${settings.mode === "dynamic" ? styles.modeBtnActive : ""}`}
+                onClick={() => updateSetting("mode", "dynamic")}
+              >
+                Dynamic
+              </button>
+            </div>
+
+            <div className={styles.sliders}>
+              <label className={styles.sliderRow}>
+                <span>Size</span>
+                <input
+                  type="range"
+                  min={4}
+                  max={60}
+                  step={1}
+                  value={settings.size}
+                  onChange={(e) => updateSetting("size", Number(e.target.value))}
+                />
+                <span className={styles.val}>{settings.size}</span>
+              </label>
+              {settings.mode === "dynamic" && (
+                <>
+                  <label className={styles.sliderRow}>
+                    <span>Thinning</span>
+                    <input
+                      type="range"
+                      min={-1}
+                      max={1}
+                      step={0.05}
+                      value={settings.thinning}
+                      onChange={(e) => updateSetting("thinning", Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{settings.thinning.toFixed(2)}</span>
+                  </label>
+                  <label className={styles.sliderRow}>
+                    <span>Smoothing</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={settings.smoothing}
+                      onChange={(e) => updateSetting("smoothing", Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{settings.smoothing.toFixed(2)}</span>
+                  </label>
+                  <label className={styles.sliderRow}>
+                    <span>Streamline</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={settings.streamline}
+                      onChange={(e) => updateSetting("streamline", Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{settings.streamline.toFixed(2)}</span>
+                  </label>
+                </>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className={styles.tagForm}>
             <input
-              type="range"
-              min={4}
-              max={60}
-              step={1}
-              value={settings.size}
-              onChange={(e) => updateSetting("size", Number(e.target.value))}
+              type="text"
+              className={styles.nameInput}
+              placeholder="glyph name (e.g. a, f_i.liga)"
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
             />
-            <span className={styles.val}>{settings.size}</span>
-          </label>
-          {settings.mode === "dynamic" && (
-            <>
-              <label className={styles.sliderRow}>
-                <span>Thinning</span>
-                <input
-                  type="range"
-                  min={-1}
-                  max={1}
-                  step={0.05}
-                  value={settings.thinning}
-                  onChange={(e) => updateSetting("thinning", Number(e.target.value))}
-                />
-                <span className={styles.val}>{settings.thinning.toFixed(2)}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>Smoothing</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={settings.smoothing}
-                  onChange={(e) => updateSetting("smoothing", Number(e.target.value))}
-                />
-                <span className={styles.val}>{settings.smoothing.toFixed(2)}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>Streamline</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={settings.streamline}
-                  onChange={(e) => updateSetting("streamline", Number(e.target.value))}
-                />
-                <span className={styles.val}>{settings.streamline.toFixed(2)}</span>
-              </label>
-            </>
-          )}
-        </div>
+            <button
+              type="button"
+              className={styles.clearBtn}
+              onClick={handleAssign}
+              disabled={!nameInput.trim() || selectedIds.length === 0}
+            >
+              Assign ({selectedIds.length})
+            </button>
+            <button
+              type="button"
+              className={styles.clearBtn}
+              onClick={() => setSelectedIds([])}
+              disabled={selectedIds.length === 0}
+            >
+              Clear selection
+            </button>
+          </div>
+        )}
 
         <button className={styles.clearBtn} onClick={handleClear} type="button">
-          Clear
+          Clear all
         </button>
       </div>
+
+      {viewMode === "review" && glyphs.length > 0 && (
+        <ul className={styles.glyphList}>
+          {glyphs.map((g) => (
+            <li key={g.id} className={styles.glyphItem}>
+              <span className={styles.glyphName}>{g.name}</span>
+              <span className={styles.glyphCount}>{g.strokeIds.length} strokes</span>
+              <button type="button" className={styles.untagBtn} onClick={() => handleUntag(g.id)}>
+                untag
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <div className={styles.canvasWrap}>
         <canvas ref={canvasRef} className={styles.canvas} />

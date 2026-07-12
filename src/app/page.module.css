@@ -78,6 +78,15 @@
   background: var(--color-lemon);
 }
 
+.clearBtn:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+.clearBtn:disabled:hover {
+  background: var(--color-vanilla);
+}
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -145,4 +154,73 @@
   min-width: 34px;
   color: var(--color-text);
   text-align: right;
+}
+
+.tagForm {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.nameInput {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: var(--sp-sm) var(--sp-md);
+  border: 1px solid var(--color-blueberry);
+  border-radius: 6px;
+  background: var(--color-vanilla);
+  color: var(--color-text);
+  min-width: 220px;
+}
+
+.nameInput::placeholder {
+  color: var(--color-muted);
+}
+
+.glyphList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-sm);
+  list-style: none;
+  margin: 0;
+  padding: var(--sp-sm) var(--sp-lg);
+  border-bottom: 1px solid var(--color-cappuccino);
+}
+
+.glyphItem {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  padding: 4px var(--sp-sm);
+  border-radius: 6px;
+  background: var(--color-cappuccino);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.glyphName {
+  font-weight: 700;
+  color: var(--color-grape);
+}
+
+.glyphCount {
+  color: var(--color-muted);
+}
+
+.untagBtn {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  border: 0;
+  background: none;
+  color: var(--color-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.untagBtn:hover {
+  color: var(--color-text);
+  text-decoration: underline;
 }
