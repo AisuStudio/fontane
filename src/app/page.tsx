@@ -6,8 +6,9 @@ import styles from "./page.module.css";
 import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokePoint } from "@/lib/strokes";
 import { loadGlyphs, saveGlyphs, unicodeFor, type Glyph, type GlyphKind } from "@/lib/glyphs";
 import { anyPointInPolygon } from "@/lib/geometry";
+import { outlineToPath, pathToSvgD, type PathCommand } from "@/lib/contour";
 
-type ViewMode = "draw" | "review";
+type ViewMode = "draw" | "review" | "export";
 type StrokeMode = "mono" | "dynamic";
 
 type StrokeSettings = {
@@ -43,20 +44,45 @@ function outlineFor(points: StrokePoint[], settings: StrokeSettings): [number, n
   return getStroke(points, optionsFor(settings)) as [number, number][];
 }
 
+function applyPath(ctx: CanvasRenderingContext2D, commands: PathCommand[]) {
+  for (const c of commands) {
+    if (c.type === "M") ctx.moveTo(c.x, c.y);
+    else if (c.type === "Q") ctx.quadraticCurveTo(c.cx, c.cy, c.x, c.y);
+    else ctx.closePath();
+  }
+}
+
 function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][], color: string) {
   if (outline.length < 3) return;
-  // Connect outline points with quadratic curves through their midpoints instead of
-  // straight lines — perfect-freehand's raw polygon looks faceted otherwise.
+  // Shares outlineToPath with the SVG export (src/lib/contour.ts) so the canvas
+  // rendering and the exported document always describe the same curve.
   ctx.beginPath();
-  ctx.moveTo(outline[0][0], outline[0][1]);
-  for (let i = 0; i < outline.length; i++) {
-    const [x0, y0] = outline[i];
-    const [x1, y1] = outline[(i + 1) % outline.length];
-    ctx.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
-  }
-  ctx.closePath();
+  applyPath(ctx, outlineToPath(outline));
   ctx.fillStyle = color;
   ctx.fill();
+}
+
+// The shared editable document: every glyph resolved to its actual contours (SVG
+// path data, one per stroke), plus the identity/relationship fields from Phase 2.
+// This is what a later export step (SVG + .fea, or a direct fontTools compile)
+// would consume — nothing here writes anywhere, it's just compiled on demand.
+function compileDocument(glyphs: Glyph[], strokes: Stroke[], settings: StrokeSettings) {
+  const byId = new Map(strokes.map((s) => [s.id, s]));
+  return {
+    version: 1,
+    settings: optionsFor(settings),
+    glyphs: glyphs.map((g) => ({
+      name: g.name,
+      kind: g.kind,
+      unicode: g.unicode,
+      components: g.components,
+      alternateOf: g.alternateOf,
+      contours: g.strokeIds
+        .map((id) => byId.get(id))
+        .filter((s): s is Stroke => Boolean(s))
+        .map((s) => pathToSvgD(outlineToPath(outlineFor(s.points, settings)))),
+    })),
+  };
 }
 
 function strokeLassoPath(ctx: CanvasRenderingContext2D, points: [number, number][]) {
@@ -111,6 +137,8 @@ export default function Home() {
   const [hud, setHud] = useState({ pointerType: "—", pressure: 0, x: 0, y: 0 });
   const [strokeCount, setStrokeCount] = useState(0);
   const [redoCount, setRedoCount] = useState(0);
+  const [exportJson, setExportJson] = useState("");
+  const [copyStatus, setCopyStatus] = useState("");
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -260,6 +288,12 @@ export default function Home() {
   }, [glyphs]);
 
   useEffect(() => {
+    if (viewMode !== "export") return;
+    const doc = compileDocument(glyphs, completedRef.current, settings);
+    setExportJson(JSON.stringify(doc, null, 2));
+  }, [viewMode, glyphs, settings]);
+
+  useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
       if (viewModeRef.current !== "draw") return;
@@ -342,14 +376,33 @@ export default function Home() {
     setGlyphs((gs) => gs.filter((g) => g.id !== id));
   }
 
+  function handleCopyJson() {
+    navigator.clipboard.writeText(exportJson).then(() => {
+      setCopyStatus("copied!");
+      setTimeout(() => setCopyStatus(""), 2000);
+    });
+  }
+
+  function handleDownloadJson() {
+    const blob = new Blob([exportJson], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "glypher-document.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <h1>glypher — phase 2 review</h1>
+        <h1>glypher</h1>
         <p>
-          {viewMode === "draw"
-            ? "Write with a stylus, mouse, or finger. Strokes persist across reloads."
-            : "Drag to lasso strokes, then give the selection a glyph name."}
+          {viewMode === "draw" && "Write with a stylus, mouse, or finger. Strokes persist across reloads."}
+          {viewMode === "review" && "Drag to lasso strokes, then give the selection a glyph name."}
+          {viewMode === "export" && "The compiled document — every tagged glyph resolved to real contours."}
         </p>
       </header>
 
@@ -372,6 +425,15 @@ export default function Home() {
             onClick={() => setViewMode("review")}
           >
             Review
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={viewMode === "export"}
+            className={`${styles.modeBtn} ${viewMode === "export" ? styles.modeBtnActive : ""}`}
+            onClick={() => setViewMode("export")}
+          >
+            Export
           </button>
         </div>
 
@@ -462,7 +524,7 @@ export default function Home() {
               </button>
             </div>
           </>
-        ) : (
+        ) : viewMode === "review" ? (
           <div className={styles.tagForm}>
             <div className={styles.modeToggle} role="radiogroup" aria-label="Glyph kind">
               <button
@@ -543,12 +605,28 @@ export default function Home() {
               Clear selection
             </button>
           </div>
+        ) : (
+          <div className={styles.tagForm}>
+            <button type="button" className={styles.clearBtn} onClick={handleCopyJson}>
+              Copy JSON
+            </button>
+            <button type="button" className={styles.clearBtn} onClick={handleDownloadJson}>
+              Download JSON
+            </button>
+            {copyStatus && <span id="copy-status">{copyStatus}</span>}
+          </div>
         )}
 
         <button className={styles.clearBtn} onClick={handleClear} type="button">
           Clear all
         </button>
       </div>
+
+      {viewMode === "export" && (
+        <section className={styles.exportPanel}>
+          <textarea className={styles.exportOutput} readOnly rows={20} value={exportJson} />
+        </section>
+      )}
 
       {viewMode === "review" && glyphs.length > 0 && (
         <ul className={styles.glyphList}>
@@ -569,7 +647,7 @@ export default function Home() {
         </ul>
       )}
 
-      <div className={styles.canvasWrap}>
+      <div className={styles.canvasWrap} style={viewMode === "export" ? { display: "none" } : undefined}>
         <canvas ref={canvasRef} className={styles.canvas} />
         <dl className={styles.hud}>
           <dt>pointerType</dt>
