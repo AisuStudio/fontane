@@ -1,5 +1,12 @@
 # Glypher → TTF export
 
+**Most people don't need this.** The Export tab in the web app has an
+"Export OTF" button that builds a font entirely client-side (via
+`opentype.js`, see `src/lib/exportFont.ts`) — no download-JSON-then-run-a-
+script step. This local Python script is the alternative path for people who
+specifically want a real TrueType (`glyf`-table) `.ttf` instead of the
+in-app CFF-flavored `.otf`, or who want to script/batch the build.
+
 A local Python script that compiles a `glypher-document.json` (Export tab →
 Download JSON in the Glypher web app) into a real `.ttf` font — no Glyphs.app,
 no hosted backend, just `fontTools` on your own machine.

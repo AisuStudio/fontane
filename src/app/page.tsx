@@ -7,6 +7,7 @@ import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokePoint }
 import { loadGlyphs, saveGlyphs, unicodeFor, type Glyph, type GlyphKind } from "@/lib/glyphs";
 import { anyPointInPolygon } from "@/lib/geometry";
 import { outlineToPath, pathToSvgD, type PathCommand } from "@/lib/contour";
+import { downloadFont } from "@/lib/exportFont";
 import { Undo2, Redo2 } from "lucide-react";
 import GridCell from "./GridCell";
 import BetaBadge from "./BetaBadge";
@@ -157,6 +158,7 @@ export default function Home() {
   const [strokeCount, setStrokeCount] = useState(0);
   const [redoCount, setRedoCount] = useState(0);
   const [exportJson, setExportJson] = useState("");
+  const [exportDoc, setExportDoc] = useState<ReturnType<typeof compileDocument> | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -309,6 +311,7 @@ export default function Home() {
     if (viewMode !== "export") return;
     const doc = compileDocument(glyphs, completedRef.current, settings);
     setExportJson(JSON.stringify(doc, null, 2));
+    setExportDoc(doc);
   }, [viewMode, glyphs, settings]);
 
   useEffect(() => {
@@ -457,6 +460,11 @@ export default function Home() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  function handleExportOtf() {
+    if (!exportDoc) return;
+    downloadFont(exportDoc, "glypher.otf");
   }
 
   return (
@@ -738,6 +746,14 @@ export default function Home() {
           <div className={styles.tagForm}>
             <button type="button" className={styles.clearBtn} onClick={handleDownloadJson}>
               Download JSON
+            </button>
+            <button
+              type="button"
+              className={styles.clearBtn}
+              onClick={handleExportOtf}
+              disabled={glyphs.length === 0}
+            >
+              Export OTF
             </button>
           </div>
         )}
