@@ -87,9 +87,6 @@
 }
 
 .hud {
-  position: absolute;
-  top: var(--sp-md);
-  left: var(--sp-md);
   display: grid;
   grid-template-columns: auto auto;
   gap: 2px var(--sp-md);
@@ -99,7 +96,8 @@
   color: var(--color-vanilla);
   font-family: var(--font-mono);
   font-size: 12px;
-  pointer-events: none;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .hud dt { opacity: .6; }

@@ -711,6 +711,19 @@ export default function Home() {
         <button className={styles.clearBtn} onClick={handleClear} type="button">
           Clear all
         </button>
+
+        {((topMode === "draw" && drawStyle === "free") || topMode === "assign") && (
+          <dl className={styles.hud}>
+            <dt>pointerType</dt>
+            <dd>{hud.pointerType}</dd>
+            <dt>pressure</dt>
+            <dd>{hud.pressure.toFixed(2)}</dd>
+            <dt>x, y</dt>
+            <dd>{hud.x}, {hud.y}</dd>
+            <dt>strokes saved</dt>
+            <dd>{strokeCount}</dd>
+          </dl>
+        )}
       </header>
 
       <div className={styles.labBanner}>LabMode, more coming soon!</div>
@@ -1052,16 +1065,6 @@ export default function Home() {
         style={!((topMode === "draw" && drawStyle === "free") || topMode === "assign") ? { display: "none" } : undefined}
       >
         <canvas ref={canvasRef} className={styles.canvas} />
-        <dl className={styles.hud}>
-          <dt>pointerType</dt>
-          <dd>{hud.pointerType}</dd>
-          <dt>pressure</dt>
-          <dd>{hud.pressure.toFixed(2)}</dd>
-          <dt>x, y</dt>
-          <dd>{hud.x}, {hud.y}</dd>
-          <dt>strokes saved</dt>
-          <dd>{strokeCount}</dd>
-        </dl>
       </div>
 
       {topMode === "draw" && drawStyle === "grid" && (
