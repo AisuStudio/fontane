@@ -1343,8 +1343,12 @@ export default function Home() {
         />
       )}
 
-      {((topMode === "draw" && drawStyle === "free") || topMode === "assign") && (
+      {(topMode === "draw" || topMode === "assign") && (
         <div className={styles.hud}>
+          <span className={styles.hudItem}>
+            <span className={styles.hudLabel}>mode</span>
+            {topMode === "assign" ? "Assign" : drawStyle === "free" ? "Free" : drawStyle === "grid" ? "Grid" : "Editor"}
+          </span>
           <span className={styles.hudItem}>
             <span className={styles.hudLabel}>pointerType</span>
             {hud.pointerType}

@@ -87,6 +87,11 @@
 }
 
 .hud {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: var(--sp-lg);
@@ -95,7 +100,6 @@
   color: var(--color-vanilla);
   font-family: var(--font-mono);
   font-size: 12px;
-  flex-shrink: 0;
 }
 
 .hudItem {
