@@ -395,11 +395,24 @@ export default function Home() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        if (topModeRef.current !== "draw") return;
+        e.preventDefault();
+        if (e.shiftKey) redoRef.current();
+        else undoRef.current();
+        return;
+      }
+
+      // P/E tool shortcuts — only in Draw, and never while the user is
+      // actually typing a glyph name/text (those single-letter inputs can
+      // legitimately contain "p" or "e").
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
       if (topModeRef.current !== "draw") return;
-      e.preventDefault();
-      if (e.shiftKey) redoRef.current();
-      else undoRef.current();
+      const key = e.key.toLowerCase();
+      if (key === "p") setDrawTool("pen");
+      else if (key === "e") setDrawTool("eraser");
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -792,7 +805,8 @@ export default function Home() {
               aria-checked={drawTool === "pen"}
               className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${drawTool === "pen" ? styles.modeBtnActive : ""}`}
               onClick={() => setDrawTool("pen")}
-              aria-label="Pen"
+              aria-label="Pen (P)"
+              title="Pen (P)"
             >
               <PenTool size={16} strokeWidth={2} />
             </button>
@@ -802,7 +816,8 @@ export default function Home() {
               aria-checked={drawTool === "eraser"}
               className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${drawTool === "eraser" ? styles.modeBtnActive : ""}`}
               onClick={() => setDrawTool("eraser")}
-              aria-label="Eraser"
+              aria-label="Eraser (E)"
+              title="Eraser (E)"
             >
               <Eraser size={16} strokeWidth={2} />
             </button>
