@@ -805,8 +805,8 @@ export default function Home() {
               aria-checked={drawTool === "pen"}
               className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${drawTool === "pen" ? styles.modeBtnActive : ""}`}
               onClick={() => setDrawTool("pen")}
-              aria-label="Pen (P)"
-              title="Pen (P)"
+              aria-label="Draw (p)"
+              title="Draw (p)"
             >
               <PenTool size={16} strokeWidth={2} />
             </button>
@@ -816,8 +816,8 @@ export default function Home() {
               aria-checked={drawTool === "eraser"}
               className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${drawTool === "eraser" ? styles.modeBtnActive : ""}`}
               onClick={() => setDrawTool("eraser")}
-              aria-label="Eraser (E)"
-              title="Eraser (E)"
+              aria-label="Erase (e)"
+              title="Erase (e)"
             >
               <Eraser size={16} strokeWidth={2} />
             </button>
