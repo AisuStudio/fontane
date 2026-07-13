@@ -602,6 +602,7 @@ export default function Home() {
             className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${topMode === "draw" ? styles.modeBtnActive : ""}`}
             onClick={() => setTopMode("draw")}
             aria-label="Draw"
+            title="Draw"
           >
             <PenTool size={16} strokeWidth={2} />
           </button>
@@ -613,6 +614,7 @@ export default function Home() {
               className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${topMode === "assign" ? styles.modeBtnActive : ""}`}
               onClick={() => setTopMode("assign")}
               aria-label="Assign"
+              title="Assign"
             >
               <BookA size={16} strokeWidth={2} />
             </button>
@@ -624,6 +626,7 @@ export default function Home() {
             className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${topMode === "animate" ? styles.modeBtnActive : ""}`}
             onClick={() => setTopMode("animate")}
             aria-label="Animate"
+            title="Animate"
           >
             <Sparkle size={16} strokeWidth={2} />
           </button>
@@ -634,6 +637,7 @@ export default function Home() {
             className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${topMode === "export" ? styles.modeBtnActive : ""}`}
             onClick={() => setTopMode("export")}
             aria-label="Export"
+            title="Export"
           >
             <Download size={16} strokeWidth={2} />
           </button>
@@ -648,6 +652,7 @@ export default function Home() {
               className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${drawStyle === "free" ? styles.modeBtnActive : ""}`}
               onClick={() => setDrawStyle("free")}
               aria-label="Free"
+              title="Free"
             >
               <LineSquiggle size={16} strokeWidth={2} />
             </button>
@@ -658,6 +663,7 @@ export default function Home() {
               className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${drawStyle === "grid" ? styles.modeBtnActive : ""}`}
               onClick={() => setDrawStyle("grid")}
               aria-label="Grid"
+              title="Grid"
             >
               <Grid3x3 size={16} strokeWidth={2} />
             </button>
@@ -672,6 +678,7 @@ export default function Home() {
               aria-checked={true}
               className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${styles.modeBtnActive}`}
               aria-label="Select"
+              title="Select"
             >
               <SquareDashed size={16} strokeWidth={2} />
             </button>
@@ -685,6 +692,7 @@ export default function Home() {
             onClick={handleUndo}
             disabled={strokeCount === 0}
             aria-label="Undo"
+            title="Undo"
           >
             <Undo2 size={16} strokeWidth={2} />
           </button>
@@ -694,6 +702,7 @@ export default function Home() {
             onClick={handleRedo}
             disabled={redoCount === 0}
             aria-label="Redo"
+            title="Redo"
           >
             <Redo2 size={16} strokeWidth={2} />
           </button>
