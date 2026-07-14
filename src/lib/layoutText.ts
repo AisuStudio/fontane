@@ -4,7 +4,7 @@ import type { Metrics } from "./metrics";
 
 // A shared row-of-text pixel space for the Animate preview/export — not a
 // real font em, just fixed constants big enough that every glyph (Grid- or
-// Write-tagged) lands on the same baseline at a comparable size.
+// Free-tagged) lands on the same baseline at a comparable size.
 const TARGET_CAP_HEIGHT = 140;
 const BASELINE_Y = 100;
 const SPACE_ADVANCE = TARGET_CAP_HEIGHT * 0.4;
@@ -107,7 +107,7 @@ export function layoutText(text: string, glyphs: Glyph[], strokes: Stroke[], met
       offsetY = BASELINE_Y - baselinePx * scale;
       advanceWidth = Math.max((rightPx - leftPx) * scale, 1);
     } else {
-      // Write-mode lasso-tagged glyph: no Grid guide data — rescale the
+      // Free-mode lasso-tagged glyph: no Grid guide data — rescale the
       // glyph's own drawn bounding box to a fixed height, ink-bottom on the
       // shared baseline. If there's no ink at all (shouldn't normally happen,
       // but a tagged glyph could in principle have lost its strokes), treat

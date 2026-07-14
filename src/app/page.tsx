@@ -14,7 +14,7 @@ import { saveFile } from "@/lib/saveFile";
 import { loadMetrics, saveMetrics, type Metrics } from "@/lib/metrics";
 import { loadSettings, saveSettings, type StrokeSettings } from "@/lib/settings";
 import { downloadProjectFile, parseProjectFile, applyProjectFile } from "@/lib/projectFile";
-import { Undo2, Redo2, PenTool, SquareDashed, Eraser, LineSquiggle, Grid3x3, BookA, Sparkle, Download, SplinePointer, NotebookPen } from "lucide-react";
+import { Undo2, Redo2, PenTool, Eraser, LineSquiggle, Grid3x3, BookA, Sparkle, Download, SplinePointer, NotebookPen } from "lucide-react";
 import GridCell, { DEFAULT_LEFT_BEARING, DEFAULT_RIGHT_BEARING } from "./GridCell";
 import BetaBadge from "./BetaBadge";
 import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
@@ -24,14 +24,14 @@ import { DEFAULT_PRESET_ID, type AnimationPresetId } from "@/lib/animationPreset
 
 // Draw has three styles: Free (the old "Write" freeform canvas), Grid (one
 // glyph per cell), and Editor (compose/preview text using already-tagged
-// glyphs — no drawing of its own yet). Assign only ever applies to Free —
-// Grid already tags a stroke to its glyph the moment it's drawn, so there's
-// nothing to assign there.
-type TopMode = "draw" | "assign" | "animate" | "export";
+// glyphs — no drawing of its own yet).
+type TopMode = "draw" | "animate" | "export";
 type DrawStyle = "free" | "grid" | "editor";
-// Modify (like Assign) only ever applies to Free — reshaping a Grid cell's
-// single-letter stroke via anchors isn't the point of that view.
-type DrawTool = "pen" | "eraser" | "modify";
+// Modify and Assign only ever apply to Free — reshaping a Grid cell's
+// single-letter stroke via anchors, or lasso-tagging a stroke to a glyph,
+// isn't the point of the Grid/Editor views (Grid already tags a stroke to
+// its glyph the moment it's drawn, so there's nothing to assign there).
+type DrawTool = "pen" | "eraser" | "modify" | "assign";
 
 const COLOR_DEFAULT = "#1f1934"; // blueberry — untagged
 const COLOR_SELECTED = "#d8ff01"; // lemon — pending selection
@@ -335,10 +335,10 @@ export default function Home() {
                 : COLOR_DEFAULT;
         fillOutline(ctx, outlines[i], color);
       }
-      if (topModeRef.current === "draw" && currentPointsRef.current.length > 0) {
+      if (drawToolRef.current !== "assign" && currentPointsRef.current.length > 0) {
         fillOutline(ctx, outlineFor(currentPointsRef.current, settingsRef.current), COLOR_DEFAULT);
       }
-      if (topModeRef.current === "assign" && lassoRef.current.length > 1) {
+      if (drawToolRef.current === "assign" && lassoRef.current.length > 1) {
         strokeLassoPath(ctx, lassoRef.current);
       }
       if (drawToolRef.current === "modify" && editingStrokeIdRef.current) {
@@ -413,10 +413,10 @@ export default function Home() {
         return;
       }
       drawingRef.current = true;
-      if (topModeRef.current === "draw") {
-        currentPointsRef.current = [p];
-      } else {
+      if (drawToolRef.current === "assign") {
         lassoRef.current = [[p[0], p[1]]];
+      } else {
+        currentPointsRef.current = [p];
       }
     }
 
@@ -445,10 +445,10 @@ export default function Home() {
       }
       canvas!.style.cursor = "";
       if (!drawingRef.current) return;
-      if (topModeRef.current === "draw") {
-        currentPointsRef.current.push(p);
-      } else {
+      if (drawToolRef.current === "assign") {
         lassoRef.current.push([p[0], p[1]]);
+      } else {
+        currentPointsRef.current.push(p);
       }
       redraw();
     }
@@ -463,7 +463,14 @@ export default function Home() {
         redraw();
         return;
       }
-      if (topModeRef.current === "draw") {
+      if (drawToolRef.current === "assign") {
+        const polygon = lassoRef.current;
+        const matched = completedRef.current
+          .filter((s) => anyPointInPolygon(s.points.map((p) => [p[0], p[1]]) as [number, number][], polygon))
+          .map((s) => s.id);
+        setSelectedIds(matched);
+        lassoRef.current = [];
+      } else {
         if (drawingRef.current && currentPointsRef.current.length > 1) {
           const stroke: Stroke = {
             id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
@@ -478,13 +485,6 @@ export default function Home() {
           setRedoCount(0);
         }
         currentPointsRef.current = [];
-      } else {
-        const polygon = lassoRef.current;
-        const matched = completedRef.current
-          .filter((s) => anyPointInPolygon(s.points.map((p) => [p[0], p[1]]) as [number, number][], polygon))
-          .map((s) => s.id);
-        setSelectedIds(matched);
-        lassoRef.current = [];
       }
       drawingRef.current = false;
       canvas!.releasePointerCapture(e.pointerId);
@@ -526,11 +526,25 @@ export default function Home() {
   useEffect(() => {
     drawToolRef.current = drawTool;
     if (drawTool !== "modify") exitModifyEditing();
+    // Switching tools mid-gesture shouldn't leave a stale in-progress pen
+    // stroke or lasso outline drawn on screen for a tool that's no longer
+    // active. Selection is Assign's own working state, so it's spared here —
+    // it can only be non-empty while drawTool==="assign" anyway, since only
+    // the lasso path populates it.
+    currentPointsRef.current = [];
+    lassoRef.current = [];
+    if (drawTool !== "assign") setSelectedIds([]);
     redrawRef.current();
   }, [drawTool]);
 
   useEffect(() => {
     exitModifyEditing();
+    // Leaving Free strands drawTool on a value ("modify"/"assign") whose
+    // button no longer exists in the UI — reset it back to the universal
+    // default so Grid/Editor don't silently inherit a stale tool (see
+    // GridCell's tool coercion, which would otherwise just treat it as pen
+    // with no visual indication anything was off).
+    setDrawTool((t) => (t === "modify" || t === "assign" ? "pen" : t));
     redrawRef.current();
   }, [drawStyle]);
 
@@ -855,19 +869,6 @@ export default function Home() {
           >
             <PenTool size={16} strokeWidth={2} />
           </button>
-          {drawStyle === "free" && (
-            <button
-              type="button"
-              role="radio"
-              aria-checked={topMode === "assign"}
-              className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${topMode === "assign" ? styles.modeBtnActive : ""}`}
-              onClick={() => setTopMode("assign")}
-              aria-label="Assign"
-              title="Assign"
-            >
-              <BookA size={16} strokeWidth={2} />
-            </button>
-          )}
           <button
             type="button"
             role="radio"
@@ -930,27 +931,12 @@ export default function Home() {
           </div>
         )}
 
-        {topMode === "assign" && (
-          <div className={styles.modeToggle} role="radiogroup" aria-label="Assign method">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={true}
-              className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${styles.modeBtnActive}`}
-              aria-label="Select"
-              title="Select"
-            >
-              <SquareDashed size={16} strokeWidth={2} />
-            </button>
-          </div>
-        )}
-
         <div className={styles.undoRedo}>
           <button
             type="button"
             className={`${styles.clearBtn} ${styles.iconOnlyBtn}`}
             onClick={handleUndo}
-            disabled={strokeCount === 0}
+            disabled={topMode !== "draw" || strokeCount === 0}
             aria-label="Undo"
             title="Undo"
           >
@@ -960,7 +946,7 @@ export default function Home() {
             type="button"
             className={`${styles.clearBtn} ${styles.iconOnlyBtn}`}
             onClick={handleRedo}
-            disabled={redoCount === 0}
+            disabled={topMode !== "draw" || redoCount === 0}
             aria-label="Redo"
             title="Redo"
           >
@@ -1103,6 +1089,19 @@ export default function Home() {
                 <SplinePointer size={16} strokeWidth={2} />
               </button>
             )}
+            {drawStyle === "free" && (
+              <button
+                type="button"
+                role="radio"
+                aria-checked={drawTool === "assign"}
+                className={`${styles.modeBtn} ${styles.iconOnlyBtn} ${drawTool === "assign" ? styles.modeBtnActive : ""}`}
+                onClick={() => setDrawTool("assign")}
+                aria-label="Assign"
+                title="Assign"
+              >
+                <BookA size={16} strokeWidth={2} />
+              </button>
+            )}
           </div>
         )}
 
@@ -1187,7 +1186,7 @@ export default function Home() {
           </>
         )}
 
-        {topMode === "assign" && (
+        {topMode === "draw" && drawStyle === "free" && drawTool === "assign" && (
           <div className={styles.tagForm}>
             <div className={styles.modeToggle} role="radiogroup" aria-label="Glyph kind">
               <button
@@ -1314,7 +1313,7 @@ export default function Home() {
         </section>
       )}
 
-      {topMode === "assign" && glyphs.length > 0 && (
+      {topMode === "draw" && drawStyle === "free" && drawTool === "assign" && glyphs.length > 0 && (
         <ul className={styles.glyphList}>
           {glyphs.map((g) => (
             <li key={g.id} className={styles.glyphItem}>
@@ -1335,7 +1334,7 @@ export default function Home() {
 
       <div
         className={styles.canvasWrap}
-        style={!((topMode === "draw" && drawStyle === "free") || topMode === "assign") ? { display: "none" } : undefined}
+        style={!(topMode === "draw" && drawStyle === "free") ? { display: "none" } : undefined}
       >
         <canvas ref={canvasRef} className={styles.canvas} />
       </div>
@@ -1407,11 +1406,11 @@ export default function Home() {
         />
       )}
 
-      {(topMode === "draw" || topMode === "assign") && (
+      {topMode === "draw" && (
         <div className={styles.hud}>
           <span className={styles.hudItem}>
             <span className={styles.hudLabel}>mode</span>
-            {topMode === "assign" ? "Assign" : drawStyle === "free" ? "Free" : drawStyle === "grid" ? "Grid" : "Editor"}
+            {drawStyle === "free" ? "Free" : drawStyle === "grid" ? "Grid" : "Editor"}
           </span>
           <span className={styles.hudItem}>
             <span className={styles.hudLabel}>pointerType</span>

@@ -248,7 +248,7 @@ export default function GridCell({
       }
       // Idle hover: show a resize cursor near a bearing line so it reads as
       // draggable before the user commits to a pointerdown; with the eraser
-      // tool, a crosshair over the whole cell (matches the Write-mode canvas).
+      // tool, a crosshair over the whole cell (matches the Free-mode canvas).
       const [x] = pointFromEvent(e);
       if (bearingNear(x, canvas!.clientWidth)) {
         canvas!.style.cursor = "ew-resize";
