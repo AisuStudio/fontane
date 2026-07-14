@@ -409,6 +409,12 @@
   color: var(--color-vanilla);
 }
 
+.undoRedo {
+  display: flex;
+  gap: var(--sp-sm);
+  flex-shrink: 0;
+}
+
 .iconOnlyBtn {
   display: inline-flex;
   align-items: center;

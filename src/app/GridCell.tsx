@@ -3,20 +3,37 @@
 import { useEffect, useRef } from "react";
 import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
-import { outlineToPath, type PathCommand } from "@/lib/contour";
-import { pointInPolygon } from "@/lib/geometry";
-import type { Stroke, StrokePoint } from "@/lib/strokes";
+import { outlineToPath, skeletonToPath, type PathCommand } from "@/lib/contour";
+import { pointInPolygon, anyPointInPolygon } from "@/lib/geometry";
+import { simplifyStrokeIndices } from "@/lib/simplify";
+import type { StrokePoint } from "@/lib/strokes";
 import type { Metrics } from "@/lib/metrics";
 import { unicodeFor } from "@/lib/glyphs";
 
 export type StrokeOptions = { size: number; thinning: number; smoothing: number; streamline: number };
-export type CellTool = "pen" | "eraser";
-export type CellStroke = { id: string; outline: [number, number][] };
+export type CellTool = "pen" | "eraser" | "select" | "nudge" | "move" | "rotate" | "scale";
+// Raw points now, not a precomputed outline — Nudge/Move/Rotate/Scale need
+// the real geometry to reshape/transform; the cell computes its own outline
+// from these via outlineFor() below, the same split Free's own canvas uses.
+export type CellStroke = { id: string; points: StrokePoint[] };
 
 const CELL_COLOR = "#1f1934";
+const SELECTED_COLOR = "#d8ff01"; // lemon — matches Free canvas's selection color
 const GUIDE_COLOR = "#9e9c95"; // hazelnut
 const BEARING_COLOR = "#5100ff"; // grape — matches the draggable-affordance color used elsewhere
 const BEARING_HIT_PX = 8;
+const ANCHOR_HIT_PX = 8;
+const ANCHOR_COLOR = "#5100ff";
+const ANCHOR_RING_COLOR = "#eae8e0"; // vanilla
+
+// Tools whose pointerdown-through-pointerup gesture is "drag a lasso and
+// replace the local selection with whatever it enclosed" — mirrors
+// page.tsx's LASSO_TOOLS. Grid has no Assign (auto-tags on draw), so Select
+// is the only member here.
+const LASSO_TOOLS = new Set<CellTool>(["select"]);
+// Tools that read (rather than replace) the current selection.
+const SELECTION_TOOLS = new Set<CellTool>(["select", "move", "rotate", "scale"]);
+const TRANSFORM_TOOLS = new Set<CellTool>(["move", "rotate", "scale"]);
 
 export const DEFAULT_LEFT_BEARING = 0.15;
 export const DEFAULT_RIGHT_BEARING = 0.85;
@@ -25,6 +42,7 @@ function applyPath(ctx: CanvasRenderingContext2D, commands: PathCommand[]) {
   for (const c of commands) {
     if (c.type === "M") ctx.moveTo(c.x, c.y);
     else if (c.type === "Q") ctx.quadraticCurveTo(c.cx, c.cy, c.x, c.y);
+    else if (c.type === "L") ctx.lineTo(c.x, c.y);
     else ctx.closePath();
   }
 }
@@ -35,6 +53,22 @@ function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][],
   applyPath(ctx, outlineToPath(outline));
   ctx.fillStyle = color;
   ctx.fill();
+}
+
+function outlineFor(points: StrokePoint[], options: StrokeOptions): [number, number][] {
+  return getStroke(points, options) as [number, number][];
+}
+
+// Pivot for Move/Rotate/Scale: bbox center across every currently-selected
+// stroke's points in THIS cell — mirrors page.tsx's own selectionPivot.
+function selectionPivot(strokes: CellStroke[], ids: Set<string>): { x: number; y: number } {
+  const points = strokes.filter((s) => ids.has(s.id)).flatMap((s) => s.points);
+  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+  for (const [x, y] of points) {
+    xmin = Math.min(xmin, x); xmax = Math.max(xmax, x);
+    ymin = Math.min(ymin, y); ymax = Math.max(ymax, y);
+  }
+  return { x: (xmin + xmax) / 2, y: (ymin + ymax) / 2 };
 }
 
 function drawGuides(
@@ -106,8 +140,13 @@ type Props = {
   strokes: CellStroke[];
   tool: CellTool;
   onEraseStroke: (id: string) => void;
+  onStrokesChange: (updates: { id: string; points: StrokePoint[] }[]) => void;
   strokeOptions: StrokeOptions;
-  onStrokeComplete: (stroke: Stroke, cellWidth: number, cellHeight: number) => void;
+  onStrokeComplete: (
+    stroke: { id: string; points: StrokePoint[]; createdAt: number },
+    cellWidth: number,
+    cellHeight: number
+  ) => void;
   metrics: Metrics;
   leftBearing?: number;
   rightBearing?: number;
@@ -119,6 +158,7 @@ export default function GridCell({
   strokes,
   tool,
   onEraseStroke,
+  onStrokesChange,
   strokeOptions,
   onStrokeComplete,
   metrics,
@@ -132,21 +172,65 @@ export default function GridCell({
   const strokesRef = useRef(strokes);
   const toolRef = useRef(tool);
   const onEraseStrokeRef = useRef(onEraseStroke);
+  const onStrokesChangeRef = useRef(onStrokesChange);
   const strokeOptionsRef = useRef(strokeOptions);
   const onStrokeCompleteRef = useRef(onStrokeComplete);
   const metricsRef = useRef(metrics);
   const bearingsRef = useRef({ leftBearing, rightBearing });
   const onBearingsChangeRef = useRef(onBearingsChange);
   const draggingRef = useRef<"left" | "right" | null>(null);
+  const redrawRef = useRef<() => void>(() => {});
 
-  strokesRef.current = strokes;
+  const lassoRef = useRef<[number, number][]>([]);
+  const selectedIdsRef = useRef<Set<string>>(new Set());
+
+  // Nudge: which stroke is being reshaped, its Douglas-Peucker-simplified
+  // anchor indices, whether it's been resampled down to just those anchors
+  // yet (lazy, first drag only), and which anchor is mid-drag — exact same
+  // shape as the Free canvas's own Nudge state in page.tsx.
+  const editingStrokeIdRef = useRef<string | null>(null);
+  const anchorIndicesRef = useRef<number[]>([]);
+  const resampledRef = useRef(false);
+  const draggingAnchorRef = useRef<number | null>(null);
+
+  // Move/Rotate/Scale: pivot + frozen pre-drag snapshot, captured once on
+  // the pointerdown that hits a selected stroke — every pointermove
+  // recomputes from this snapshot rather than the live (already-mutated)
+  // points. Mirrors page.tsx's transformStartRef exactly.
+  const transformStartRef = useRef<{
+    mode: "move" | "rotate" | "scale";
+    pivotX: number;
+    pivotY: number;
+    startX: number;
+    startY: number;
+    startDist: number;
+    startAngle: number;
+    snapshot: Map<string, StrokePoint[]>;
+  } | null>(null);
+
   toolRef.current = tool;
   onEraseStrokeRef.current = onEraseStroke;
+  onStrokesChangeRef.current = onStrokesChange;
   strokeOptionsRef.current = strokeOptions;
   onStrokeCompleteRef.current = onStrokeComplete;
   metricsRef.current = metrics;
-  bearingsRef.current = { leftBearing, rightBearing };
+  // Skip while a drag is in progress: a stray parent re-render mid-drag
+  // (e.g. Safari's dynamic toolbar resizing the viewport during a pencil
+  // gesture) would otherwise clobber the in-flight ref value back to the
+  // still-uncommitted prop, snapping the bearing back to its pre-drag spot
+  // — onPointerUp is what actually commits the dragged value upward.
+  if (!draggingRef.current) {
+    bearingsRef.current = { leftBearing, rightBearing };
+  }
   onBearingsChangeRef.current = onBearingsChange;
+  // Same clobber-guard, generalized: don't resync the working stroke data
+  // from props while a Nudge or Move/Rotate/Scale edit is live, or the
+  // in-flight reshape/transform would revert to the last-committed shape
+  // the moment any unrelated parent re-render happens.
+  const editingStroke = editingStrokeIdRef.current !== null || transformStartRef.current !== null;
+  if (!editingStroke) {
+    strokesRef.current = strokes;
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -166,12 +250,66 @@ export default function GridCell({
         bearingsRef.current.rightBearing
       );
       for (const s of strokesRef.current) {
-        fillOutline(ctx, s.outline);
+        const color =
+          s.id === editingStrokeIdRef.current || selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
+        fillOutline(ctx, outlineFor(s.points, strokeOptionsRef.current), color);
       }
       if (pointsRef.current.length > 0) {
-        fillOutline(ctx, getStroke(pointsRef.current, strokeOptionsRef.current) as [number, number][]);
+        fillOutline(ctx, outlineFor(pointsRef.current, strokeOptionsRef.current));
+      }
+      if (lassoRef.current.length > 1) {
+        ctx.save();
+        ctx.strokeStyle = BEARING_COLOR;
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(lassoRef.current[0][0], lassoRef.current[0][1]);
+        for (let i = 1; i < lassoRef.current.length; i++) ctx.lineTo(lassoRef.current[i][0], lassoRef.current[i][1]);
+        ctx.stroke();
+        ctx.restore();
+      }
+      if (toolRef.current === "nudge" && editingStrokeIdRef.current) {
+        const stroke = strokesRef.current.find((s) => s.id === editingStrokeIdRef.current);
+        if (stroke) {
+          // The literal "core path" — same live skeleton-centerline render
+          // Free's own Nudge tool uses, not the filled perfect-freehand
+          // outline.
+          ctx.save();
+          ctx.beginPath();
+          applyPath(ctx, skeletonToPath(stroke.points.map((p) => [p[0], p[1]] as [number, number])));
+          ctx.strokeStyle = ANCHOR_COLOR;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.restore();
+
+          for (const idx of anchorIndicesRef.current) {
+            const [ax, ay] = stroke.points[idx];
+            ctx.beginPath();
+            ctx.arc(ax, ay, 4, 0, Math.PI * 2);
+            ctx.fillStyle = ANCHOR_COLOR;
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(ax, ay, 4, 0, Math.PI * 2);
+            ctx.strokeStyle = ANCHOR_RING_COLOR;
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+          }
+        }
+      }
+      if (TRANSFORM_TOOLS.has(toolRef.current) && transformStartRef.current) {
+        const t = transformStartRef.current;
+        ctx.beginPath();
+        ctx.arc(t.pivotX, t.pivotY, 4, 0, Math.PI * 2);
+        ctx.fillStyle = ANCHOR_COLOR;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(t.pivotX, t.pivotY, 4, 0, Math.PI * 2);
+        ctx.strokeStyle = ANCHOR_RING_COLOR;
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
       }
     }
+    redrawRef.current = redraw;
 
     function resize() {
       if (!canvas) return;
@@ -205,6 +343,103 @@ export default function GridCell({
       return null;
     }
 
+    function anchorNear(x: number, y: number, points: StrokePoint[], indices: number[]): number | null {
+      for (let rank = indices.length - 1; rank >= 0; rank--) {
+        const [px, py] = points[indices[rank]];
+        if (Math.hypot(x - px, y - py) <= ANCHOR_HIT_PX) return rank;
+      }
+      return null;
+    }
+
+    // Same click-to-edit / anchor-grab / lazy-resample logic as Free's own
+    // handleNudgePointerDown, operating on this cell's local strokesRef
+    // instead of page.tsx's completedRef.
+    function handleNudgePointerDown(x: number, y: number) {
+      if (editingStrokeIdRef.current) {
+        const idx = strokesRef.current.findIndex((s) => s.id === editingStrokeIdRef.current);
+        if (idx !== -1) {
+          const stroke = strokesRef.current[idx];
+          const rank = anchorNear(x, y, stroke.points, anchorIndicesRef.current);
+          if (rank !== null) {
+            if (!resampledRef.current) {
+              stroke.points = anchorIndicesRef.current.map((i) => stroke.points[i]);
+              anchorIndicesRef.current = stroke.points.map((_, i) => i);
+              resampledRef.current = true;
+            }
+            draggingAnchorRef.current = rank;
+            return;
+          }
+        }
+      }
+      for (let i = strokesRef.current.length - 1; i >= 0; i--) {
+        const s = strokesRef.current[i];
+        if (pointInPolygon([x, y], outlineFor(s.points, strokeOptionsRef.current))) {
+          editingStrokeIdRef.current = s.id;
+          anchorIndicesRef.current = simplifyStrokeIndices(s.points.map((p) => [p[0], p[1]]));
+          resampledRef.current = false;
+          return;
+        }
+      }
+      editingStrokeIdRef.current = null;
+      anchorIndicesRef.current = [];
+      resampledRef.current = false;
+    }
+
+    // Move/Rotate/Scale click: must land on an already-selected stroke
+    // (Select populates selectedIdsRef first) — same split as page.tsx.
+    function handleTransformPointerDown(x: number, y: number, mode: "move" | "rotate" | "scale") {
+      let hit = false;
+      for (let i = strokesRef.current.length - 1; i >= 0; i--) {
+        const s = strokesRef.current[i];
+        if (selectedIdsRef.current.has(s.id) && pointInPolygon([x, y], outlineFor(s.points, strokeOptionsRef.current))) {
+          hit = true;
+          break;
+        }
+      }
+      if (!hit) return;
+      const pivot = selectionPivot(strokesRef.current, selectedIdsRef.current);
+      const snapshot = new Map(
+        strokesRef.current
+          .filter((s) => selectedIdsRef.current.has(s.id))
+          .map((s) => [s.id, s.points.map((p) => [...p] as StrokePoint)] as const)
+      );
+      transformStartRef.current = {
+        mode,
+        pivotX: pivot.x,
+        pivotY: pivot.y,
+        startX: x,
+        startY: y,
+        startDist: Math.max(Math.hypot(x - pivot.x, y - pivot.y), 1),
+        startAngle: Math.atan2(y - pivot.y, x - pivot.x),
+        snapshot,
+      };
+    }
+
+    function applyTransform(x: number, y: number) {
+      const t = transformStartRef.current;
+      if (!t) return;
+      const dx = x - t.startX;
+      const dy = y - t.startY;
+      const angle = Math.atan2(y - t.pivotY, x - t.pivotX) - t.startAngle;
+      const scaleFactor = Math.max(Math.hypot(x - t.pivotX, y - t.pivotY), 1) / t.startDist;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      for (const [id, points] of t.snapshot) {
+        const idx = strokesRef.current.findIndex((s) => s.id === id);
+        if (idx === -1) continue;
+        const stroke = strokesRef.current[idx];
+        stroke.points = points.map(([px, py, pressure]) => {
+          if (t.mode === "move") return [px + dx, py + dy, pressure] as StrokePoint;
+          if (t.mode === "rotate") {
+            const ox = px - t.pivotX;
+            const oy = py - t.pivotY;
+            return [t.pivotX + ox * cos - oy * sin, t.pivotY + ox * sin + oy * cos, pressure] as StrokePoint;
+          }
+          return [t.pivotX + (px - t.pivotX) * scaleFactor, t.pivotY + (py - t.pivotY) * scaleFactor, pressure] as StrokePoint;
+        });
+      }
+    }
+
     function onPointerDown(e: PointerEvent) {
       canvas!.setPointerCapture(e.pointerId);
       const [x, y] = pointFromEvent(e);
@@ -217,15 +452,29 @@ export default function GridCell({
         // Topmost (last-drawn) stroke wins when strokes overlap.
         for (let i = strokesRef.current.length - 1; i >= 0; i--) {
           const s = strokesRef.current[i];
-          if (pointInPolygon([x, y], s.outline)) {
+          if (pointInPolygon([x, y], outlineFor(s.points, strokeOptionsRef.current))) {
             onEraseStrokeRef.current(s.id);
             break;
           }
         }
         return;
       }
+      if (toolRef.current === "nudge") {
+        handleNudgePointerDown(x, y);
+        redraw();
+        return;
+      }
+      if (TRANSFORM_TOOLS.has(toolRef.current)) {
+        handleTransformPointerDown(x, y, toolRef.current as "move" | "rotate" | "scale");
+        redraw();
+        return;
+      }
       drawingRef.current = true;
-      pointsRef.current = [pointFromEvent(e)];
+      if (LASSO_TOOLS.has(toolRef.current)) {
+        lassoRef.current = [[x, y]];
+      } else {
+        pointsRef.current = [pointFromEvent(e)];
+      }
     }
 
     function onPointerMove(e: PointerEvent) {
@@ -241,22 +490,45 @@ export default function GridCell({
         redraw();
         return;
       }
-      if (drawingRef.current) {
-        pointsRef.current.push(pointFromEvent(e));
+      const [x, y] = pointFromEvent(e);
+      if (toolRef.current === "nudge") {
+        if (draggingAnchorRef.current !== null && editingStrokeIdRef.current) {
+          const idx = strokesRef.current.findIndex((s) => s.id === editingStrokeIdRef.current);
+          if (idx !== -1) {
+            const stroke = strokesRef.current[idx];
+            const pointIdx = anchorIndicesRef.current[draggingAnchorRef.current];
+            const prevPressure = stroke.points[pointIdx][2];
+            stroke.points[pointIdx] = [x, y, prevPressure];
+            redraw();
+          }
+          return;
+        }
+        canvas!.style.cursor = editingStrokeIdRef.current ? "grab" : "pointer";
+        return;
+      }
+      if (transformStartRef.current) {
+        applyTransform(x, y);
         redraw();
         return;
       }
-      // Idle hover: show a resize cursor near a bearing line so it reads as
-      // draggable before the user commits to a pointerdown; with the eraser
-      // tool, a crosshair over the whole cell (matches the Free-mode canvas).
-      const [x] = pointFromEvent(e);
-      if (bearingNear(x, canvas!.clientWidth)) {
-        canvas!.style.cursor = "ew-resize";
-      } else if (toolRef.current === "eraser") {
-        canvas!.style.cursor = "crosshair";
-      } else {
-        canvas!.style.cursor = "";
+      if (!drawingRef.current) {
+        if (bearingNear(x, canvas!.clientWidth)) {
+          canvas!.style.cursor = "ew-resize";
+        } else if (toolRef.current === "eraser") {
+          canvas!.style.cursor = "crosshair";
+        } else if (TRANSFORM_TOOLS.has(toolRef.current)) {
+          canvas!.style.cursor = "move";
+        } else {
+          canvas!.style.cursor = "";
+        }
+        return;
       }
+      if (LASSO_TOOLS.has(toolRef.current)) {
+        lassoRef.current.push([x, y]);
+      } else {
+        pointsRef.current.push([x, y, e.pressure > 0 ? e.pressure : 0.5]);
+      }
+      redraw();
     }
 
     function onPointerUp(e: PointerEvent) {
@@ -266,16 +538,47 @@ export default function GridCell({
         canvas!.releasePointerCapture(e.pointerId);
         return;
       }
-      if (drawingRef.current && pointsRef.current.length > 1) {
-        onStrokeCompleteRef.current(
-          {
-            id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
-            points: pointsRef.current,
-            createdAt: Date.now(),
-          },
-          canvas!.clientWidth,
-          canvas!.clientHeight
-        );
+      if (toolRef.current === "nudge") {
+        if (draggingAnchorRef.current !== null) {
+          draggingAnchorRef.current = null;
+          const stroke = strokesRef.current.find((s) => s.id === editingStrokeIdRef.current);
+          if (stroke) onStrokesChangeRef.current([{ id: stroke.id, points: stroke.points }]);
+        }
+        canvas!.releasePointerCapture(e.pointerId);
+        redraw();
+        return;
+      }
+      if (transformStartRef.current) {
+        const t = transformStartRef.current;
+        const updates = [...t.snapshot.keys()].flatMap((id) => {
+          const s = strokesRef.current.find((s) => s.id === id);
+          return s ? [{ id, points: s.points }] : [];
+        });
+        onStrokesChangeRef.current(updates);
+        transformStartRef.current = null;
+        canvas!.releasePointerCapture(e.pointerId);
+        redraw();
+        return;
+      }
+      if (LASSO_TOOLS.has(toolRef.current)) {
+        const polygon = lassoRef.current;
+        const matched = strokesRef.current
+          .filter((s) => anyPointInPolygon(s.points.map((p) => [p[0], p[1]]) as [number, number][], polygon))
+          .map((s) => s.id);
+        selectedIdsRef.current = new Set(matched);
+        lassoRef.current = [];
+      } else {
+        if (drawingRef.current && pointsRef.current.length > 1) {
+          onStrokeCompleteRef.current(
+            {
+              id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+              points: pointsRef.current,
+              createdAt: Date.now(),
+            },
+            canvas!.clientWidth,
+            canvas!.clientHeight
+          );
+        }
       }
       drawingRef.current = false;
       pointsRef.current = [];
@@ -301,14 +604,36 @@ export default function GridCell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Leaving a selection-based tool drops whatever was selected/being edited
+  // in this cell — same "tool switch clears working state" rule as Free's
+  // own [drawTool] effect in page.tsx.
   useEffect(() => {
+    if (!SELECTION_TOOLS.has(tool)) selectedIdsRef.current = new Set();
+    if (tool !== "nudge") {
+      editingStrokeIdRef.current = null;
+      anchorIndicesRef.current = [];
+      resampledRef.current = false;
+      draggingAnchorRef.current = null;
+    }
+    transformStartRef.current = null;
+    redrawRef.current();
+  }, [tool]);
+
+  useEffect(() => {
+    // Don't fight an active Nudge/Move/Rotate/Scale edit with a redraw driven
+    // by (now-stale, until the edit commits) props — same reasoning as the
+    // strokesRef sync guard above.
+    if (editingStrokeIdRef.current !== null || transformStartRef.current !== null) return;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawGuides(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing);
-    for (const s of strokes) fillOutline(ctx, s.outline);
-  }, [strokes, metrics, leftBearing, rightBearing]);
+    for (const s of strokes) {
+      const color = selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
+      fillOutline(ctx, outlineFor(s.points, strokeOptions), color);
+    }
+  }, [strokes, metrics, leftBearing, rightBearing, strokeOptions]);
 
   const unicode = unicodeFor(label);
 

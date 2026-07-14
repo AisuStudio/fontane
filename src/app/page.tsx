@@ -33,7 +33,7 @@ import {
   SlidersHorizontal,
   ChevronDown,
 } from "lucide-react";
-import GridCell, { DEFAULT_LEFT_BEARING, DEFAULT_RIGHT_BEARING } from "./GridCell";
+import GridCell, { DEFAULT_LEFT_BEARING, DEFAULT_RIGHT_BEARING, type CellTool } from "./GridCell";
 import BetaBadge from "./BetaBadge";
 import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
 import AnimatePanel from "./AnimatePanel";
@@ -68,7 +68,11 @@ const TRANSFORM_TOOLS = new Set<DrawTool>(["move", "rotate", "scale"]);
 // Every DrawTool whose button only ever appears when drawStyle==="free" —
 // leaving Free resets drawTool back to "pen" if it's one of these, since
 // their UI vanishes and a stale value would silently persist otherwise.
-const FREE_ONLY_TOOLS = new Set<DrawTool>(["nudge", "assign", "select", "move", "rotate", "scale", "pan"]);
+// Select/Nudge/Move/Rotate/Scale all work in Grid too (GridCell has its own
+// local port of the same select/reshape/transform logic) — only Assign
+// (Grid auto-tags on draw, nothing to assign) and Pan (a single small fixed
+// cell has nothing to pan around) stay Free-exclusive.
+const FREE_ONLY_TOOLS = new Set<DrawTool>(["assign", "pan"]);
 
 // Single source of truth for the sidebar's TOOLS section and the menu bar's
 // Tools dropdown, so the two can't drift out of sync with each other.
@@ -1116,6 +1120,41 @@ export default function Home() {
     });
   }
 
+  // Commits a GridCell-side Nudge/Move/Rotate/Scale edit back into the
+  // shared stroke store. Mirrors the direct in-place mutation style Free's
+  // own Nudge/transform tools already use (patch by index, then save) —
+  // just driven by ids reported up from the cell instead of a local ref.
+  function handleGridStrokesChange(
+    letter: string,
+    updates: { id: string; points: StrokePoint[] }[],
+    cellWidth: number,
+    cellHeight: number
+  ) {
+    for (const { id, points } of updates) {
+      const idx = completedRef.current.findIndex((s) => s.id === id);
+      if (idx === -1) continue;
+      completedRef.current[idx] = { ...completedRef.current[idx], points };
+      outlinesRef.current[idx] = outlineFor(points, settingsRef.current);
+    }
+    saveStrokes(completedRef.current);
+
+    // A GridCell-side edit mutates whatever's currently displayed there —
+    // for a Free-tagged (bbox-fallback) glyph that's the FITTED points, not
+    // its original Free-canvas coordinates. Writing those back as the
+    // glyph's real points while it's still flagged as "needs fitting" would
+    // re-fit an already-fitted shape and drift further on every edit.
+    // Promoting it to Grid-native (same cellWidth/cellHeight a fresh
+    // Grid-drawn stroke gets) the moment it's edited here fixes its
+    // coordinates in this cell's space for good.
+    setGlyphs((gs) =>
+      gs.map((g) =>
+        g.kind === "base" && g.name === letter && !(g.cellWidth && g.cellHeight)
+          ? { ...g, cellWidth, cellHeight }
+          : g
+      )
+    );
+  }
+
   function handleBearingsChange(letter: string, left: number, right: number) {
     setGlyphs((gs) =>
       gs.map((g) => (g.kind === "base" && g.name === letter ? { ...g, leftBearing: left, rightBearing: right } : g))
@@ -1347,6 +1386,28 @@ export default function Home() {
       </div>
 
       <div className={styles.contextBar} data-chrome-menu>
+        <div className={styles.undoRedo}>
+          <button
+            type="button"
+            className={`${styles.clearBtn} ${styles.iconOnlyBtn}`}
+            onClick={handleUndo}
+            disabled={topMode !== "draw" || strokeCount === 0}
+            aria-label="Undo"
+            title="Undo"
+          >
+            <Undo2 size={16} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            className={`${styles.clearBtn} ${styles.iconOnlyBtn}`}
+            onClick={handleRedo}
+            disabled={topMode !== "draw" || redoCount === 0}
+            aria-label="Redo"
+            title="Redo"
+          >
+            <Redo2 size={16} strokeWidth={2} />
+          </button>
+        </div>
         {topMode === "draw" && drawStyle === "free" && drawTool === "assign" && (
           <input
             type="text"
@@ -1755,17 +1816,15 @@ export default function Home() {
             const fittedPoints = needsFit
               ? fitStrokesToCell(glyphStrokes, letter, cellSize, cellHeightPx, metrics)
               : glyphStrokes.map((s) => s.points);
-            const cellStrokes = glyphStrokes.map((s, i) => ({
-              id: s.id,
-              outline: outlineFor(fittedPoints[i], settings),
-            }));
+            const cellStrokes = glyphStrokes.map((s, i) => ({ id: s.id, points: fittedPoints[i] }));
             return (
               <GridCell
                 key={letter}
                 label={letter}
                 strokes={cellStrokes}
-                tool={drawTool === "eraser" ? "eraser" : "pen"}
+                tool={(FREE_ONLY_TOOLS.has(drawTool) ? "pen" : drawTool) as CellTool}
                 onEraseStroke={(id) => deleteStrokes(new Set([id]))}
+                onStrokesChange={(updates) => handleGridStrokesChange(letter, updates, cellSize, cellHeightPx)}
                 strokeOptions={optionsFor(settings)}
                 onStrokeComplete={(stroke, cellWidth, cellHeight) =>
                   handleGridStroke(letter, stroke, cellWidth, cellHeight)
