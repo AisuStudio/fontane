@@ -53,6 +53,10 @@ type DrawStyle = "free" | "grid" | "editor";
 // two share the lasso code paths (see LASSO_TOOLS) rather than duplicating
 // them.
 type DrawTool = "pen" | "eraser" | "nudge" | "assign" | "select" | "move" | "rotate" | "scale" | "pan";
+// The 5 menu-bar dropdowns — "charset" (the Grid context bar's Character
+// sets picker) is a separate, click-only dropdown, not part of the hover
+// group below.
+type MenuKey = "glypher" | "file" | "edit" | "view" | "tools" | "charset";
 // Tools whose pointerdown-through-pointerup gesture on empty/stroke space is
 // "drag out a lasso and replace selectedIds with whatever it enclosed".
 const LASSO_TOOLS = new Set<DrawTool>(["assign", "select"]);
@@ -310,7 +314,26 @@ export default function Home() {
 
   // Menu bar dropdown (Glypher/File/Edit/View/Tools) — dismissed by the
   // outside-click listener below.
-  const [openMenu, setOpenMenu] = useState<"glypher" | "file" | "edit" | "view" | "tools" | "charset" | null>(null);
+  const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
+  // Hover-to-open for the menu bar: a short close delay (not an instant
+  // setOpenMenu(null) on mouseleave) so the pointer can travel from the
+  // trigger down into the dropdown panel across the small visual gap
+  // between them without it flickering shut mid-move. Any new hover — the
+  // same item again, or a different one — cancels a pending close.
+  const menuHoverCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function openMenuOnHover(key: MenuKey) {
+    if (menuHoverCloseTimeoutRef.current !== null) {
+      clearTimeout(menuHoverCloseTimeoutRef.current);
+      menuHoverCloseTimeoutRef.current = null;
+    }
+    setOpenMenu(key);
+  }
+  function scheduleMenuHoverClose() {
+    menuHoverCloseTimeoutRef.current = setTimeout(() => {
+      setOpenMenu(null);
+      menuHoverCloseTimeoutRef.current = null;
+    }, 200);
+  }
   // Info/How-to modal, opened from the Glypher menu — a plain overlay
   // rather than another dropdown, since this content is paragraph-length,
   // not a short action list.
@@ -1262,7 +1285,11 @@ export default function Home() {
       <BetaBadge />
 
       <div className={styles.menuBar} data-chrome-menu>
-        <div className={styles.menuItem}>
+        <div
+          className={styles.menuItem}
+          onMouseEnter={() => openMenuOnHover("glypher")}
+          onMouseLeave={scheduleMenuHoverClose}
+        >
           <button
             type="button"
             className={`${styles.menuTrigger} ${styles.appName}`}
@@ -1294,7 +1321,11 @@ export default function Home() {
           )}
         </div>
 
-        <div className={styles.menuItem}>
+        <div
+          className={styles.menuItem}
+          onMouseEnter={() => openMenuOnHover("file")}
+          onMouseLeave={scheduleMenuHoverClose}
+        >
           <button
             type="button"
             className={styles.menuTrigger}
@@ -1337,7 +1368,11 @@ export default function Home() {
           )}
         </div>
 
-        <div className={styles.menuItem}>
+        <div
+          className={styles.menuItem}
+          onMouseEnter={() => openMenuOnHover("edit")}
+          onMouseLeave={scheduleMenuHoverClose}
+        >
           <button
             type="button"
             className={styles.menuTrigger}
@@ -1374,7 +1409,11 @@ export default function Home() {
           )}
         </div>
 
-        <div className={styles.menuItem}>
+        <div
+          className={styles.menuItem}
+          onMouseEnter={() => openMenuOnHover("view")}
+          onMouseLeave={scheduleMenuHoverClose}
+        >
           <button
             type="button"
             className={styles.menuTrigger}
@@ -1404,7 +1443,11 @@ export default function Home() {
           )}
         </div>
 
-        <div className={styles.menuItem}>
+        <div
+          className={styles.menuItem}
+          onMouseEnter={() => openMenuOnHover("tools")}
+          onMouseLeave={scheduleMenuHoverClose}
+        >
           <button
             type="button"
             className={styles.menuTrigger}
