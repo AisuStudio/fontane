@@ -419,6 +419,8 @@
   background: var(--color-vanilla);
   color: var(--color-text);
   cursor: pointer;
+  flex: 1;
+  text-align: center;
 }
 
 .modeBtn + .modeBtn {
