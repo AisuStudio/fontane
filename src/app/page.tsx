@@ -25,7 +25,7 @@ import {
   Download,
   SplinePointer,
   NotebookPen,
-  MousePointer2,
+  Lasso,
   Move,
   RotateCw,
   Scaling,
@@ -83,7 +83,7 @@ type ToolDef = { value: DrawTool; label: string; icon: typeof Brush };
 const TOOL_DEFS: ToolDef[] = [
   { value: "pen", label: "Draw", icon: Brush },
   { value: "eraser", label: "Erase", icon: Eraser },
-  { value: "select", label: "Select", icon: MousePointer2 },
+  { value: "select", label: "Select", icon: Lasso },
   { value: "nudge", label: "Nudge", icon: SplinePointer },
   { value: "move", label: "Move", icon: Move },
   { value: "rotate", label: "Rotate", icon: RotateCw },
