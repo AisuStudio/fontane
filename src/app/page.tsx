@@ -293,7 +293,15 @@ export default function Home() {
   const currentPointsRef = useRef<StrokePoint[]>([]);
   const lassoRef = useRef<[number, number][]>([]);
   const redrawRef = useRef<() => void>(() => {});
-  const redoStackRef = useRef<Stroke[]>([]);
+  // Undo/Redo is a full snapshot stack (strokes + glyphs together, since a
+  // deletion/reshape can also create/orphan a glyph) — not just "remove the
+  // last added stroke," which is all the previous model could do. That
+  // meant Eraser/Delete-key/Nudge/Move/Rotate/Scale were all immediate and
+  // permanent; every one of those now pushes a pre-mutation snapshot here
+  // instead, so any of them can be undone the same way a new stroke can.
+  const undoStackRef = useRef<{ strokes: Stroke[]; glyphs: Glyph[] }[]>([]);
+  const redoStackRef = useRef<{ strokes: Stroke[]; glyphs: Glyph[] }[]>([]);
+  const glyphsRef = useRef<Glyph[]>([]);
   const undoRef = useRef<() => void>(() => {});
   const redoRef = useRef<() => void>(() => {});
 
@@ -431,6 +439,7 @@ export default function Home() {
 
   const [hud, setHud] = useState({ pointerType: "—", pressure: 0, x: 0, y: 0 });
   const [strokeCount, setStrokeCount] = useState(0);
+  const [undoCount, setUndoCount] = useState(0);
   const [redoCount, setRedoCount] = useState(0);
   const [exportJson, setExportJson] = useState("");
   const [exportDoc, setExportDoc] = useState<ReturnType<typeof compileDocument> | null>(null);
@@ -545,6 +554,7 @@ export default function Home() {
     outlinesRef.current = completedRef.current.map((s) => outlineFor(s.points, settingsRef.current));
     setStrokeCount(completedRef.current.length);
     taggedIdsRef.current = new Set(glyphs.flatMap((g) => g.strokeIds));
+    glyphsRef.current = glyphs;
 
     resize();
     window.addEventListener("resize", resize);
@@ -684,6 +694,7 @@ export default function Home() {
         lassoRef.current = [];
       } else {
         if (drawingRef.current && currentPointsRef.current.length > 1) {
+          pushUndoSnapshot();
           const stroke: Stroke = {
             id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
             points: currentPointsRef.current,
@@ -691,10 +702,8 @@ export default function Home() {
           };
           completedRef.current = [...completedRef.current, stroke];
           outlinesRef.current = [...outlinesRef.current, outlineFor(stroke.points, settingsRef.current)];
-          redoStackRef.current = []; // a new stroke invalidates whatever redo history existed
           saveStrokes(completedRef.current);
           setStrokeCount(completedRef.current.length);
-          setRedoCount(0);
         }
         currentPointsRef.current = [];
       }
@@ -781,6 +790,7 @@ export default function Home() {
 
   useEffect(() => {
     taggedIdsRef.current = new Set(glyphs.flatMap((g) => g.strokeIds));
+    glyphsRef.current = glyphs;
     saveGlyphs(glyphs);
     redrawRef.current();
   }, [glyphs]);
@@ -847,36 +857,63 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [infoModal]);
 
-  function handleUndo() {
-    if (completedRef.current.length === 0) return;
-    const last = completedRef.current[completedRef.current.length - 1];
-    completedRef.current = completedRef.current.slice(0, -1);
-    outlinesRef.current = outlinesRef.current.slice(0, -1);
-    redoStackRef.current = [...redoStackRef.current, last];
+  const UNDO_HISTORY_LIMIT = 50;
+
+  function cloneStrokesForHistory(strokes: Stroke[]): Stroke[] {
+    return strokes.map((s) => ({ ...s, points: s.points.map((p) => [...p] as StrokePoint) }));
+  }
+
+  function snapshotNow(): { strokes: Stroke[]; glyphs: Glyph[] } {
+    return { strokes: cloneStrokesForHistory(completedRef.current), glyphs: glyphsRef.current.map((g) => ({ ...g })) };
+  }
+
+  // Call this right before ANY mutation to completedRef/glyphs that should
+  // be undoable — a new stroke, a deletion, a Nudge/Move/Rotate/Scale
+  // commit. Captures the state as it was the instant before, so handleUndo
+  // just needs to jump back to whatever's on top of this stack.
+  function pushUndoSnapshot() {
+    undoStackRef.current = [...undoStackRef.current.slice(-(UNDO_HISTORY_LIMIT - 1)), snapshotNow()];
+    redoStackRef.current = [];
+    setUndoCount(undoStackRef.current.length);
+    setRedoCount(0);
+  }
+
+  function applySnapshot(snap: { strokes: Stroke[]; glyphs: Glyph[] }) {
+    completedRef.current = snap.strokes;
+    outlinesRef.current = snap.strokes.map((s) => outlineFor(s.points, settingsRef.current));
     saveStrokes(completedRef.current);
     setStrokeCount(completedRef.current.length);
-    setRedoCount(redoStackRef.current.length);
-    // Grid mode ties a stroke to a glyph the moment it's drawn, so undoing it
-    // has to untie that too — same orphan cleanup as deleteStrokes.
-    setGlyphs((gs) =>
-      gs
-        .map((g) => ({ ...g, strokeIds: g.strokeIds.filter((id) => id !== last.id) }))
-        .filter((g) => g.strokeIds.length > 0)
-    );
+    setGlyphs(snap.glyphs);
+    // Any in-progress Nudge/transform session was editing state that no
+    // longer exists after the jump — drop it rather than let it silently
+    // keep mutating a stroke id from a different point in history.
+    exitNudgeEditing();
+    transformStartRef.current = null;
+    setSelectedIds([]);
     redrawRef.current();
+  }
+
+  function handleUndo() {
+    if (undoStackRef.current.length === 0) return;
+    const current = snapshotNow();
+    const prev = undoStackRef.current[undoStackRef.current.length - 1];
+    undoStackRef.current = undoStackRef.current.slice(0, -1);
+    redoStackRef.current = [...redoStackRef.current, current];
+    setUndoCount(undoStackRef.current.length);
+    setRedoCount(redoStackRef.current.length);
+    applySnapshot(prev);
   }
   undoRef.current = handleUndo;
 
   function handleRedo() {
     if (redoStackRef.current.length === 0) return;
-    const stroke = redoStackRef.current[redoStackRef.current.length - 1];
+    const current = snapshotNow();
+    const next = redoStackRef.current[redoStackRef.current.length - 1];
     redoStackRef.current = redoStackRef.current.slice(0, -1);
-    completedRef.current = [...completedRef.current, stroke];
-    outlinesRef.current = [...outlinesRef.current, outlineFor(stroke.points, settingsRef.current)];
-    saveStrokes(completedRef.current);
-    setStrokeCount(completedRef.current.length);
+    undoStackRef.current = [...undoStackRef.current, current];
+    setUndoCount(undoStackRef.current.length);
     setRedoCount(redoStackRef.current.length);
-    redrawRef.current();
+    applySnapshot(next);
   }
   redoRef.current = handleRedo;
 
@@ -884,13 +921,12 @@ export default function Home() {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
+    if (completedRef.current.length > 0 || glyphsRef.current.length > 0) pushUndoSnapshot();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     completedRef.current = [];
     outlinesRef.current = [];
-    redoStackRef.current = [];
     clearStrokes();
     setStrokeCount(0);
-    setRedoCount(0);
     setGlyphs([]);
     setSelectedIds([]);
   }
@@ -925,12 +961,16 @@ export default function Home() {
     setGlyphs((gs) => gs.filter((g) => g.id !== id));
   }
 
-  // Shared by the Assign panel's "Clear selection" bulk path (now removed —
-  // deleting moved to the Eraser tool in Draw mode) and the Eraser's
-  // single-stroke click-to-delete: either way it's just "remove these ids
-  // from completedRef/outlinesRef and untie them from any glyph."
+  // Shared by the Eraser tool's single-stroke click-to-delete, the
+  // Delete/Backspace shortcut's whole-selection removal, and GridCell's own
+  // eraser/Delete-key handling: either way it's "remove these ids from
+  // completedRef/outlinesRef and untie them from any glyph." One call here
+  // is always exactly one undo step, however many ids it covers — that's
+  // why GridCell's Delete-key handler passes its whole selection in one
+  // Set rather than looping single-id calls.
   function deleteStrokes(idsToDelete: Set<string>) {
     if (idsToDelete.size === 0) return;
+    pushUndoSnapshot();
     const survivors = completedRef.current
       .map((stroke, i) => ({ stroke, outline: outlinesRef.current[i] }))
       .filter(({ stroke }) => !idsToDelete.has(stroke.id));
@@ -988,6 +1028,10 @@ export default function Home() {
         const stroke = completedRef.current[idx];
         const rank = anchorNear(x, y, stroke.points, anchorIndicesRef.current);
         if (rank !== null) {
+          // An actual anchor grab is a real, undoable mutation — captured
+          // once here, before the (possibly first-ever) resample, so Undo
+          // restores the original dense points, not the resampled shape.
+          pushUndoSnapshot();
           if (!resampledRef.current) {
             // Non-destructive up to this exact moment: a stroke the user
             // merely selects (or drags near but never actually grabs) stays
@@ -1037,6 +1081,7 @@ export default function Home() {
       }
     }
     if (!hit) return;
+    pushUndoSnapshot();
 
     const selected = completedRef.current.filter((s) => selectedIdsRef.current.has(s.id));
     const pivot = selectionPivot(selected);
@@ -1090,6 +1135,7 @@ export default function Home() {
   }
 
   function handleGridStroke(letter: string, stroke: Stroke, cellWidth: number, cellHeight: number) {
+    pushUndoSnapshot();
     completedRef.current = [...completedRef.current, stroke];
     outlinesRef.current = [...outlinesRef.current, outlineFor(stroke.points, settingsRef.current)];
     saveStrokes(completedRef.current);
@@ -1129,6 +1175,8 @@ export default function Home() {
     cellWidth: number,
     cellHeight: number
   ) {
+    if (updates.length === 0) return;
+    pushUndoSnapshot();
     for (const { id, points } of updates) {
       const idx = completedRef.current.findIndex((s) => s.id === id);
       if (idx === -1) continue;
@@ -1305,7 +1353,7 @@ export default function Home() {
                 type="button"
                 role="menuitem"
                 className={styles.dropdownItem}
-                disabled={topMode !== "draw" || strokeCount === 0}
+                disabled={topMode !== "draw" || undoCount === 0}
                 onClick={() => { handleUndo(); setOpenMenu(null); }}
               >
                 Undo
@@ -1390,7 +1438,7 @@ export default function Home() {
             type="button"
             className={`${styles.clearBtn} ${styles.iconOnlyBtn}`}
             onClick={handleUndo}
-            disabled={topMode !== "draw" || strokeCount === 0}
+            disabled={topMode !== "draw" || undoCount === 0}
             aria-label="Undo"
             title="Undo"
           >
@@ -1815,7 +1863,7 @@ export default function Home() {
                 label={letter}
                 strokes={cellStrokes}
                 tool={(FREE_ONLY_TOOLS.has(drawTool) ? "pen" : drawTool) as CellTool}
-                onEraseStroke={(id) => deleteStrokes(new Set([id]))}
+                onErase={(ids) => deleteStrokes(ids)}
                 onStrokesChange={(updates) => handleGridStrokesChange(letter, updates, cellSize, cellHeightPx)}
                 strokeOptions={optionsFor(settings)}
                 onStrokeComplete={(stroke, cellWidth, cellHeight) =>

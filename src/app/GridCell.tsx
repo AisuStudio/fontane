@@ -139,7 +139,10 @@ type Props = {
   label: string;
   strokes: CellStroke[];
   tool: CellTool;
-  onEraseStroke: (id: string) => void;
+  // Takes a Set (not a single id) so a batch delete — the Delete-key
+  // handler removing a whole selection — reaches the parent as ONE call,
+  // and therefore one undo step, instead of one per stroke.
+  onErase: (ids: Set<string>) => void;
   onStrokesChange: (updates: { id: string; points: StrokePoint[] }[]) => void;
   strokeOptions: StrokeOptions;
   onStrokeComplete: (
@@ -157,7 +160,7 @@ export default function GridCell({
   label,
   strokes,
   tool,
-  onEraseStroke,
+  onErase,
   onStrokesChange,
   strokeOptions,
   onStrokeComplete,
@@ -171,7 +174,7 @@ export default function GridCell({
   const drawingRef = useRef(false);
   const strokesRef = useRef(strokes);
   const toolRef = useRef(tool);
-  const onEraseStrokeRef = useRef(onEraseStroke);
+  const onEraseRef = useRef(onErase);
   const onStrokesChangeRef = useRef(onStrokesChange);
   const strokeOptionsRef = useRef(strokeOptions);
   const onStrokeCompleteRef = useRef(onStrokeComplete);
@@ -209,7 +212,7 @@ export default function GridCell({
   } | null>(null);
 
   toolRef.current = tool;
-  onEraseStrokeRef.current = onEraseStroke;
+  onEraseRef.current = onErase;
   onStrokesChangeRef.current = onStrokesChange;
   strokeOptionsRef.current = strokeOptions;
   onStrokeCompleteRef.current = onStrokeComplete;
@@ -453,7 +456,7 @@ export default function GridCell({
         for (let i = strokesRef.current.length - 1; i >= 0; i--) {
           const s = strokesRef.current[i];
           if (pointInPolygon([x, y], outlineFor(s.points, strokeOptionsRef.current))) {
-            onEraseStrokeRef.current(s.id);
+            onEraseRef.current(new Set([s.id]));
             break;
           }
         }
@@ -597,7 +600,7 @@ export default function GridCell({
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
       e.preventDefault();
-      for (const id of selectedIdsRef.current) onEraseStrokeRef.current(id);
+      onEraseRef.current(selectedIdsRef.current);
       selectedIdsRef.current = new Set();
       redraw();
     }
