@@ -1732,6 +1732,7 @@ export default function Home() {
         </main>
 
         <aside className={styles.settingsPanel} data-chrome-menu>
+          <div className={styles.settingsPanelLabel}>Settings</div>
           {topMode === "draw" && drawStyle === "free" && drawTool === "assign" && (
             <>
               <input
