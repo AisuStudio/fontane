@@ -266,7 +266,7 @@
   align-items: center;
   column-gap: var(--sp-xs);
   row-gap: var(--sp-xs);
-  padding: 8px 0;
+  padding: 4px 0;
   color: var(--color-vanilla);
   opacity: 0.85;
 }
