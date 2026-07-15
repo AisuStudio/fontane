@@ -208,7 +208,7 @@
 
 .sidebarRail:hover .sidebar,
 .sidebar:focus-within {
-  width: 220px;
+  width: 123px;
   box-shadow: 2px 0 8px rgba(31, 25, 52, 0.15);
 }
 

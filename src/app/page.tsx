@@ -77,19 +77,20 @@ const TRANSFORM_TOOLS = new Set<DrawTool>(["move", "rotate", "scale"]);
 // cell has nothing to pan around) stay Free-exclusive.
 const FREE_ONLY_TOOLS = new Set<DrawTool>(["assign", "pan"]);
 
-// Single source of truth for the sidebar's TOOLS section and the menu bar's
-// Tools dropdown, so the two can't drift out of sync with each other.
-type ToolDef = { value: DrawTool; label: string; icon: typeof Brush };
+// Single source of truth for the sidebar's TOOLS section, the menu bar's
+// Tools dropdown, AND the keyboard shortcuts below — one place to add a
+// tool so none of the three can drift out of sync with each other.
+type ToolDef = { value: DrawTool; label: string; icon: typeof Brush; shortcut: string };
 const TOOL_DEFS: ToolDef[] = [
-  { value: "pen", label: "Draw", icon: Brush },
-  { value: "eraser", label: "Erase", icon: Eraser },
-  { value: "select", label: "Select", icon: Lasso },
-  { value: "nudge", label: "Nudge", icon: SplinePointer },
-  { value: "move", label: "Move", icon: Move },
-  { value: "rotate", label: "Rotate", icon: RotateCw },
-  { value: "scale", label: "Scale", icon: Scaling },
-  { value: "pan", label: "Pan", icon: Hand },
-  { value: "assign", label: "Assign", icon: BookA },
+  { value: "pen", label: "Draw", icon: Brush, shortcut: "b" },
+  { value: "eraser", label: "Erase", icon: Eraser, shortcut: "e" },
+  { value: "select", label: "Select", icon: Lasso, shortcut: "l" },
+  { value: "nudge", label: "Nudge", icon: SplinePointer, shortcut: "n" },
+  { value: "move", label: "Move", icon: Move, shortcut: "m" },
+  { value: "rotate", label: "Rotate", icon: RotateCw, shortcut: "r" },
+  { value: "scale", label: "Scale", icon: Scaling, shortcut: "s" },
+  { value: "pan", label: "Pan", icon: Hand, shortcut: "h" },
+  { value: "assign", label: "Assign", icon: BookA, shortcut: "a" },
 ];
 
 // Same idea for the sidebar's VIEWS section and the menu bar's View dropdown
@@ -389,6 +390,7 @@ export default function Home() {
   }
 
   const topModeRef = useRef(topMode);
+  const drawStyleRef = useRef(drawStyle);
   // Editor has no stroke settings/tools of its own yet (Phase 1 is
   // read-only composition) — Free and Grid still get the full Pen/Eraser/
   // Nudge + stroke-appearance controls.
@@ -759,6 +761,10 @@ export default function Home() {
   }, [settings]);
 
   useEffect(() => {
+    drawStyleRef.current = drawStyle;
+  }, [drawStyle]);
+
+  useEffect(() => {
     topModeRef.current = topMode;
     currentPointsRef.current = [];
     lassoRef.current = [];
@@ -835,16 +841,18 @@ export default function Home() {
         return;
       }
 
-      // P/E tool shortcuts — only in Draw, and never while the user is
-      // actually typing a glyph name/text (those single-letter inputs can
-      // legitimately contain "p" or "e").
+      // Per-tool shortcuts (see TOOL_DEFS) — only in Draw, and never while
+      // the user is actually typing a glyph name/text (those single-letter
+      // inputs can legitimately contain any of these letters).
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
       if (topModeRef.current !== "draw") return;
       const key = e.key.toLowerCase();
-      if (key === "p") setDrawTool("pen");
-      else if (key === "e") setDrawTool("eraser");
+      const toolDef = TOOL_DEFS.find((t) => t.shortcut === key);
+      if (toolDef && (!FREE_ONLY_TOOLS.has(toolDef.value) || drawStyleRef.current === "free")) {
+        setDrawTool(toolDef.value);
+      }
       else if ((e.key === "Delete" || e.key === "Backspace") && selectedIdsRef.current.size > 0) {
         e.preventDefault();
         deleteStrokes(new Set(selectedIdsRef.current));
@@ -1467,7 +1475,7 @@ export default function Home() {
                   className={`${styles.dropdownItem} ${drawTool === t.value ? styles.dropdownItemActive : ""}`}
                   onClick={() => { setDrawTool(t.value); setOpenMenu(null); }}
                 >
-                  {t.label}
+                  {t.label} ({t.shortcut})
                 </button>
               ))}
             </div>
@@ -1818,11 +1826,11 @@ export default function Home() {
                     type="button"
                     className={`${styles.sidebarItem} ${drawTool === t.value ? styles.sidebarItemActive : ""}`}
                     onClick={() => setDrawTool(t.value)}
-                    aria-label={t.label}
-                    title={t.label}
+                    aria-label={`${t.label} (${t.shortcut})`}
+                    title={`${t.label} (${t.shortcut})`}
                   >
                     <t.icon size={18} strokeWidth={2} className={styles.sidebarIcon} />
-                    <span className={styles.sidebarLabel}>{t.label}</span>
+                    <span className={styles.sidebarLabel}>{t.label} ({t.shortcut})</span>
                   </button>
                 ))}
               </div>
