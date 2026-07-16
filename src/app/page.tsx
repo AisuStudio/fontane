@@ -2632,11 +2632,57 @@ export default function Home() {
               </p>
             ) : (
               <ol className={styles.modalList}>
-                <li><strong>Draw</strong> — sketch in Free (anywhere) or Grid (one cell per letter, auto-tagged).</li>
-                <li><strong>Select + Assign</strong> — lasso strokes in Free, then Assign them to a character.</li>
-                <li><strong>Refine</strong> — Nudge reshapes one stroke; Move/Rotate/Scale act on a selection (select first).</li>
-                <li><strong>Preview</strong> — compose text in Editor, or animate it in Anim.</li>
-                <li><strong>Export</strong> — File menu: OTF / JSON / Skeleton SVG, or FFF to save the whole project.</li>
+                <li>
+                  <strong>Draw</strong> — two ways to capture handwriting. <strong>Free</strong> is an open canvas:
+                  sketch anywhere, at any size, in any order. <strong>Grid</strong> is one cell per character —
+                  drawing into a cell both captures the stroke and tags it to that letter in one step, no separate
+                  Assign needed. Grid cells also show shared baseline/x-height/ascender/descender guides plus
+                  draggable per-glyph left/right bearings, which feed real calibration into the font export. The
+                  Draw and <strong>Brush</strong> tools both capture a pressure-varying stroke the same way — Brush
+                  exists for strokes that trace their own outline rather than a centerline, so it's left out of
+                  Nudge/Anchor editing and the Skeleton SVG export (see below), where a true centerline is what's
+                  needed.
+                </li>
+                <li>
+                  <strong>Select + Assign</strong> (Free only) — lasso strokes with Select, then switch to Assign
+                  to name the selection as a Base character, a Ligature (built from component names), or an
+                  Alternate (a variant of an existing glyph). Cmd/Ctrl+Enter saves without reaching for the button.
+                </li>
+                <li>
+                  <strong>Reshape</strong> — <strong>Nudge</strong> drags a stroke's simplified anchor points to
+                  reshape its curve. <strong>Anchor</strong> goes further: click an anchor to select it (it stays
+                  selected, unlike Nudge's drag-only grab), then Delete/Backspace removes it and splits the stroke
+                  in two at that point. With the Pen tool active on a stroke you're already editing, clicking
+                  between two anchors inserts a new one; clicking directly on one deletes it the same way.
+                </li>
+                <li>
+                  <strong>Transform</strong> — select strokes first (Select/Assign's lasso), then Move, Rotate, or
+                  Scale them as a group. Scale defaults to resizing from the selection's bottom-left corner,
+                  independently per axis; hold <strong>Alt</strong> to scale from the center instead, and{" "}
+                  <strong>Shift</strong> to lock proportions. Stroke thickness scales along with the geometry, so
+                  resizing never leaves a shape looking disproportionately thick or thin. The Skew horizontal and
+                  vertical sliders (shown whenever a selection exists) shear it around its center — both combine
+                  cleanly and the whole gesture undoes in one step.
+                </li>
+                <li>
+                  <strong>Preview</strong> — compose text in Editor using already-tagged glyphs, or animate it in
+                  Anim.
+                </li>
+                <li>
+                  <strong>Export</strong> — File menu: <strong>OTF</strong> (a real, usable font, built entirely in
+                  the browser), <strong>JSON</strong> (the compiled glyph document, for the local TTF script or the
+                  Glyphs.app import script), or <strong>Skeleton SVG</strong> (every glyph's raw centerline as an
+                  open path, for hand-building outlines in Glyphs.app or similar — Brush strokes are left out of
+                  this one since they don't have a true centerline to export).
+                </li>
+                <li>
+                  <strong>FFF (Fontane Font File)</strong> — File → Export/Import FFF saves or reopens the whole
+                  project: every stroke, glyph, metric, and setting, exactly as the editor keeps it. This is
+                  different from the OTF/JSON/Skeleton exports above, which are one-way — once a glyph's outlines
+                  are compiled, the raw pen strokes behind them are gone from that file. An FFF keeps the editable
+                  source data instead, so you can save your work, close the tab, and pick up exactly where you left
+                  off (here, or on another machine) — it's the project save file, not a font.
+                </li>
               </ol>
             )}
           </div>
