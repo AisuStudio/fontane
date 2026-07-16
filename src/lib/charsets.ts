@@ -29,6 +29,21 @@ const CENTRAL_EUROPEAN_EXTRA: string[] = [
   "đ", "Đ", "â", "Â", "ă", "Ă", "î", "Î", "ş", "Ş", "ţ", "Ţ",
 ];
 
+// Accented Latin letters for French, Spanish, Portuguese, and Scandinavian —
+// like CENTRAL_EUROPEAN_EXTRA, not a strict codepage reproduction. Excludes
+// anything already covered above: á/é/í/ó/ú/ý (+ uppercase), ä/ö/ü/ß, and
+// â/î (+ uppercase) all come from CENTRAL_EUROPEAN_EXTRA already.
+const WESTERN_EUROPEAN_EXTRA: string[] = [
+  // French
+  "à", "À", "è", "È", "ê", "Ê", "ë", "Ë", "ï", "Ï", "ô", "Ô", "û", "Û", "ù", "Ù", "ÿ", "Ÿ", "ç", "Ç",
+  // Spanish
+  "ñ", "Ñ",
+  // Portuguese
+  "ã", "Ã", "õ", "Õ",
+  // Scandinavian
+  "å", "Å", "ø", "Ø", "æ", "Æ",
+];
+
 const NUMBERS: string[] = "0123456789".split("");
 
 // Common punctuation actually needed for handwritten text — not an
@@ -45,6 +60,7 @@ const PUNCTUATION: string[] = [
 export const CHARACTER_SETS: CharacterSet[] = [
   { id: "latin-basic", label: "Latin Basic", chars: LATIN_BASIC },
   { id: "central-european", label: "Central European", chars: CENTRAL_EUROPEAN_EXTRA },
+  { id: "western-european", label: "Western European", chars: WESTERN_EUROPEAN_EXTRA },
   { id: "numbers", label: "Numbers", chars: NUMBERS },
   { id: "punctuation", label: "Punctuation", chars: PUNCTUATION },
 ];
