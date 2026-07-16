@@ -577,28 +577,36 @@
   overflow: hidden;
 }
 
-.editorInput {
-  height: 140px;
-  padding: var(--sp-md) var(--sp-lg);
-  border: none;
-  border-bottom: 1px solid var(--color-cappuccino);
-  font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--color-text);
-  background: var(--color-vanilla);
-  resize: vertical;
-}
-
-.editorInput::placeholder {
-  color: var(--color-muted);
+.editorCanvasWrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  cursor: text;
 }
 
 .editorCanvas {
-  flex: 1;
   width: 100%;
+  height: 100%;
   display: block;
   background: var(--color-vanilla);
+}
+
+/* Real <textarea> stacked over the canvas, fully invisible — it's what
+   actually handles typing/caret/selection/IME/copy-paste; only its value
+   and selectionStart get read out to drive the handwritten canvas preview
+   and our own caret bar (see EditorPanel.tsx). */
+.editorHiddenInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  resize: none;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  outline: none;
 }
 
 .charsetToggle {
