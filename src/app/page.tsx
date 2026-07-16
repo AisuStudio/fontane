@@ -24,6 +24,7 @@ import {
   Grid3x3,
   BookA,
   SplinePointer,
+  MousePointer2,
   NotebookPen,
   Lasso,
   Move,
@@ -51,7 +52,7 @@ type DrawStyle = "free" | "grid" | "editor";
 // Assign keeps the exact same gesture plus its own tag-form panel, so the
 // two share the lasso code paths (see LASSO_TOOLS) rather than duplicating
 // them.
-type DrawTool = "pen" | "eraser" | "nudge" | "assign" | "select" | "move" | "rotate" | "scale" | "pan";
+type DrawTool = "pen" | "eraser" | "nudge" | "anchor" | "assign" | "select" | "move" | "rotate" | "scale" | "pan";
 // The 5 menu-bar dropdowns — "charset" (the Grid context bar's Character
 // sets picker) is a separate, click-only dropdown, not part of the hover
 // group below.
@@ -72,9 +73,11 @@ const TRANSFORM_TOOLS = new Set<DrawTool>(["move", "rotate", "scale"]);
 // their UI vanishes and a stale value would silently persist otherwise.
 // Select/Nudge/Move/Rotate/Scale all work in Grid too (GridCell has its own
 // local port of the same select/reshape/transform logic) — only Assign
-// (Grid auto-tags on draw, nothing to assign) and Pan (a single small fixed
-// cell has nothing to pan around) stay Free-exclusive.
-const FREE_ONLY_TOOLS = new Set<DrawTool>(["assign", "pan"]);
+// (Grid auto-tags on draw, nothing to assign), Pan (a single small fixed
+// cell has nothing to pan around), and Anchor (single-anchor select/insert/
+// delete — Grid cells are small and already busy with bearing handles) stay
+// Free-exclusive.
+const FREE_ONLY_TOOLS = new Set<DrawTool>(["assign", "pan", "anchor"]);
 
 // Single source of truth for the sidebar's TOOLS section, the menu bar's
 // Tools dropdown, AND the keyboard shortcuts below — one place to add a
@@ -85,6 +88,7 @@ const TOOL_DEFS: ToolDef[] = [
   { value: "eraser", label: "Erase", icon: Eraser, shortcut: "e" },
   { value: "select", label: "Select", icon: Lasso, shortcut: "l" },
   { value: "nudge", label: "Nudge", icon: SplinePointer, shortcut: "n" },
+  { value: "anchor", label: "Anchor", icon: MousePointer2, shortcut: "p" },
   { value: "move", label: "Move", icon: Move, shortcut: "m" },
   { value: "rotate", label: "Rotate", icon: RotateCw, shortcut: "r" },
   { value: "scale", label: "Scale", icon: Scaling, shortcut: "s" },
@@ -554,6 +558,15 @@ export default function Home() {
   const resampledRef = useRef(false);
   const draggingAnchorRef = useRef<number | null>(null);
 
+  // Anchor tool: a SINGLE anchor persistently selected (highlighted) on the
+  // currently-edited stroke — unlike draggingAnchorRef above, this survives
+  // pointerup, and is what Delete/Backspace acts on. Stores the anchor's
+  // RANK (its position within anchorIndicesRef), not a raw point index —
+  // rank stays meaningful across the lazy resample-to-anchors-only collapse
+  // (which reorders storage but not which anchors exist or their order),
+  // whereas a raw index captured before that resample would go stale.
+  const selectedAnchorRef = useRef<{ strokeId: string; rank: number } | null>(null);
+
   // Move/Rotate/Scale: a snapshot of every selected stroke's points taken at
   // gesture start, plus the pivot (bbox center) and start pointer position —
   // every pointermove recomputes from this frozen snapshot rather than the
@@ -726,7 +739,7 @@ export default function Home() {
         ctx.lineWidth = 0.5;
         ctx.stroke();
       }
-      if (drawToolRef.current === "nudge" && editingStrokeIdRef.current) {
+      if ((drawToolRef.current === "nudge" || drawToolRef.current === "anchor") && editingStrokeIdRef.current) {
         const stroke = strokes.find((s) => s.id === editingStrokeIdRef.current);
         if (stroke) {
           // The literal "core path" — the raw pen centerline, not the filled
@@ -741,18 +754,20 @@ export default function Home() {
           ctx.stroke();
           ctx.restore();
 
-          for (const idx of anchorIndicesRef.current) {
+          anchorIndicesRef.current.forEach((idx, rank) => {
             const [ax, ay] = stroke.points[idx];
+            const isSelectedAnchor =
+              selectedAnchorRef.current?.strokeId === stroke.id && selectedAnchorRef.current?.rank === rank;
             ctx.beginPath();
             ctx.arc(ax, ay, 4, 0, Math.PI * 2);
-            ctx.fillStyle = ANCHOR_COLOR;
+            ctx.fillStyle = isSelectedAnchor ? COLOR_SELECTED : ANCHOR_COLOR;
             ctx.fill();
             ctx.beginPath();
             ctx.arc(ax, ay, 4, 0, Math.PI * 2);
             ctx.strokeStyle = ANCHOR_RING_COLOR;
             ctx.lineWidth = 0.5;
             ctx.stroke();
-          }
+          });
         }
       }
       ctx.restore();
@@ -805,6 +820,34 @@ export default function Home() {
         handleNudgePointerDown(p[0], p[1]);
         redraw();
         return;
+      }
+      if (topModeRef.current === "draw" && drawToolRef.current === "anchor") {
+        handleAnchorToolPointerDown(p[0], p[1]);
+        redraw();
+        return;
+      }
+      // Pen, while a stroke is already being edited (entered via Anchor or
+      // Nudge and kept alive across the tool switch — see the [drawTool]
+      // effect): a click on one of its anchors deletes+splits, a click
+      // between two anchors inserts one. Otherwise Pen falls through to its
+      // normal new-freehand-stroke capture below, unchanged.
+      if (topModeRef.current === "draw" && drawToolRef.current === "pen" && editingStrokeIdRef.current) {
+        const idx = completedRef.current.findIndex((s) => s.id === editingStrokeIdRef.current);
+        if (idx !== -1) {
+          const stroke = completedRef.current[idx];
+          const rank = anchorNear(p[0], p[1], stroke.points, anchorIndicesRef.current);
+          if (rank !== null) {
+            deleteAnchorAndSplit(stroke.id, rank);
+            redraw();
+            return;
+          }
+          const insertRank = findInsertionRank(p[0], p[1], stroke.points, anchorIndicesRef.current);
+          if (insertRank !== null) {
+            insertAnchor(stroke.id, insertRank, p[0], p[1]);
+            redraw();
+            return;
+          }
+        }
       }
       if (topModeRef.current === "draw" && TRANSFORM_TOOLS.has(drawToolRef.current)) {
         handleTransformPointerDown(p[0], p[1], drawToolRef.current as "move" | "rotate" | "scale", e.altKey, e.shiftKey);
@@ -996,7 +1039,11 @@ export default function Home() {
 
   useEffect(() => {
     drawToolRef.current = drawTool;
-    if (drawTool !== "nudge") exitNudgeEditing();
+    // Nudge, Anchor, and Pen all share one "which stroke is being edited"
+    // session (Pen needs it live so its insert/delete-anchor clicks — see
+    // handleAnchorInsertOrDelete — have something to operate on); switching
+    // to anything else exits it.
+    if (drawTool !== "nudge" && drawTool !== "anchor" && drawTool !== "pen") exitNudgeEditing();
     if (drawTool !== "move" && drawTool !== "rotate" && drawTool !== "scale") transformStartRef.current = null;
     if (drawTool !== "pan") panDragStartRef.current = null;
     // Switching tools mid-gesture shouldn't leave a stale in-progress pen
@@ -1031,6 +1078,7 @@ export default function Home() {
     anchorIndicesRef.current = [];
     resampledRef.current = false;
     draggingAnchorRef.current = null;
+    selectedAnchorRef.current = null;
   }
 
   useEffect(() => {
@@ -1092,6 +1140,14 @@ export default function Home() {
       const toolDef = TOOL_DEFS.find((t) => t.shortcut === key);
       if (toolDef && (!FREE_ONLY_TOOLS.has(toolDef.value) || drawStyleRef.current === "free")) {
         setDrawTool(toolDef.value);
+      }
+      else if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        drawToolRef.current === "anchor" &&
+        selectedAnchorRef.current
+      ) {
+        e.preventDefault();
+        deleteAnchorAndSplit(selectedAnchorRef.current.strokeId, selectedAnchorRef.current.rank);
       }
       else if ((e.key === "Delete" || e.key === "Backspace") && selectedIdsRef.current.size > 0) {
         e.preventDefault();
@@ -1382,6 +1438,159 @@ export default function Home() {
         return;
       }
     }
+    exitNudgeEditing();
+  }
+
+  // Anchor tool click: if a stroke is already being edited (editingStrokeIdRef
+  // set — via a prior click here, or via Nudge, since the two tools share one
+  // editing session, see the [drawTool] effect above), clicking one of its
+  // anchors SELECTS it — persisted in selectedAnchorRef, unlike Nudge's
+  // drag-only grab — rather than starting a drag. Clicking the stroke
+  // elsewhere (no anchor hit) keeps editing it but deselects any anchor.
+  // Clicking a different stroke switches the editing session onto it,
+  // exactly Nudge's own fallback; clicking empty space exits. Topmost
+  // stroke wins, same convention as Nudge/Eraser.
+  function handleAnchorToolPointerDown(x: number, y: number) {
+    if (editingStrokeIdRef.current) {
+      const idx = completedRef.current.findIndex((s) => s.id === editingStrokeIdRef.current);
+      if (idx !== -1) {
+        const stroke = completedRef.current[idx];
+        const rank = anchorNear(x, y, stroke.points, anchorIndicesRef.current);
+        if (rank !== null) {
+          selectedAnchorRef.current = { strokeId: stroke.id, rank };
+          return;
+        }
+      }
+    }
+    for (let i = completedRef.current.length - 1; i >= 0; i--) {
+      if (pointInPolygon([x, y], outlinesRef.current[i])) {
+        const stroke = completedRef.current[i];
+        editingStrokeIdRef.current = stroke.id;
+        anchorIndicesRef.current = simplifyStrokeIndices(stroke.points.map((p) => [p[0], p[1]]));
+        resampledRef.current = false;
+        selectedAnchorRef.current = null;
+        return;
+      }
+    }
+    exitNudgeEditing();
+  }
+
+  // Pen-tool insert-between-anchors hit test: projects (x, y) onto each
+  // segment between consecutive anchors, clamped to the segment itself (not
+  // simplify.ts's perpendicularDistance, which projects onto the INFINITE
+  // line for a different purpose — simplification, not hit-testing a finite
+  // segment). Returns the LEFT rank of the segment the click falls near
+  // ("insert between rank and rank+1"), not a raw point index — see
+  // insertAnchor for why rank is what survives the lazy resample below.
+  function findInsertionRank(x: number, y: number, points: StrokePoint[], indices: number[]): number | null {
+    for (let rank = 0; rank < indices.length - 1; rank++) {
+      const [x1, y1] = points[indices[rank]];
+      const [x2, y2] = points[indices[rank + 1]];
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq === 0) continue;
+      const t = ((x - x1) * dx + (y - y1) * dy) / lenSq;
+      if (t < 0 || t > 1) continue;
+      const projX = x1 + t * dx;
+      const projY = y1 + t * dy;
+      if (Math.hypot(x - projX, y - projY) <= ANCHOR_HIT_PX) return rank;
+    }
+    return null;
+  }
+
+  // Inserts a new anchor right after `afterRank`. Forces the same lazy
+  // resample-to-anchors-only collapse Nudge's first drag does (if it hasn't
+  // already happened this editing session) BEFORE converting the rank to a
+  // raw point index — after that resample, anchorIndicesRef is always the
+  // identity 0..n-1 over stroke.points, so rank and raw index coincide.
+  // Doing it in this order (rank in, resample, then rank->index) is what
+  // keeps this correct whether or not a resample was already pending;
+  // resolving to a raw index first and resampling after would silently
+  // insert at the wrong position once the array shrinks out from under it.
+  function insertAnchor(strokeId: string, afterRank: number, x: number, y: number) {
+    const idx = completedRef.current.findIndex((s) => s.id === strokeId);
+    if (idx === -1) return;
+    pushUndoSnapshot();
+    const stroke = completedRef.current[idx];
+    if (!resampledRef.current) {
+      stroke.points = anchorIndicesRef.current.map((i) => stroke.points[i]);
+      anchorIndicesRef.current = stroke.points.map((_, i) => i);
+      resampledRef.current = true;
+    }
+    const pointIndex = afterRank + 1;
+    const before = stroke.points[pointIndex - 1];
+    const after = stroke.points[pointIndex];
+    const pressure = before && after ? (before[2] + after[2]) / 2 : (before ?? after)?.[2] ?? 0.5;
+    stroke.points = [
+      ...stroke.points.slice(0, pointIndex),
+      [x, y, pressure] as StrokePoint,
+      ...stroke.points.slice(pointIndex),
+    ];
+    anchorIndicesRef.current = anchorIndicesRef.current
+      .map((i) => (i >= pointIndex ? i + 1 : i))
+      .concat(pointIndex)
+      .sort((a, b) => a - b);
+    outlinesRef.current[idx] = outlineFor(stroke.points, effectiveSettingsFor(stroke, settingsRef.current));
+    saveStrokes(completedRef.current);
+    redrawRef.current();
+  }
+
+  // Deletes the anchor at `rank` and splits the stroke into two at that
+  // position (the deleted point itself is dropped, not bridged). Same
+  // resample-first-if-needed + rank->index conversion as insertAnchor.
+  // Deleting an endpoint (rank 0 or the last) just shrinks the stroke by one
+  // point instead of splitting — one side would be empty anyway. A stroke
+  // collapsing below 2 points afterward is dropped entirely, matching how
+  // deleteStrokes already treats a glyph left with 0 strokes. This is a
+  // structural edit (changes stroke/glyph count), a strictly more
+  // destructive class than anchor-dragging or insertion — hence its own
+  // pushUndoSnapshot rather than piggybacking on one of those.
+  function deleteAnchorAndSplit(strokeId: string, rank: number) {
+    const idx = completedRef.current.findIndex((s) => s.id === strokeId);
+    if (idx === -1) return;
+    pushUndoSnapshot();
+    const stroke = completedRef.current[idx];
+    if (!resampledRef.current) {
+      stroke.points = anchorIndicesRef.current.map((i) => stroke.points[i]);
+      anchorIndicesRef.current = stroke.points.map((_, i) => i);
+      resampledRef.current = true;
+    }
+    const pointIndex = rank;
+    const before = stroke.points.slice(0, pointIndex);
+    const after = stroke.points.slice(pointIndex + 1);
+
+    const newStrokes: Stroke[] = [];
+    if (pointIndex === 0 || pointIndex === stroke.points.length - 1) {
+      const shrunk = pointIndex === 0 ? after : before;
+      if (shrunk.length >= 2) newStrokes.push({ ...stroke, points: shrunk });
+    } else {
+      if (before.length >= 2) {
+        newStrokes.push({ id: `${Date.now()}-${Math.round(Math.random() * 1e6)}-a`, points: before, createdAt: stroke.createdAt });
+      }
+      if (after.length >= 2) {
+        newStrokes.push({ id: `${Date.now()}-${Math.round(Math.random() * 1e6)}-b`, points: after, createdAt: stroke.createdAt });
+      }
+    }
+
+    completedRef.current = completedRef.current.flatMap((s, i) => (i === idx ? newStrokes : [s]));
+    outlinesRef.current = completedRef.current.map((s) => outlineFor(s.points, effectiveSettingsFor(s, settingsRef.current)));
+    saveStrokes(completedRef.current);
+    setStrokeCount(completedRef.current.length);
+
+    // Mirrors deleteStrokes's own glyph-bookkeeping pattern: the one deleted
+    // stroke id is replaced by however many new ids it split into (0, 1, or
+    // 2), and a glyph left with no strokes is dropped.
+    setGlyphs((gs) =>
+      gs
+        .map((g) =>
+          g.strokeIds.includes(strokeId)
+            ? { ...g, strokeIds: g.strokeIds.flatMap((id) => (id === strokeId ? newStrokes.map((s) => s.id) : [id])) }
+            : g
+        )
+        .filter((g) => g.strokeIds.length > 0)
+    );
+
     exitNudgeEditing();
   }
 
