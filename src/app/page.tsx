@@ -201,13 +201,15 @@ function fromAnchorSpace(
   anchorWidth: number | undefined,
   anchorHeight: number | undefined,
   currentWidth: number,
-  currentHeight: number
+  currentHeight: number,
+  keepProportions = false
 ): StrokePoint[] {
   if (!anchorWidth || !anchorHeight || (anchorWidth === currentWidth && anchorHeight === currentHeight)) {
     return points;
   }
-  const scaleX = currentWidth / anchorWidth;
-  const scaleY = currentHeight / anchorHeight;
+  let scaleX = currentWidth / anchorWidth;
+  let scaleY = currentHeight / anchorHeight;
+  if (keepProportions) scaleX = scaleY = Math.min(scaleX, scaleY);
   return points.map(([x, y, p]) => [x * scaleX, y * scaleY, p] as StrokePoint);
 }
 
@@ -216,13 +218,15 @@ function toAnchorSpace(
   anchorWidth: number | undefined,
   anchorHeight: number | undefined,
   currentWidth: number,
-  currentHeight: number
+  currentHeight: number,
+  keepProportions = false
 ): StrokePoint[] {
   if (!anchorWidth || !anchorHeight || (anchorWidth === currentWidth && anchorHeight === currentHeight)) {
     return points;
   }
-  const scaleX = currentWidth / anchorWidth;
-  const scaleY = currentHeight / anchorHeight;
+  let scaleX = currentWidth / anchorWidth;
+  let scaleY = currentHeight / anchorHeight;
+  if (keepProportions) scaleX = scaleY = Math.min(scaleX, scaleY);
   return points.map(([x, y, p]) => [x / scaleX, y / scaleY, p] as StrokePoint);
 }
 
@@ -425,6 +429,20 @@ export default function Home() {
   function updateCellWidthRatio(ratio: number) {
     setCellWidthRatio(ratio);
     window.localStorage.setItem("fontane.cellWidthRatio.v1", String(ratio));
+  }
+
+  // When on, fromAnchorSpace/toAnchorSpace rescale a Grid glyph uniformly
+  // (the smaller of the two axis ratios, applied to both) instead of
+  // independently per axis — so changing Cell size/Width never stretches or
+  // squeezes an already-drawn glyph's own proportions.
+  const [keepProportions, setKeepProportions] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("fontane.keepProportions.v1") === "true";
+  });
+
+  function updateKeepProportions(value: boolean) {
+    setKeepProportions(value);
+    window.localStorage.setItem("fontane.keepProportions.v1", String(value));
   }
 
   const cellWidth = cellSize * cellWidthRatio;
@@ -1330,7 +1348,8 @@ export default function Home() {
       existingGlyph?.cellWidth,
       existingGlyph?.cellHeight,
       currentCellWidth,
-      currentCellHeight
+      currentCellHeight,
+      keepProportions
     );
     const anchoredStroke = anchoredPoints === stroke.points ? stroke : { ...stroke, points: anchoredPoints };
     completedRef.current = [...completedRef.current, anchoredStroke];
@@ -1382,7 +1401,14 @@ export default function Home() {
       // points in current-cell pixel space, but they need to land back in
       // the glyph's own fixed anchor space so fromAnchorSpace can keep
       // expanding the whole glyph consistently on every future render.
-      const points = toAnchorSpace(rawPoints, glyph?.cellWidth, glyph?.cellHeight, currentCellWidth, currentCellHeight);
+      const points = toAnchorSpace(
+        rawPoints,
+        glyph?.cellWidth,
+        glyph?.cellHeight,
+        currentCellWidth,
+        currentCellHeight,
+        keepProportions
+      );
       completedRef.current[idx] = { ...completedRef.current[idx], points };
       outlinesRef.current[idx] = outlineFor(points, settingsRef.current);
     }
@@ -1819,7 +1845,9 @@ export default function Home() {
             const liveHeight = cellDims[letter]?.height ?? cellHeightPx;
             const fittedPoints = needsFit
               ? fitStrokesToCell(glyphStrokes, letter, liveWidth, liveHeight, metrics)
-              : glyphStrokes.map((s) => fromAnchorSpace(s.points, glyph?.cellWidth, glyph?.cellHeight, liveWidth, liveHeight));
+              : glyphStrokes.map((s) =>
+                  fromAnchorSpace(s.points, glyph?.cellWidth, glyph?.cellHeight, liveWidth, liveHeight, keepProportions)
+                );
             const cellStrokes = glyphStrokes.map((s, i) => ({ id: s.id, points: fittedPoints[i] }));
             return (
               <GridCell
@@ -1980,6 +2008,16 @@ export default function Home() {
                   onChange={(e) => updateCellWidthRatio(Number(e.target.value))}
                 />
                 <span className={styles.val}>{cellWidthRatio.toFixed(2)}</span>
+              </label>
+              <label className={styles.sliderRow}>
+                <span>
+                  <input
+                    type="checkbox"
+                    checked={keepProportions}
+                    onChange={(e) => updateKeepProportions(e.target.checked)}
+                  />{" "}
+                  Keep Proportions
+                </span>
               </label>
               <label className={styles.sliderRow}>
                 <span>Ascender</span>
