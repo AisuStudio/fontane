@@ -1932,7 +1932,7 @@ export default function Home() {
           {topMode === "draw" && drawStyle === "grid" && (
             <div className={styles.sliders}>
               <label className={styles.sliderRow}>
-                <span>Cell size</span>
+                <span>Cell height</span>
                 <input
                   type="range"
                   min={60}
