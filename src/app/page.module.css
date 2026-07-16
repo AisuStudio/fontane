@@ -331,6 +331,12 @@
   color: rgba(234, 232, 224, 0.7);
 }
 
+.settingsPanel .animateWarning {
+  padding: 0;
+  color: rgba(234, 232, 224, 0.7);
+  border-bottom: 0;
+}
+
 .main {
   flex: 1;
   min-width: 0;
@@ -581,6 +587,8 @@
   position: relative;
   flex: 1;
   min-height: 0;
+  padding: 20px;
+  box-sizing: border-box;
   cursor: text;
 }
 

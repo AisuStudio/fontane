@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
 import { layoutText } from "@/lib/layoutText";
@@ -18,7 +18,6 @@ type Props = {
   text: string;
   onTextChange: (text: string) => void;
   fontSize: number;
-  onFontSizeChange: (pt: number) => void;
 };
 
 const INK_COLOR = "#1f1934"; // blueberry, same as untagged/default ink everywhere else
@@ -78,7 +77,6 @@ export default function EditorPanel({
   text,
   onTextChange,
   fontSize,
-  onFontSizeChange,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // Real text input — invisible, absolutely stacked over the canvas (see
@@ -106,15 +104,8 @@ export default function EditorPanel({
 
   // Phase 1 (per the plan): read-only composition/preview — type using
   // already-tagged glyphs, no direct drawing/erasing/reshaping here yet.
-  // Missing-glyph detection is its own memo (not read out of the draw
-  // effect below) purely for the warning line under the textarea.
-  const missing = useMemo(() => {
-    const all = new Set<string>();
-    for (const line of text.split("\n")) {
-      for (const c of layoutText(line, glyphs, strokes, metrics).missing) all.add(c);
-    }
-    return [...all];
-  }, [text, glyphs, strokes, metrics]);
+  // (Missing-glyph detection and the font-size control both live in
+  // page.tsx's dark settings panel now, not here.)
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -207,23 +198,6 @@ export default function EditorPanel({
 
   return (
     <div className={styles.editorPanel}>
-      <div className={styles.toolbar}>
-        <label className={styles.sliderRow}>
-          <span>Size</span>
-          <input
-            type="range"
-            min={12}
-            max={300}
-            step={1}
-            value={fontSize}
-            onChange={(e) => onFontSizeChange(Number(e.target.value))}
-          />
-          <span className={styles.val}>{fontSize}pt</span>
-        </label>
-      </div>
-      {missing.length > 0 && (
-        <div className={styles.animateWarning}>missing glyphs: {missing.join(" ")}</div>
-      )}
       <div className={styles.editorCanvasWrap} onClick={() => textareaRef.current?.focus()}>
         <canvas ref={canvasRef} className={styles.editorCanvas} />
         <textarea

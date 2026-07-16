@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
 import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokePoint } from "@/lib/strokes";
@@ -14,6 +14,7 @@ import { saveFile } from "@/lib/saveFile";
 import { loadMetrics, saveMetrics, type Metrics } from "@/lib/metrics";
 import { loadSettings, saveSettings, type StrokeSettings } from "@/lib/settings";
 import { downloadProjectFile, parseProjectFile, applyProjectFile } from "@/lib/projectFile";
+import { layoutText } from "@/lib/layoutText";
 import {
   Undo2,
   Redo2,
@@ -538,6 +539,17 @@ export default function Home() {
   // with [] and clobber whatever was already in storage before the real data arrives.
   const [glyphs, setGlyphs] = useState<Glyph[]>(() => loadGlyphs());
   const taggedIdsRef = useRef<Set<string>>(new Set());
+
+  // Which typed characters in Editor mode have no tagged glyph yet — shown
+  // in the dark settings panel alongside the Size control, not inside
+  // EditorPanel itself (which only owns the canvas + its hidden input).
+  const missingEditorGlyphs = useMemo(() => {
+    const all = new Set<string>();
+    for (const line of editorText.split("\n")) {
+      for (const c of layoutText(line, glyphs, completedRef.current, metrics).missing) all.add(c);
+    }
+    return [...all];
+  }, [editorText, glyphs, metrics]);
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const selectedIdsRef = useRef<Set<string>>(new Set());
@@ -1794,7 +1806,6 @@ export default function Home() {
           text={editorText}
           onTextChange={updateEditorText}
           fontSize={editorFontSize}
-          onFontSizeChange={updateEditorFontSize}
         />
       )}
 
@@ -1995,6 +2006,28 @@ export default function Home() {
                 <span className={styles.val}>{lineSpacing}</span>
               </label>
             </div>
+          )}
+
+          {topMode === "draw" && drawStyle === "editor" && (
+            <>
+              <div className={styles.sliders}>
+                <label className={styles.sliderRow}>
+                  <span>Size</span>
+                  <input
+                    type="range"
+                    min={12}
+                    max={300}
+                    step={1}
+                    value={editorFontSize}
+                    onChange={(e) => updateEditorFontSize(Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{editorFontSize}pt</span>
+                </label>
+              </div>
+              {missingEditorGlyphs.length > 0 && (
+                <div className={styles.animateWarning}>missing glyphs: {missingEditorGlyphs.join(" ")}</div>
+              )}
+            </>
           )}
 
           {showStrokeControls && (
