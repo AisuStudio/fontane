@@ -411,18 +411,23 @@ export default function Home() {
     window.localStorage.setItem("glypher.cellSize.v1", String(size));
   }
 
-  // Independent of cellSize (which drives cell height, see cellHeightPx) —
-  // wide letters like "m" or "@" need more horizontal room than tall/narrow
-  // ones without changing the vertical type metrics every cell shares.
-  const [cellWidth, setCellWidth] = useState(() => {
-    if (typeof window === "undefined") return 90;
-    return Number(window.localStorage.getItem("glypher.cellWidth.v1")) || 90;
+  // A ratio, not an absolute pixel value — wide letters like "m" or "@" need
+  // more horizontal room than tall/narrow ones, but letting width and height
+  // be two fully independent absolute sizes made cells too easy to stretch
+  // into arbitrary, hard-to-control shapes. Width stays a proportion of
+  // cellSize instead, so "Cell size" alone still scales the whole cell
+  // proportionally, and this only adjusts how wide relative to that.
+  const [cellWidthRatio, setCellWidthRatio] = useState(() => {
+    if (typeof window === "undefined") return 1;
+    return Number(window.localStorage.getItem("glypher.cellWidthRatio.v1")) || 1;
   });
 
-  function updateCellWidth(width: number) {
-    setCellWidth(width);
-    window.localStorage.setItem("glypher.cellWidth.v1", String(width));
+  function updateCellWidthRatio(ratio: number) {
+    setCellWidthRatio(ratio);
+    window.localStorage.setItem("glypher.cellWidthRatio.v1", String(ratio));
   }
+
+  const cellWidth = cellSize * cellWidthRatio;
 
   // Each GridCell's own actual rendered size, keyed by letter — the label
   // bar under the canvas eats some of the grid row's nominal height (see
@@ -1932,7 +1937,7 @@ export default function Home() {
           {topMode === "draw" && drawStyle === "grid" && (
             <div className={styles.sliders}>
               <label className={styles.sliderRow}>
-                <span>Cell height</span>
+                <span>Cell size</span>
                 <input
                   type="range"
                   min={60}
@@ -1944,16 +1949,16 @@ export default function Home() {
                 <span className={styles.val}>{cellSize}</span>
               </label>
               <label className={styles.sliderRow}>
-                <span>Cell width</span>
+                <span>Width</span>
                 <input
                   type="range"
-                  min={60}
-                  max={400}
-                  step={10}
-                  value={cellWidth}
-                  onChange={(e) => updateCellWidth(Number(e.target.value))}
+                  min={0.5}
+                  max={2}
+                  step={0.05}
+                  value={cellWidthRatio}
+                  onChange={(e) => updateCellWidthRatio(Number(e.target.value))}
                 />
-                <span className={styles.val}>{cellWidth}</span>
+                <span className={styles.val}>{cellWidthRatio.toFixed(2)}</span>
               </label>
               <label className={styles.sliderRow}>
                 <span>Ascender</span>
