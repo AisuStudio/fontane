@@ -559,6 +559,10 @@ export default function Home() {
   // with [] and clobber whatever was already in storage before the real data arrives.
   const [glyphs, setGlyphs] = useState<Glyph[]>(() => loadGlyphs());
   const taggedIdsRef = useRef<Set<string>>(new Set());
+  // Strokes belonging to a Grid-native glyph (cellWidth/cellHeight set) live in
+  // Grid-cell-local coordinate space, not Free-canvas space — Free's redraw()
+  // must skip them or they paint as a stray blob near the Free canvas origin.
+  const gridNativeStrokeIdsRef = useRef<Set<string>>(new Set());
 
   // Which typed characters in Editor mode have no tagged glyph yet — shown
   // in the dark settings panel alongside the Size control, not inside
@@ -614,6 +618,7 @@ export default function Home() {
       const strokes = completedRef.current;
       const outlines = outlinesRef.current;
       for (let i = 0; i < strokes.length; i++) {
+        if (gridNativeStrokeIdsRef.current.has(strokes[i].id)) continue;
         const color =
           strokes[i].id === editingStrokeIdRef.current
             ? COLOR_SELECTED
@@ -706,6 +711,9 @@ export default function Home() {
     outlinesRef.current = completedRef.current.map((s) => outlineFor(s.points, settingsRef.current));
     setStrokeCount(completedRef.current.length);
     taggedIdsRef.current = new Set(glyphs.flatMap((g) => g.strokeIds));
+    gridNativeStrokeIdsRef.current = new Set(
+      glyphs.filter((g) => g.cellWidth && g.cellHeight).flatMap((g) => g.strokeIds)
+    );
     glyphsRef.current = glyphs;
 
     resize();
@@ -952,6 +960,9 @@ export default function Home() {
 
   useEffect(() => {
     taggedIdsRef.current = new Set(glyphs.flatMap((g) => g.strokeIds));
+    gridNativeStrokeIdsRef.current = new Set(
+      glyphs.filter((g) => g.cellWidth && g.cellHeight).flatMap((g) => g.strokeIds)
+    );
     glyphsRef.current = glyphs;
     saveGlyphs(glyphs);
     redrawRef.current();
@@ -1121,6 +1132,13 @@ export default function Home() {
     setNameInput("");
     setComponentsInput("");
     setAlternateOfInput("");
+  }
+
+  function handleAssignKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      handleAssign();
+    }
   }
 
   function handleUntag(id: string) {
@@ -1863,6 +1881,7 @@ export default function Home() {
                 }
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
+                onKeyDown={handleAssignKeyDown}
               />
               <div className={styles.modeToggle} role="radiogroup" aria-label="Glyph kind">
                 <button
@@ -1904,6 +1923,7 @@ export default function Home() {
                   placeholder="components (e.g. f, i)"
                   value={componentsInput}
                   onChange={(e) => setComponentsInput(e.target.value)}
+                  onKeyDown={handleAssignKeyDown}
                 />
               )}
               {kindInput === "alternate" && (
@@ -1913,6 +1933,7 @@ export default function Home() {
                   placeholder="alternate of (e.g. a)"
                   value={alternateOfInput}
                   onChange={(e) => setAlternateOfInput(e.target.value)}
+                  onKeyDown={handleAssignKeyDown}
                 />
               )}
 
