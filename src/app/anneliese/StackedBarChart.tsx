@@ -136,36 +136,6 @@ export default function StackedBarChart({ buckets, legend }: { buckets: Bucket[]
           ))}
         </div>
       )}
-
-      <details style={{ marginTop: 16, fontSize: 13 }}>
-        <summary style={{ cursor: "pointer", opacity: 0.6 }}>table view</summary>
-        <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8 }}>
-          <thead>
-            <tr style={{ textAlign: "left", opacity: 0.6 }}>
-              <th style={{ fontWeight: "normal", padding: "4px 0" }}>date</th>
-              {legend.map((entry) => (
-                <th key={entry.label} style={{ fontWeight: "normal", padding: "4px 0", textAlign: "right" }}>
-                  {entry.label}
-                </th>
-              ))}
-              <th style={{ fontWeight: "normal", padding: "4px 0", textAlign: "right" }}>total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {buckets.map((bucket, i) => (
-              <tr key={bucket.label + i} style={{ borderTop: "1px solid rgba(31,25,52,0.1)" }}>
-                <td style={{ padding: "4px 0" }}>{bucket.label}</td>
-                {legend.map((entry) => (
-                  <td key={entry.label} style={{ padding: "4px 0", textAlign: "right" }}>
-                    {bucket.sources.find((s) => s.label === entry.label)?.count ?? 0}
-                  </td>
-                ))}
-                <td style={{ padding: "4px 0", textAlign: "right" }}>{bucket.total}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </details>
     </div>
   );
 }
