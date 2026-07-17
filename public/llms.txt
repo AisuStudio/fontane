@@ -1,0 +1,25 @@
+# Fontane.Studio
+
+> A free, browser-based tool that turns your own handwriting into a real, usable font. Draw letters freehand or in a letter grid with a pressure-sensitive pen (Apple Pencil, Wacom, or mouse/trackpad as a fallback), tag strokes to characters, then export a working font file — no design software or font-engineering background required.
+
+Fontane.Studio runs entirely client-side in the browser (no account, no upload of your drawings to a server). It is a small, independently built tool, not a commercial SaaS product.
+
+## What it does
+
+- **Free mode** — draw anywhere on an open canvas, then lasso-select strokes and assign them to a character (base letter, ligature, or stylistic alternate).
+- **Grid mode** — one cell per character; drawing into a cell captures and tags in one step, with adjustable baseline/x-height/ascender/descender guides and draggable per-glyph left/right sidebearings that calibrate the exported font.
+- **Editor mode** — compose and preview real text using the glyphs you've already drawn.
+- Editing tools: Draw (pressure-sensitive centerline), Brush (outline-as-ink), Eraser, Select, Nudge (drag individual anchor points to reshape a stroke), Anchor (select/insert/delete individual anchor points, splitting a stroke into two), Move, Rotate, Scale (modifier-aware: default corner-anchored non-uniform scale, Alt = scale from center, Shift = lock proportions), and Skew (horizontal/vertical shear sliders).
+- Character sets: Latin Basic, Central European, Western European, numbers, and punctuation — togglable per document.
+
+## Export formats
+
+- **OTF** — a real OpenType font, built entirely client-side (no server round-trip).
+- **FFF** ("Fontane Font File") — the raw editable project (glyphs, strokes, metrics, settings) for reopening and continuing to edit later.
+- **Skeleton SVG** — each glyph's raw pen centerline as an open path, for hand-building an outline in Glyphs.app or similar type design software.
+- **JSON** — the compiled document (glyphs + contours), for custom tooling.
+- A local Python script (`font-build/`) compiles the same JSON into a real TrueType `.ttf`, and a Glyphs.app import script (`glyphs-plugin/`) builds native glyphs directly in an open Glyphs font.
+
+## Source
+
+- [GitHub repository](https://github.com/AisuStudio/fontane): full source code, READMEs for the local TTF build script and the Glyphs.app import script.

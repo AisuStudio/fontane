@@ -2,9 +2,21 @@ import type { Metadata, Viewport } from "next";
 import "./tokens.css";
 import "./globals.css";
 
+const description = "Hand lettering, captured with pressure, turned into a font.";
+
 export const metadata: Metadata = {
+  metadataBase: new URL("https://fontane.studio"),
   title: "Fontane.Studio",
-  description: "Hand lettering, captured with pressure, turned into a font.",
+  description,
+  keywords: [
+    "hand lettering",
+    "font creator",
+    "handwriting to font",
+    "OTF export",
+    "TTF export",
+    "type design tool",
+    "calligraphy font",
+  ],
   manifest: "/manifest.json",
   icons: {
     icon: [
@@ -18,6 +30,41 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
     title: "Fontane.Studio",
   },
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    title: "Fontane.Studio",
+    description,
+    url: "https://fontane.studio",
+    siteName: "Fontane.Studio",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Fontane.Studio",
+    description,
+  },
+};
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  name: "Fontane.Studio",
+  url: "https://fontane.studio",
+  description,
+  applicationCategory: "DesignApplication",
+  operatingSystem: "Any (runs in the browser)",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD",
+  },
+  featureList: [
+    "Draw letters freehand or in a letter grid",
+    "Pressure-sensitive stroke capture (Apple Pencil, Wacom, mouse)",
+    "Export as OTF, skeleton SVG, or FFF project file",
+  ],
 };
 
 export const viewport: Viewport = {
@@ -36,7 +83,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
+        />
+        {children}
+      </body>
     </html>
   );
 }
