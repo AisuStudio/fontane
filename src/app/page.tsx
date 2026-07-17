@@ -122,6 +122,7 @@ const COLOR_TAGGED = "#5100ff"; // grape — assigned to a glyph
 const ANCHOR_COLOR = "#5100ff"; // grape — matches the draggable-affordance color used elsewhere (GridCell's bearing handles)
 const ANCHOR_RING_COLOR = "#eae8e0"; // vanilla — ring for contrast against the stroke color
 const SKELETON_GUIDE_COLOR = "#9e9c95"; // hazelnut
+const FREE_RASTER_COLOR = "#FFABAB"; // Free mode's ruled-line background only — not shared with the Nudge skeleton preview or transform pivot line, which stay hazelnut
 const ANCHOR_HIT_PX = 8;
 
 function optionsFor(settings: StrokeSettings) {
@@ -344,7 +345,7 @@ function drawLineRaster(
   if (spacing <= 0) return;
   ctx.save();
   ctx.lineWidth = 1;
-  ctx.strokeStyle = SKELETON_GUIDE_COLOR;
+  ctx.strokeStyle = FREE_RASTER_COLOR;
   ctx.beginPath();
   // Lines are drawn in the already ctx.translate(panX, panY)'d space (see
   // redraw()), so the on-screen viewport actually spans local y from -panY
