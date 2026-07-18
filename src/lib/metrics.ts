@@ -35,3 +35,8 @@ export function saveMetrics(metrics: Metrics) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(metrics));
 }
+
+export function clearMetrics() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(STORAGE_KEY);
+}

@@ -8,11 +8,11 @@ import { loadGlyphs, saveGlyphs, unicodeFor, type Glyph, type GlyphKind } from "
 import { anyPointInPolygon, pointInPolygon } from "@/lib/geometry";
 import { outlineToPath, pathToSvgD, skeletonToPath, unionOutlines, type PathCommand } from "@/lib/contour";
 import { simplifyStrokeIndices } from "@/lib/simplify";
-import { downloadFont } from "@/lib/exportFont";
+import { buildFont, downloadFont } from "@/lib/exportFont";
 import { downloadSkeletonSvg } from "@/lib/exportSkeleton";
 import { saveFile } from "@/lib/saveFile";
-import { loadMetrics, saveMetrics, type Metrics } from "@/lib/metrics";
-import { loadSettings, saveSettings, type StrokeSettings } from "@/lib/settings";
+import { loadMetrics, saveMetrics, DEFAULT_METRICS, type Metrics } from "@/lib/metrics";
+import { loadSettings, saveSettings, DEFAULT_SETTINGS, type StrokeSettings } from "@/lib/settings";
 import { downloadProjectFile, parseProjectFile, applyProjectFile } from "@/lib/projectFile";
 import { layoutText } from "@/lib/layoutText";
 import {
@@ -58,7 +58,7 @@ type DrawTool = "pen" | "brush" | "eraser" | "nudge" | "anchor" | "assign" | "se
 // The 5 menu-bar dropdowns — "charset" (the Grid context bar's Character
 // sets picker) is a separate, click-only dropdown, not part of the hover
 // group below.
-type MenuKey = "glypher" | "file" | "edit" | "view" | "tools" | "charset";
+type MenuKey = "glypher" | "file" | "edit" | "view" | "tools" | "marketplace" | "charset";
 // One entry per Grid cell — the fixed character sets contribute one slot
 // per character (kind always "base"), and a user can append arbitrary extra
 // slots (ligatures, alternates, or a one-off base symbol outside any set) via
@@ -438,6 +438,70 @@ export default function Home() {
   // rather than another dropdown, since this content is paragraph-length,
   // not a short action list.
   const [infoModal, setInfoModal] = useState<"info" | "howto" | null>(null);
+  // File > New File's "save first?" confirmation — same modal pattern as
+  // infoModal, just a yes/no instead of paragraph content.
+  const [confirmNewFile, setConfirmNewFile] = useState(false);
+
+  // Marketplace: Publish Font / Share Font both live in the same lightweight
+  // modal pattern as infoModal. Publish's fields reset via
+  // closeMarketplaceModal() below rather than persisting across opens.
+  const [marketplaceModal, setMarketplaceModal] = useState<"publish" | "share" | null>(null);
+  const [publishName, setPublishName] = useState("");
+  const [publishAuthorName, setPublishAuthorName] = useState("");
+  const [publishAuthorUrl, setPublishAuthorUrl] = useState("");
+  const [slugCheck, setSlugCheck] = useState<{ slug: string; available: boolean } | null>(null);
+  const [slugChecking, setSlugChecking] = useState(false);
+  const [licenseAccepted, setLicenseAccepted] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [publishedSlug, setPublishedSlug] = useState<string | null>(null);
+  const [shareQuery, setShareQuery] = useState("");
+  const [shareResults, setShareResults] = useState<{ slug: string; display_name: string }[]>([]);
+  const [shareSearching, setShareSearching] = useState(false);
+  const [shareCopyState, setShareCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [shareCopiedSlug, setShareCopiedSlug] = useState<string | null>(null);
+
+  // Debounced live availability check while typing a name in the Publish
+  // modal — UX feedback only, api/fonts/publish re-checks server-side before
+  // actually writing anything (see that route's comment).
+  useEffect(() => {
+    if (marketplaceModal !== "publish") return;
+    const trimmed = publishName.trim();
+    if (!trimmed) {
+      setSlugCheck(null);
+      setSlugChecking(false);
+      return;
+    }
+    setSlugChecking(true);
+    const handle = setTimeout(() => {
+      fetch(`/api/fonts/check-slug?name=${encodeURIComponent(trimmed)}`)
+        .then((r) => r.json())
+        .then((data) => setSlugCheck(data.error ? null : { slug: data.slug, available: data.available }))
+        .catch(() => setSlugCheck(null))
+        .finally(() => setSlugChecking(false));
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [publishName, marketplaceModal]);
+
+  // Debounced search backing the Share Font modal.
+  useEffect(() => {
+    if (marketplaceModal !== "share") return;
+    const trimmed = shareQuery.trim();
+    if (!trimmed) {
+      setShareResults([]);
+      setShareSearching(false);
+      return;
+    }
+    setShareSearching(true);
+    const handle = setTimeout(() => {
+      fetch(`/api/fonts/search?q=${encodeURIComponent(trimmed)}`)
+        .then((r) => r.json())
+        .then((data) => setShareResults(data.results ?? []))
+        .catch(() => setShareResults([]))
+        .finally(() => setShareSearching(false));
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [shareQuery, marketplaceModal]);
   const [activeSetIds, setActiveSetIds] = useState<Set<string>>(new Set(DEFAULT_CHARACTER_SET_IDS));
   // Extra Grid cells beyond the fixed character sets — this is the only way
   // to get a ligature/alternate slot into Grid view at all (Free mode's
@@ -1943,6 +2007,90 @@ export default function Home() {
     });
   }
 
+  // "Yes" saves via the existing Export FFF flow first, "No" skips straight
+  // to clearing. Same reset as handleClear, plus metrics/settings back to
+  // their defaults — Clear all only ever touched glyphs/strokes since it's
+  // scoped to canvas content, but New File means a genuinely blank project.
+  function handleNewFile(shouldSave: boolean) {
+    if (shouldSave) handleDownloadFff();
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    completedRef.current = [];
+    outlinesRef.current = [];
+    clearStrokes();
+    setStrokeCount(0);
+    setGlyphs([]);
+    setSelectedIds([]);
+    setMetrics(DEFAULT_METRICS);
+    saveMetrics(DEFAULT_METRICS);
+    setSettings(DEFAULT_SETTINGS);
+    setConfirmNewFile(false);
+  }
+
+  function closeMarketplaceModal() {
+    setMarketplaceModal(null);
+    setPublishName("");
+    setPublishAuthorName("");
+    setPublishAuthorUrl("");
+    setSlugCheck(null);
+    setSlugChecking(false);
+    setLicenseAccepted(false);
+    setPublishing(false);
+    setPublishError(null);
+    setPublishedSlug(null);
+    setShareQuery("");
+    setShareResults([]);
+    setShareSearching(false);
+    setShareCopyState("idle");
+    setShareCopiedSlug(null);
+  }
+
+  async function handlePublish() {
+    const trimmed = publishName.trim();
+    if (!exportDoc || glyphs.length === 0 || !slugCheck?.available || !licenseAccepted) return;
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      const font = buildFont(exportDoc, trimmed);
+      const blob = new Blob([font.toArrayBuffer()], { type: "font/otf" });
+      const form = new FormData();
+      form.append("font", blob, "font.otf");
+      form.append("name", trimmed);
+      form.append("glyphCount", String(glyphs.length));
+      form.append("licenseAccepted", "true");
+      if (publishAuthorName.trim()) form.append("authorName", publishAuthorName.trim());
+      if (publishAuthorUrl.trim()) form.append("authorUrl", publishAuthorUrl.trim());
+      const res = await fetch("/api/fonts/publish", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) {
+        setPublishError(typeof data.error === "string" ? data.error : "Publish failed.");
+        return;
+      }
+      trackExport("marketplace-publish");
+      setPublishedSlug(data.slug);
+    } catch {
+      setPublishError("Network error — please try again.");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  function handleShareCopy(slug: string) {
+    const url = `${window.location.origin}/marketplace/${slug}`;
+    navigator.clipboard
+      .writeText(url)
+      .then(() => {
+        setShareCopyState("copied");
+        setShareCopiedSlug(slug);
+      })
+      .catch(() => {
+        setShareCopyState("failed");
+        setShareCopiedSlug(slug);
+      });
+    setTimeout(() => setShareCopyState("idle"), 1500);
+  }
+
   function selectView(v: ViewDef) {
     setTopMode(v.topMode);
     if (v.drawStyle) setDrawStyle(v.drawStyle);
@@ -2008,6 +2156,9 @@ export default function Home() {
           </button>
           {openMenu === "file" && (
             <div className={styles.dropdown} role="menu">
+              <button type="button" role="menuitem" className={styles.dropdownItem} onClick={() => { setConfirmNewFile(true); setOpenMenu(null); }}>
+                New File
+              </button>
               <button type="button" role="menuitem" className={styles.dropdownItem} onClick={() => { handleImportFffClick(); setOpenMenu(null); }}>
                 Import FFF
               </button>
@@ -2141,6 +2292,46 @@ export default function Home() {
                   {t.label} ({t.shortcut})
                 </button>
               ))}
+            </div>
+          )}
+        </div>
+
+        <div
+          className={styles.menuItem}
+          onMouseEnter={() => openMenuOnHover("marketplace")}
+          onMouseLeave={scheduleMenuHoverClose}
+        >
+          <button
+            type="button"
+            className={styles.menuTrigger}
+            aria-haspopup="menu"
+            aria-expanded={openMenu === "marketplace"}
+            onClick={() => setOpenMenu((m) => (m === "marketplace" ? null : "marketplace"))}
+          >
+            Marketplace
+          </button>
+          {openMenu === "marketplace" && (
+            <div className={styles.dropdown} role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className={styles.dropdownItem}
+                disabled={glyphs.length === 0}
+                onClick={() => { setMarketplaceModal("publish"); setOpenMenu(null); }}
+              >
+                Publish Font
+              </button>
+              <a href="/marketplace" role="menuitem" className={styles.dropdownItem} onClick={() => setOpenMenu(null)}>
+                Browse Fonts
+              </a>
+              <button
+                type="button"
+                role="menuitem"
+                className={styles.dropdownItem}
+                onClick={() => { setMarketplaceModal("share"); setOpenMenu(null); }}
+              >
+                Share Font
+              </button>
             </div>
           )}
         </div>
@@ -2895,6 +3086,161 @@ export default function Home() {
                 </li>
               </ol>
             )}
+          </div>
+        </div>
+      )}
+
+      {confirmNewFile && (
+        <div className={styles.modalBackdrop} onClick={() => setConfirmNewFile(false)}>
+          <div className={styles.modalCard} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <span>New File</span>
+              <button type="button" className={styles.modalClose} onClick={() => setConfirmNewFile(false)} aria-label="Close">
+                ×
+              </button>
+            </div>
+            <p className={styles.modalBody}>Save current project?</p>
+            <div style={{ display: "flex", gap: 8, padding: "0 16px 16px" }}>
+              <button type="button" className={styles.clearBtn} onClick={() => handleNewFile(true)}>
+                Yes
+              </button>
+              <button type="button" className={`${styles.clearBtn} ${styles.dangerBtn}`} onClick={() => handleNewFile(false)}>
+                No
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {marketplaceModal === "publish" && (
+        <div className={styles.modalBackdrop} onClick={closeMarketplaceModal}>
+          <div className={styles.modalCard} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <span>Publish Font</span>
+              <button type="button" className={styles.modalClose} onClick={closeMarketplaceModal} aria-label="Close">
+                ×
+              </button>
+            </div>
+            {publishedSlug ? (
+              <div style={{ padding: "0 16px 16px" }}>
+                <p className={styles.modalBody}>
+                  Published as <strong>{publishedSlug}</strong>.
+                </p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="button" className={styles.clearBtn} onClick={() => handleShareCopy(publishedSlug)}>
+                    {shareCopyState === "copied" && shareCopiedSlug === publishedSlug
+                      ? "Link copied!"
+                      : shareCopyState === "failed" && shareCopiedSlug === publishedSlug
+                        ? "Copy failed"
+                        : "Copy link"}
+                  </button>
+                  <a href={`/marketplace/${publishedSlug}`} className={styles.clearBtn} style={{ textDecoration: "none" }}>
+                    View
+                  </a>
+                </div>
+              </div>
+            ) : glyphs.length === 0 ? (
+              <p className={styles.modalBody}>Draw and tag at least one glyph before publishing.</p>
+            ) : (
+              <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <input
+                    type="text"
+                    className={styles.nameInput}
+                    style={{ width: "100%" }}
+                    placeholder="Font name"
+                    value={publishName}
+                    onChange={(e) => setPublishName(e.target.value)}
+                  />
+                  <p style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+                    {!publishName.trim()
+                      ? " "
+                      : slugChecking
+                        ? "Checking availability…"
+                        : slugCheck?.available
+                          ? `Available — fontane.studio/marketplace/${slugCheck.slug}`
+                          : slugCheck
+                            ? "That name is already taken."
+                            : " "}
+                  </p>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <input
+                    type="text"
+                    className={styles.nameInput}
+                    style={{ width: "100%" }}
+                    placeholder="Author (optional)"
+                    value={publishAuthorName}
+                    onChange={(e) => setPublishAuthorName(e.target.value)}
+                  />
+                  <input
+                    type="text"
+                    className={styles.nameInput}
+                    style={{ width: "100%" }}
+                    placeholder="Author homepage (optional)"
+                    value={publishAuthorUrl}
+                    onChange={(e) => setPublishAuthorUrl(e.target.value)}
+                  />
+                </div>
+                <label style={{ display: "flex", gap: 8, fontSize: 13, alignItems: "flex-start" }}>
+                  <input
+                    type="checkbox"
+                    checked={licenseAccepted}
+                    onChange={(e) => setLicenseAccepted(e.target.checked)}
+                    style={{ marginTop: 2 }}
+                  />
+                  I confirm this font may be used 100% unrestricted, for any purpose.
+                </label>
+                {publishError && <p style={{ color: "#c0334d", fontSize: 13 }}>{publishError}</p>}
+                <button
+                  type="button"
+                  className={styles.clearBtn}
+                  disabled={!slugCheck?.available || !licenseAccepted || publishing}
+                  onClick={handlePublish}
+                >
+                  {publishing ? "Publishing…" : "Publish"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {marketplaceModal === "share" && (
+        <div className={styles.modalBackdrop} onClick={closeMarketplaceModal}>
+          <div className={styles.modalCard} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <span>Share Font</span>
+              <button type="button" className={styles.modalClose} onClick={closeMarketplaceModal} aria-label="Close">
+                ×
+              </button>
+            </div>
+            <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <input
+                type="text"
+                className={styles.nameInput}
+                style={{ width: "100%" }}
+                placeholder="Find a published font by name"
+                value={shareQuery}
+                onChange={(e) => setShareQuery(e.target.value)}
+              />
+              {shareSearching && <p style={{ fontSize: 12, opacity: 0.7 }}>Searching…</p>}
+              {!shareSearching && shareQuery.trim() && shareResults.length === 0 && (
+                <p style={{ fontSize: 12, opacity: 0.7 }}>No fonts found.</p>
+              )}
+              {shareResults.map((font) => (
+                <div key={font.slug} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                  <span>{font.display_name}</span>
+                  <button type="button" className={styles.clearBtn} onClick={() => handleShareCopy(font.slug)}>
+                    {shareCopyState === "copied" && shareCopiedSlug === font.slug
+                      ? "Copied!"
+                      : shareCopyState === "failed" && shareCopiedSlug === font.slug
+                        ? "Failed"
+                        : "Copy link"}
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

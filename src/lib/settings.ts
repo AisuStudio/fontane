@@ -35,3 +35,8 @@ export function saveSettings(settings: StrokeSettings) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
+
+export function clearSettings() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(STORAGE_KEY);
+}
