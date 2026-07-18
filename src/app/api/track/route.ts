@@ -35,6 +35,15 @@ function dailyVisitorFingerprint(ip: string, userAgent: string): string {
   return createHash("sha256").update(`${salt}:${today}:${ip}:${userAgent}`).digest("hex");
 }
 
+// Only the real production deployment (fontane.studio) may ever write a row
+// — `next dev` and Vercel preview/branch deployments both fall through this
+// unwritten. IP-based exclusion (below) only catches whatever IP a given
+// local setup happens to present, which isn't reliable (a proxy in front of
+// `next dev` can hand out a different IP per request) — gating on the
+// deployment itself is the only check that can't be bypassed by network
+// path. VERCEL_ENV is unset locally, so this also covers plain `next dev`.
+const IS_PRODUCTION = process.env.VERCEL_ENV === "production";
+
 // Fire-and-forget event intake for the /anneliese mini-analytics page. A
 // missing Supabase config (env vars not set yet) just no-ops instead of
 // breaking the beacon — the client never even reads this response
@@ -44,6 +53,10 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
+    return new Response(null, { status: 204 });
+  }
+
+  if (!IS_PRODUCTION) {
     return new Response(null, { status: 204 });
   }
 
