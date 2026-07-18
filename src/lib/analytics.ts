@@ -11,8 +11,21 @@
 // never blocks or breaks the drawing UI, and every failure is swallowed —
 // analytics must never be able to throw into the caller.
 
+// An explicit, manual opt-out — visit fontane.studio/?notrack and nothing
+// for that page load ever gets sent. Complements the IP allowlist in
+// api/track/route.ts (automatic, but tied to a specific IP that can change);
+// this works from anywhere, no IP to know or maintain. Checked once per
+// page load rather than persisted anywhere, matching the "nothing written to
+// the visitor's own device" rule above — the param has to be present on
+// every visit you want excluded, but that's the same one-time cost as
+// bookmarking the URL.
+function isTrackingSuppressed(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).has("notrack");
+}
+
 function send(payload: Record<string, unknown>) {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || isTrackingSuppressed()) return;
   try {
     const body = JSON.stringify(payload);
     if (navigator.sendBeacon) {
