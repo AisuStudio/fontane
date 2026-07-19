@@ -1033,3 +1033,15 @@
   flex-direction: column;
   gap: var(--sp-sm);
 }
+
+.modalLink {
+  display: block;
+  margin-top: var(--sp-md);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--color-grape);
+}
+
+.modalLink:hover {
+  text-decoration: underline;
+}

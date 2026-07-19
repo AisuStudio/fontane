@@ -3372,6 +3372,12 @@ export default function Home() {
                   needed.
                 </li>
                 <li>
+                  <strong>Character Sets</strong> — starting Grid on an empty project asks you to pick which
+                  character sets to draw first (Latin Basic, Central European, Western European, Numbers,
+                  Punctuation, Symbols). That&apos;s just a starting point, not a commitment — add or remove sets
+                  anytime from the Character Sets menu, and cells for any newly added set appear right away.
+                </li>
+                <li>
                   <strong>The Free Draw workflow</strong> — write freely, select, and assign single letters,
                   numbers, or other glyphs; you can also assign ligatures and alternate letters this way. Three
                   steps: <strong>Draw</strong> to create your letter shapes, <strong>Select</strong> to lasso a
@@ -3420,6 +3426,16 @@ export default function Home() {
                   off (here, or on another machine) — it&apos;s the project save file, not a font.
                 </li>
               </ol>
+            )}
+            {infoModal === "howto" && (
+              <a
+                href="https://cnsl.aisu.studio/submit/fontane-cb43f90b"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={styles.modalLink}
+              >
+                Missing something? See &amp; suggest features →
+              </a>
             )}
           </div>
         </div>
