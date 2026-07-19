@@ -1023,7 +1023,14 @@ export default function Home() {
       const rect = canvas.getBoundingClientRect();
       canvas.width = rect.width * dpr;
       canvas.height = rect.height * dpr;
-      canvas.getContext("2d")?.scale(dpr, dpr);
+      const resizeCtx = canvas.getContext("2d");
+      // scale() is multiplicative on the existing transform, not a reset — resize()
+      // runs again on every native window resize AND every switch into Free Draw, so
+      // without resetting first each call compounded the previous one (dpr, then dpr²,
+      // dpr³, ...), pushing drawn strokes further and further from the actual pointer
+      // position. setTransform back to identity first makes every call idempotent.
+      resizeCtx?.setTransform(1, 0, 0, 1, 0, 0);
+      resizeCtx?.scale(dpr, dpr);
       redraw();
     }
     resizeRef.current = resize;

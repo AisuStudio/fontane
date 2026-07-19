@@ -117,9 +117,12 @@ export default async function FontOverviewPage({
                 entry (no GSUB either), so typing text can never reach them.
                 This is the only view that shows literally every glyph. */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(48px, 1fr))", gap: 4 }}>
-              {glyphSheet.glyphs.map((g) => (
+              {glyphSheet.glyphs.map((g, i) => (
                 <svg
-                  key={g.name}
+                  // Glyph names in a real compiled OTF aren't guaranteed unique
+                  // (e.g. duplicate-named figure/ligature-component glyphs) — index
+                  // makes the key actually unique instead of just usually unique.
+                  key={`${g.name}-${i}`}
                   viewBox={`0 ${-glyphSheet.ascender} ${g.advanceWidth} ${glyphSheet.ascender - glyphSheet.descender}`}
                   preserveAspectRatio="xMidYMid meet"
                   style={{ width: "100%", height: 48, border: "1px solid rgba(31,25,52,0.15)", borderRadius: 4 }}
