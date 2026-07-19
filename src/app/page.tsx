@@ -2555,9 +2555,7 @@ export default function Home() {
             )}
           </div>
         )}
-      </div>
 
-      <div className={styles.toolsViewsBar} data-chrome-menu>
         <div className={styles.hBarGroup}>
           <button
             type="button"
@@ -2582,8 +2580,10 @@ export default function Home() {
             <span>Redo</span>
           </button>
         </div>
+      </div>
 
-        {topMode === "draw" && drawStyle !== "editor" && (
+      {topMode === "draw" && drawStyle !== "editor" && (
+        <div className={styles.toolsViewsBar} data-chrome-menu>
           <div className={styles.hBarGroup}>
             <span className={styles.hBarLabel}>Tools</span>
             {visibleTools.map((t) => (
@@ -2600,8 +2600,8 @@ export default function Home() {
               </button>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <input
         ref={fffInputRef}
