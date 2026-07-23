@@ -123,12 +123,12 @@ const FREE_ONLY_TOOLS = new Set<DrawTool>(["assign", "pan", "anchor", "vector"])
 type ToolDef = { value: DrawTool; label: string; icon: typeof Brush; shortcut: string };
 const TOOL_DEFS: ToolDef[] = [
   { value: "pen", label: "Draw", icon: Pencil, shortcut: "b" },
+  { value: "vector", label: "Vector", icon: PenTool, shortcut: "v" },
   { value: "brush", label: "Brush", icon: Brush, shortcut: "u" },
   { value: "eraser", label: "Erase", icon: Eraser, shortcut: "e" },
   { value: "select", label: "Select", icon: Lasso, shortcut: "l" },
   { value: "nudge", label: "Nudge", icon: SplinePointer, shortcut: "n" },
   { value: "anchor", label: "Anchor", icon: MousePointer2, shortcut: "p" },
-  { value: "vector", label: "Vector", icon: PenTool, shortcut: "v" },
   { value: "move", label: "Move", icon: Move, shortcut: "m" },
   { value: "rotate", label: "Rotate", icon: RotateCw, shortcut: "r" },
   { value: "scale", label: "Scale", icon: Scaling, shortcut: "s" },
@@ -1171,7 +1171,10 @@ export default function Home() {
           ctx.save();
           ctx.beginPath();
           applyVectorShapePath(ctx, editingShape);
-          ctx.strokeStyle = COLOR_SELECTED;
+          // Grape while still an open draft (lemon-on-cream is hard to read
+          // for the line you're actively watching take shape); once closed,
+          // the usual selected-color treatment applies.
+          ctx.strokeStyle = editingShape.closed ? COLOR_SELECTED : ANCHOR_COLOR;
           ctx.lineWidth = 1;
           ctx.stroke();
           ctx.restore();
@@ -1274,7 +1277,7 @@ export default function Home() {
         return;
       }
       if (topModeRef.current === "draw" && drawToolRef.current === "vector") {
-        handleVectorPointerDown(p[0], p[1]);
+        handleVectorPointerDown(p[0], p[1], e.altKey);
         redraw();
         return;
       }
@@ -2367,7 +2370,7 @@ export default function Home() {
   // point, plain click = corner). Click on a different existing shape's
   // anchor/curve (or on empty space with nothing active) starts/switches the
   // editing session onto it, exactly the Nudge/Anchor tools' own convention.
-  function handleVectorPointerDown(x: number, y: number) {
+  function handleVectorPointerDown(x: number, y: number, altKey: boolean) {
     if (editingShapeIdRef.current) {
       const idx = vectorShapesRef.current.findIndex((s) => s.id === editingShapeIdRef.current);
       if (idx !== -1) {
@@ -2391,6 +2394,17 @@ export default function Home() {
 
         const anchorHit = vectorAnchorNear(shape, x, y);
         if (anchorHit !== null) {
+          if (altKey) {
+            // Alt+drag pulls a fresh symmetric handle pair out of ANY
+            // anchor — including the first/last point of the path, which
+            // otherwise never gets a drag-to-curve moment of its own — same
+            // mechanism as placing a brand-new curve point, just retargeted
+            // at an anchor that already exists.
+            draggingHandleRef.current = { anchorIndex: anchorHit, which: "handleOut" };
+            placingNewAnchorRef.current = true;
+            vectorDragStartRef.current = { x, y };
+            return;
+          }
           draggingVectorAnchorRef.current = anchorHit;
           vectorDragStartRef.current = { x, y };
           return;
@@ -2429,6 +2443,12 @@ export default function Home() {
       const anchorHit = vectorAnchorNear(shape, x, y);
       if (anchorHit !== null) {
         editingShapeIdRef.current = shape.id;
+        if (altKey) {
+          draggingHandleRef.current = { anchorIndex: anchorHit, which: "handleOut" };
+          placingNewAnchorRef.current = true;
+          vectorDragStartRef.current = { x, y };
+          return;
+        }
         draggingVectorAnchorRef.current = anchorHit;
         vectorDragStartRef.current = { x, y };
         return;
@@ -2449,6 +2469,12 @@ export default function Home() {
     };
     vectorShapesRef.current = [...vectorShapesRef.current, newShape];
     editingShapeIdRef.current = newShape.id;
+    // The very first point of a path gets the same drag-to-curve treatment
+    // every later point already had — previously only anchors 2+ could
+    // become smooth points on placement.
+    draggingHandleRef.current = { anchorIndex: 0, which: "handleOut" };
+    placingNewAnchorRef.current = true;
+    vectorDragStartRef.current = { x, y };
     saveVectorShapes(vectorShapesRef.current);
     recordVectorProvenance();
   }
