@@ -63,9 +63,12 @@ export function trackPageview(page: string = "editor") {
   send({ type: "pageview", referrer: getReferrerHost(), page, language });
 }
 
-export function trackDuration(seconds: number) {
+// `page` here is the finer view label (e.g. "editor:grid", "marketplace")
+// rather than the pageview's coarse surface — one duration row per visible
+// segment, so per-view time adds up. See lib/visitDuration.ts.
+export function trackDuration(seconds: number, page?: string) {
   if (seconds < 1) return;
-  send({ type: "duration", seconds: Math.round(seconds) });
+  send({ type: "duration", seconds: Math.round(seconds), page });
 }
 
 export function trackExport(format: string) {

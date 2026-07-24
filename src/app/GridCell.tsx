@@ -3,16 +3,17 @@
 import { useEffect, useRef } from "react";
 import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
-import { outlineToPath, skeletonToPath, type PathCommand } from "@/lib/contour";
+import { outlineToPath, skeletonToPath, cubicPoint, type PathCommand } from "@/lib/contour";
 import { pointInPolygon, anyPointInPolygon, fitPointsToBox } from "@/lib/geometry";
 import { simplifyStrokeIndices } from "@/lib/simplify";
 import type { StrokeKind, StrokePoint } from "@/lib/strokes";
 import type { Metrics } from "@/lib/metrics";
 import { unicodeFor } from "@/lib/glyphs";
 import { setClipboard, getClipboard, type ClipboardStroke } from "@/lib/clipboard";
+import type { BezierAnchor, VectorShape } from "@/lib/vectorShapes";
 
 export type StrokeOptions = { size: number; thinning: number; smoothing: number; streamline: number };
-export type CellTool = "pen" | "brush" | "eraser" | "select" | "nudge" | "move" | "rotate" | "scale";
+export type CellTool = "pen" | "brush" | "eraser" | "select" | "nudge" | "move" | "rotate" | "scale" | "vector";
 // Raw points now, not a precomputed outline — Nudge/Move/Rotate/Scale need
 // the real geometry to reshape/transform; the cell computes its own outline
 // from these via outlineFor() below, the same split Free's own canvas uses.
@@ -49,6 +50,24 @@ function applyPath(ctx: CanvasRenderingContext2D, commands: PathCommand[]) {
     else if (c.type === "L") ctx.lineTo(c.x, c.y);
     else ctx.closePath();
   }
+}
+
+// Vector-tool shapes are true cubic Beziers, so this draws them with canvas's
+// own bezierCurveTo directly — local copy of page.tsx's applyVectorShapePath,
+// same as the select/nudge/transform logic further down is a local copy of its
+// Free-canvas counterpart.
+function applyVectorShapePath(ctx: CanvasRenderingContext2D, shape: VectorShape) {
+  if (shape.anchors.length < 2) return;
+  ctx.moveTo(shape.anchors[0].x, shape.anchors[0].y);
+  const segmentCount = shape.closed ? shape.anchors.length : shape.anchors.length - 1;
+  for (let i = 0; i < segmentCount; i++) {
+    const p0 = shape.anchors[i];
+    const p1 = shape.anchors[(i + 1) % shape.anchors.length];
+    const c1 = p0.handleOut ?? p0;
+    const c2 = p1.handleIn ?? p1;
+    ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, p1.x, p1.y);
+  }
+  if (shape.closed) ctx.closePath();
 }
 
 function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][], color: string = CELL_COLOR) {
@@ -159,6 +178,148 @@ function drawGuides(
   ctx.restore();
 }
 
+// --- Vector tool (true Bezier shapes, src/lib/vectorShapes.ts) ---
+// Local ports of page.tsx's Free-canvas hit tests. Unlike the Stroke-anchor
+// tools, VectorShape anchors ARE the stored data — no simplify/resample
+// indirection — so these work directly against shape.anchors and return real
+// indices, not ranks.
+
+function vectorAnchorNear(shape: VectorShape, x: number, y: number): number | null {
+  for (let i = shape.anchors.length - 1; i >= 0; i--) {
+    const a = shape.anchors[i];
+    if (Math.hypot(x - a.x, y - a.y) <= ANCHOR_HIT_PX) return i;
+  }
+  return null;
+}
+
+function vectorHandleNear(
+  shape: VectorShape,
+  x: number,
+  y: number
+): { anchorIndex: number; which: "handleIn" | "handleOut" } | null {
+  for (let i = shape.anchors.length - 1; i >= 0; i--) {
+    const a = shape.anchors[i];
+    if (a.handleOut && Math.hypot(x - a.handleOut.x, y - a.handleOut.y) <= ANCHOR_HIT_PX) {
+      return { anchorIndex: i, which: "handleOut" };
+    }
+    if (a.handleIn && Math.hypot(x - a.handleIn.x, y - a.handleIn.y) <= ANCHOR_HIT_PX) {
+      return { anchorIndex: i, which: "handleIn" };
+    }
+  }
+  return null;
+}
+
+// Hit-tests the true sampled curve (cubicPoint, the same math flattenVectorShape
+// uses at compile time) rather than a straight chord between anchors — a click
+// near a pronounced curve's midpoint should register even though it's far from
+// the anchor-to-anchor line. Returns the LEFT anchor index of the segment
+// ("insert between i and i+1").
+function vectorInsertionIndex(shape: VectorShape, x: number, y: number): number | null {
+  const segmentCount = shape.closed ? shape.anchors.length : shape.anchors.length - 1;
+  for (let i = 0; i < segmentCount; i++) {
+    const p0 = shape.anchors[i];
+    const p1 = shape.anchors[(i + 1) % shape.anchors.length];
+    const c1 = p0.handleOut ?? p0;
+    const c2 = p1.handleIn ?? p1;
+    let prev: [number, number] = [p0.x, p0.y];
+    for (let s = 1; s <= 24; s++) {
+      const pt = cubicPoint(p0, c1, c2, p1, s / 24);
+      const dx = pt[0] - prev[0];
+      const dy = pt[1] - prev[1];
+      const lenSq = dx * dx + dy * dy;
+      const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((x - prev[0]) * dx + (y - prev[1]) * dy) / lenSq));
+      const projX = prev[0] + t * dx;
+      const projY = prev[1] + t * dy;
+      if (Math.hypot(x - projX, y - projY) <= ANCHOR_HIT_PX) return i;
+      prev = pt;
+    }
+  }
+  return null;
+}
+
+// Finished (closed) shapes punched out of whatever's already on the cell's
+// canvas — the same cheap live approximation of the real polygon difference
+// compileDocument() runs at compile time that Free's canvas uses (see
+// contour.ts's subtractOutlines). An open, still-being-drawn path has no fill
+// yet, same as any other pen tool. Runs whatever the current tool is: a
+// glyph's holes are part of the letterform, not a Vector-mode affordance.
+function punchVectorShapes(ctx: CanvasRenderingContext2D, shapes: VectorShape[]) {
+  for (const shape of shapes) {
+    if (!shape.closed) continue;
+    ctx.save();
+    ctx.beginPath();
+    applyVectorShapePath(ctx, shape);
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.fillStyle = "black";
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// The Vector tool's editing affordances, mirroring page.tsx's own redraw().
+// Every shape here belongs to this cell's glyph by definition (the parent only
+// hands down the ones it tagged), so the non-editing outlines are always drawn
+// in the tagged color — Free's hazelnut/grape split for untagged-vs-tagged has
+// nothing to distinguish inside a cell.
+function drawVectorAffordances(ctx: CanvasRenderingContext2D, shapes: VectorShape[], editingShapeId: string | null) {
+  const editingShape = shapes.find((s) => s.id === editingShapeId);
+  // A closed shape not currently being edited still gets its outline stroked
+  // (not just the destination-out fill above) so it reads as a distinct,
+  // clickable object rather than only a hole.
+  for (const shape of shapes) {
+    if (shape.id === editingShapeId) continue;
+    ctx.save();
+    ctx.beginPath();
+    applyVectorShapePath(ctx, shape);
+    ctx.strokeStyle = ANCHOR_COLOR;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (!editingShape) return;
+
+  ctx.save();
+  ctx.beginPath();
+  applyVectorShapePath(ctx, editingShape);
+  // Grape while still an open draft (lemon-on-cream is hard to read for the
+  // line you're actively watching take shape); once closed, the usual
+  // selected-color treatment applies.
+  ctx.strokeStyle = editingShape.closed ? SELECTED_COLOR : ANCHOR_COLOR;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+
+  editingShape.anchors.forEach((a) => {
+    // Handle affordances: thin connecting line + small square handle ends,
+    // standard pen-tool visual — drawn under the anchor dots below so the
+    // anchor itself stays the primary, larger target.
+    for (const handle of [a.handleIn, a.handleOut]) {
+      if (!handle) continue;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(handle.x, handle.y);
+      ctx.strokeStyle = ANCHOR_RING_COLOR;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = ANCHOR_COLOR;
+      ctx.fillRect(handle.x - 3, handle.y - 3, 6, 6);
+    }
+  });
+  editingShape.anchors.forEach((a) => {
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = ANCHOR_COLOR;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, 4, 0, Math.PI * 2);
+    ctx.strokeStyle = ANCHOR_RING_COLOR;
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+  });
+}
+
 type Props = {
   label: string;
   strokes: CellStroke[];
@@ -180,6 +341,18 @@ type Props = {
     // handleGridStroke).
     durationMs: number
   ) => void;
+  // Only the Vector shapes tagged into THIS cell's glyph, already converted
+  // into this canvas's own pixel space (the parent holds them in the glyph's
+  // anchor space, exactly like strokes — see page.tsx's
+  // vectorShapeAcrossAnchorSpace).
+  vectorShapes: VectorShape[];
+  // Fires on every commit of this cell's shapes — a new anchor placed, a path
+  // closed, a handle dragged, an anchor or whole shape deleted — always with
+  // the cell's COMPLETE shape list, not a delta. The parent persists them and
+  // owns the glyph tagging (it's the only side that knows about glyphs); which
+  // shape/anchor/handle is currently being edited stays local to the cell, so
+  // clicking into a different cell just starts a fresh session.
+  onVectorShapesChange: (shapes: VectorShape[]) => void;
   metrics: Metrics;
   leftBearing?: number;
   rightBearing?: number;
@@ -218,6 +391,8 @@ export default function GridCell({
   onStrokesChange,
   strokeOptions,
   onStrokeComplete,
+  vectorShapes,
+  onVectorShapesChange,
   metrics,
   leftBearing = DEFAULT_LEFT_BEARING,
   rightBearing = DEFAULT_RIGHT_BEARING,
@@ -262,6 +437,28 @@ export default function GridCell({
   const anchorIndicesRef = useRef<number[]>([]);
   const resampledRef = useRef(false);
   const draggingAnchorRef = useRef<number | null>(null);
+
+  // Vector: this cell's own working copy of its shapes plus the live editing
+  // session — same ref shape as page.tsx's Free-canvas Vector state, just
+  // scoped to one cell. editingShapeIdRef is either a still-open path being
+  // drawn for the first time (shape.closed === false) or a previously-closed
+  // shape reopened for point edit; draggingVectorAnchorRef/draggingHandleRef
+  // mutate + redraw() on every move and report upward only on pointerup.
+  const vectorShapesRef = useRef(vectorShapes);
+  const onVectorShapesChangeRef = useRef(onVectorShapesChange);
+  const editingShapeIdRef = useRef<string | null>(null);
+  // Set (with a drag-start position) when a click lands on an existing anchor
+  // — moving beyond ANCHOR_HIT_PX before pointerup repositions it instead of
+  // deleting it, same disambiguation as placingNewAnchorRef below.
+  const draggingVectorAnchorRef = useRef<number | null>(null);
+  const draggingHandleRef = useRef<{ anchorIndex: number; which: "handleIn" | "handleOut" } | null>(null);
+  // True only while dragging the handle of an anchor just placed by this same
+  // click — that drag sets both handles symmetrically (a smooth curve point)
+  // and collapses back to a plain corner (no handles) if released without
+  // moving. Dragging an EXISTING handle later (this flag false) adjusts just
+  // that one side.
+  const placingNewAnchorRef = useRef(false);
+  const vectorDragStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // Move/Rotate/Scale: pivot + frozen pre-drag snapshot, captured once on
   // the pointerdown that hits a selected stroke — every pointermove
@@ -308,6 +505,14 @@ export default function GridCell({
   if (!editingStroke) {
     strokesRef.current = strokes;
   }
+  onVectorShapesChangeRef.current = onVectorShapesChange;
+  // Same clobber-guard once more: while a Vector session is live the cell owns
+  // the authoritative anchors, and the props copy is only ever a round-trip
+  // through the glyph's anchor space — resyncing mid-edit would replace the
+  // shape being dragged with a float-drifted echo of itself.
+  if (editingShapeIdRef.current === null) {
+    vectorShapesRef.current = vectorShapes;
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -331,6 +536,7 @@ export default function GridCell({
           s.id === editingStrokeIdRef.current || selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
         fillOutline(ctx, outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current)), color);
       }
+      punchVectorShapes(ctx, vectorShapesRef.current);
       if (pointsRef.current.length > 0) {
         fillOutline(ctx, outlineFor(pointsRef.current, strokeOptionsRef.current));
       }
@@ -384,6 +590,9 @@ export default function GridCell({
         ctx.strokeStyle = ANCHOR_RING_COLOR;
         ctx.lineWidth = 0.5;
         ctx.stroke();
+      }
+      if (toolRef.current === "vector") {
+        drawVectorAffordances(ctx, vectorShapesRef.current, editingShapeIdRef.current);
       }
     }
     redrawRef.current = redraw;
@@ -464,6 +673,224 @@ export default function GridCell({
       editingStrokeIdRef.current = null;
       anchorIndicesRef.current = [];
       resampledRef.current = false;
+    }
+
+    // Every Vector mutation leaves the cell through here — the cell owns the
+    // live anchors during a gesture, the parent owns persistence and the glyph
+    // tagging. Stands in for the saveVectorShapes() calls scattered through
+    // Free's own handlers (page.tsx), including the per-anchor provenance they
+    // record: the parent derives that from the anchor-count delta.
+    function commitVectorShapes() {
+      onVectorShapesChangeRef.current(vectorShapesRef.current);
+    }
+
+    function insertVectorAnchor(shapeId: string, afterIndex: number, x: number, y: number) {
+      const idx = vectorShapesRef.current.findIndex((s) => s.id === shapeId);
+      if (idx === -1) return;
+      const shape = vectorShapesRef.current[idx];
+      // A plain corner point — inserting mid-curve without guessing at handles
+      // keeps the result predictable; the user can drag it into a curve
+      // afterward like any other anchor.
+      const newAnchor: BezierAnchor = { x, y };
+      shape.anchors = [...shape.anchors.slice(0, afterIndex + 1), newAnchor, ...shape.anchors.slice(afterIndex + 1)];
+      commitVectorShapes();
+    }
+
+    // Deletes the anchor at `index`. A shape left with fewer than 2 anchors
+    // can't be a shape anymore — dropped entirely, same convention as Free's
+    // deleteVectorAnchorAt. The glyph bookkeeping that goes with that (a glyph
+    // left referencing nothing is dropped too) happens in the parent, which is
+    // the only side that knows about glyphs at all.
+    function deleteVectorAnchorAt(shapeId: string, index: number) {
+      const idx = vectorShapesRef.current.findIndex((s) => s.id === shapeId);
+      if (idx === -1) return;
+      const shape = vectorShapesRef.current[idx];
+      shape.anchors = shape.anchors.filter((_, i) => i !== index);
+      if (shape.anchors.length < 2) {
+        vectorShapesRef.current = vectorShapesRef.current.filter((s) => s.id !== shapeId);
+        editingShapeIdRef.current = null;
+      }
+      commitVectorShapes();
+    }
+
+    // Click on an existing anchor deletes it UNLESS the click turns into a
+    // drag (moved past ANCHOR_HIT_PX before pointerup) — then it repositions
+    // instead. Click on the first anchor of the currently-open path closes it.
+    // Click on empty space while a path is open extends it (drag = curve
+    // point, plain click = corner). Click on a different existing shape's
+    // anchor/curve (or on empty space with nothing active) starts/switches the
+    // editing session onto it. Straight port of Free's handleVectorPointerDown.
+    function handleVectorPointerDown(x: number, y: number, altKey: boolean) {
+      if (editingShapeIdRef.current) {
+        const idx = vectorShapesRef.current.findIndex((s) => s.id === editingShapeIdRef.current);
+        if (idx !== -1) {
+          const shape = vectorShapesRef.current[idx];
+
+          const handleHit = vectorHandleNear(shape, x, y);
+          if (handleHit) {
+            draggingHandleRef.current = handleHit;
+            return;
+          }
+
+          if (!shape.closed && shape.anchors.length >= 3) {
+            const first = shape.anchors[0];
+            if (Math.hypot(x - first.x, y - first.y) <= ANCHOR_HIT_PX) {
+              shape.closed = true;
+              editingShapeIdRef.current = null;
+              commitVectorShapes();
+              return;
+            }
+          }
+
+          const anchorHit = vectorAnchorNear(shape, x, y);
+          if (anchorHit !== null) {
+            if (altKey) {
+              // Alt+drag pulls a fresh symmetric handle pair out of ANY anchor
+              // — including the first/last point of the path, which otherwise
+              // never gets a drag-to-curve moment of its own.
+              draggingHandleRef.current = { anchorIndex: anchorHit, which: "handleOut" };
+              placingNewAnchorRef.current = true;
+              vectorDragStartRef.current = { x, y };
+              return;
+            }
+            draggingVectorAnchorRef.current = anchorHit;
+            vectorDragStartRef.current = { x, y };
+            return;
+          }
+
+          const insertAt = vectorInsertionIndex(shape, x, y);
+          if (insertAt !== null) {
+            insertVectorAnchor(shape.id, insertAt, x, y);
+            return;
+          }
+
+          if (!shape.closed) {
+            shape.anchors = [...shape.anchors, { x, y }];
+            draggingHandleRef.current = { anchorIndex: shape.anchors.length - 1, which: "handleOut" };
+            placingNewAnchorRef.current = true;
+            vectorDragStartRef.current = { x, y };
+            commitVectorShapes();
+            return;
+          }
+
+          // Closed shape, click elsewhere on it: stop editing, fall through to
+          // check other shapes / empty space below.
+          editingShapeIdRef.current = null;
+        }
+      }
+
+      for (let i = vectorShapesRef.current.length - 1; i >= 0; i--) {
+        const shape = vectorShapesRef.current[i];
+        const handleHit = vectorHandleNear(shape, x, y);
+        if (handleHit) {
+          editingShapeIdRef.current = shape.id;
+          draggingHandleRef.current = handleHit;
+          return;
+        }
+        const anchorHit = vectorAnchorNear(shape, x, y);
+        if (anchorHit !== null) {
+          editingShapeIdRef.current = shape.id;
+          if (altKey) {
+            draggingHandleRef.current = { anchorIndex: anchorHit, which: "handleOut" };
+            placingNewAnchorRef.current = true;
+            vectorDragStartRef.current = { x, y };
+            return;
+          }
+          draggingVectorAnchorRef.current = anchorHit;
+          vectorDragStartRef.current = { x, y };
+          return;
+        }
+        const insertAt = vectorInsertionIndex(shape, x, y);
+        if (insertAt !== null) {
+          editingShapeIdRef.current = shape.id;
+          insertVectorAnchor(shape.id, insertAt, x, y);
+          return;
+        }
+      }
+
+      const newShape: VectorShape = {
+        id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+        anchors: [{ x, y }],
+        closed: false,
+        createdAt: Date.now(),
+      };
+      vectorShapesRef.current = [...vectorShapesRef.current, newShape];
+      editingShapeIdRef.current = newShape.id;
+      // The very first point of a path gets the same drag-to-curve treatment
+      // every later point has.
+      draggingHandleRef.current = { anchorIndex: 0, which: "handleOut" };
+      placingNewAnchorRef.current = true;
+      vectorDragStartRef.current = { x, y };
+      commitVectorShapes();
+    }
+
+    function handleVectorPointerMove(x: number, y: number) {
+      const idx = vectorShapesRef.current.findIndex((s) => s.id === editingShapeIdRef.current);
+      if (idx === -1) return;
+      const shape = vectorShapesRef.current[idx];
+
+      if (draggingHandleRef.current) {
+        const { anchorIndex, which } = draggingHandleRef.current;
+        const anchor = shape.anchors[anchorIndex];
+        if (placingNewAnchorRef.current) {
+          // Symmetric: dragging out from a freshly-placed anchor sets both
+          // handles at once (mirrored), making it a smooth curve point.
+          anchor.handleOut = { x, y };
+          anchor.handleIn = { x: anchor.x - (x - anchor.x), y: anchor.y - (y - anchor.y) };
+        } else {
+          anchor[which] = { x, y };
+        }
+        redraw();
+        return;
+      }
+
+      if (draggingVectorAnchorRef.current !== null) {
+        const start = vectorDragStartRef.current;
+        if (start && Math.hypot(x - start.x, y - start.y) > ANCHOR_HIT_PX) {
+          const anchor = shape.anchors[draggingVectorAnchorRef.current];
+          const dx = x - anchor.x;
+          const dy = y - anchor.y;
+          anchor.x = x;
+          anchor.y = y;
+          if (anchor.handleIn) {
+            anchor.handleIn = { x: anchor.handleIn.x + dx, y: anchor.handleIn.y + dy };
+          }
+          if (anchor.handleOut) {
+            anchor.handleOut = { x: anchor.handleOut.x + dx, y: anchor.handleOut.y + dy };
+          }
+          redraw();
+        }
+      }
+    }
+
+    function handleVectorPointerUp(x: number, y: number) {
+      const idx = vectorShapesRef.current.findIndex((s) => s.id === editingShapeIdRef.current);
+      const shape = idx !== -1 ? vectorShapesRef.current[idx] : null;
+      const start = vectorDragStartRef.current;
+      const moved = start ? Math.hypot(x - start.x, y - start.y) : 0;
+
+      if (shape && draggingHandleRef.current) {
+        if (placingNewAnchorRef.current && moved <= ANCHOR_HIT_PX) {
+          // Released without dragging — a plain click, so this anchor is a
+          // corner, not a curve point. Discard the handles set on pointerdown.
+          const anchor = shape.anchors[draggingHandleRef.current.anchorIndex];
+          anchor.handleIn = undefined;
+          anchor.handleOut = undefined;
+        }
+        commitVectorShapes();
+      } else if (shape && draggingVectorAnchorRef.current !== null) {
+        if (moved <= ANCHOR_HIT_PX) {
+          // A real click, not a drag — delete, per the Vector tool's spec.
+          deleteVectorAnchorAt(shape.id, draggingVectorAnchorRef.current);
+        } else {
+          commitVectorShapes();
+        }
+      }
+
+      draggingHandleRef.current = null;
+      draggingVectorAnchorRef.current = null;
+      placingNewAnchorRef.current = false;
+      vectorDragStartRef.current = null;
     }
 
     // Move/Rotate/Scale click: must land on an already-selected stroke
@@ -582,6 +1009,15 @@ export default function GridCell({
         redraw();
         return;
       }
+      // Note this sits AFTER the bearing check above: the bearing handles are
+      // hit-tested at ±8px, the same radius as a vector anchor, so letting
+      // them fight over a click near a guide would make the guides
+      // undraggable in Vector mode.
+      if (toolRef.current === "vector") {
+        handleVectorPointerDown(x, y, e.altKey);
+        redraw();
+        return;
+      }
       if (TRANSFORM_TOOLS.has(toolRef.current)) {
         handleTransformPointerDown(x, y, toolRef.current as "move" | "rotate" | "scale", e.altKey, e.shiftKey);
         redraw();
@@ -625,6 +1061,21 @@ export default function GridCell({
         canvas!.style.cursor = editingStrokeIdRef.current ? "grab" : "pointer";
         return;
       }
+      if (toolRef.current === "vector") {
+        if (draggingHandleRef.current || draggingVectorAnchorRef.current !== null) {
+          handleVectorPointerMove(x, y);
+          return;
+        }
+        // Bearing hover keeps priority for the same reason pointerdown checks
+        // bearings first — without the ew-resize hint the ±8px grab zone
+        // around a guide would look like plain canvas to place an anchor in.
+        canvas!.style.cursor = bearingNear(x, canvas!.clientWidth)
+          ? "ew-resize"
+          : editingShapeIdRef.current
+            ? "crosshair"
+            : "pointer";
+        return;
+      }
       if (transformStartRef.current) {
         applyTransform(x, y);
         redraw();
@@ -663,6 +1114,13 @@ export default function GridCell({
           const stroke = strokesRef.current.find((s) => s.id === editingStrokeIdRef.current);
           if (stroke) onStrokesChangeRef.current([{ id: stroke.id, points: stroke.points }]);
         }
+        canvas!.releasePointerCapture(e.pointerId);
+        redraw();
+        return;
+      }
+      if (toolRef.current === "vector") {
+        const [x, y] = pointFromEvent(e);
+        handleVectorPointerUp(x, y);
         canvas!.releasePointerCapture(e.pointerId);
         redraw();
         return;
@@ -725,9 +1183,10 @@ export default function GridCell({
     // are, so editing a number doesn't also wipe strokes.
     function onKeyDown(e: KeyboardEvent) {
       // Copy/Paste — shares src/lib/clipboard.ts with page.tsx's Free-canvas
-      // handler, so content can cross between Free and any Grid cell. Grid
-      // has no vector shapes (Free-only, see FREE_ONLY_TOOLS in page.tsx),
-      // so only `clip.strokes` is ever read here.
+      // handler, so content can cross between Free and any Grid cell. Only
+      // `clip.strokes` is ever read here: the Vector tool works in Grid now,
+      // but the cell's Copy/Paste has never covered its shapes and lassoing
+      // them (how Free selects a shape to copy) has no Grid equivalent.
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
         const target = e.target as HTMLElement | null;
         if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
@@ -821,15 +1280,26 @@ export default function GridCell({
       resampledRef.current = false;
       draggingAnchorRef.current = null;
     }
+    // Same as Free's exitVectorEditing: leaving Vector ends the session but
+    // does NOT discard an unclosed path — switching tools mid-draw shouldn't
+    // silently lose points, and picking Vector again resumes it on click.
+    if (tool !== "vector") {
+      editingShapeIdRef.current = null;
+      draggingVectorAnchorRef.current = null;
+      draggingHandleRef.current = null;
+      placingNewAnchorRef.current = false;
+      vectorDragStartRef.current = null;
+    }
     transformStartRef.current = null;
     redrawRef.current();
   }, [tool]);
 
   useEffect(() => {
-    // Don't fight an active Nudge/Move/Rotate/Scale edit with a redraw driven
-    // by (now-stale, until the edit commits) props — same reasoning as the
-    // strokesRef sync guard above.
+    // Don't fight an active Nudge/Move/Rotate/Scale/Vector edit with a redraw
+    // driven by (now-stale, until the edit commits) props — same reasoning as
+    // the strokesRef/vectorShapesRef sync guards above.
     if (editingStrokeIdRef.current !== null || transformStartRef.current !== null) return;
+    if (editingShapeIdRef.current !== null) return;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
@@ -839,7 +1309,11 @@ export default function GridCell({
       const color = selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
       fillOutline(ctx, outlineFor(s.points, effectiveOptionsFor(s, strokeOptions)), color);
     }
-  }, [strokes, metrics, leftBearing, rightBearing, strokeOptions]);
+    punchVectorShapes(ctx, vectorShapes);
+    // editingShapeIdRef is guaranteed null by the guard above, so this only
+    // ever draws the resting state (every shape's outline, no handles).
+    if (tool === "vector") drawVectorAffordances(ctx, vectorShapes, null);
+  }, [strokes, vectorShapes, tool, metrics, leftBearing, rightBearing, strokeOptions]);
 
   const unicode = unicodeFor(label);
 

@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 type TrackBody =
   | { type: "pageview"; referrer?: string | null; page?: string; language?: string | null }
-  | { type: "duration"; seconds: number }
+  | { type: "duration"; seconds: number; page?: string }
   | { type: "export"; format: string }
   | { type: "tool_use"; tool: string };
 
@@ -92,7 +92,14 @@ export async function POST(request: Request) {
           device: deviceCategory(userAgent),
         });
       } else if (body.type === "duration" && Number.isFinite(body.seconds)) {
-        await supabase.from("fontane_events").insert({ type: "duration", seconds: Math.round(body.seconds) });
+        // Reuses the existing `page` column (added for pageviews) — no new
+        // column needed for per-view time, and still just a fixed category
+        // string, never a path or URL.
+        await supabase.from("fontane_events").insert({
+          type: "duration",
+          seconds: Math.round(body.seconds),
+          page: typeof body.page === "string" ? body.page : null,
+        });
       } else if (body.type === "export" && body.format) {
         await supabase.from("fontane_events").insert({ type: "export", format: body.format });
       } else if (body.type === "tool_use" && body.tool) {

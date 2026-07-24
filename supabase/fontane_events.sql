@@ -34,7 +34,11 @@ alter table fontane_events add column if not exists referrer text;
 --   knows it — same "aggregate category only" reasoning applies.
 -- - page: which surface the pageview happened on ("editor" | "marketplace" |
 --   "marketplace-listing") — lets the marketplace browse→download ratio be
---   computed without adding any new identifying data.
+--   computed without adding any new identifying data. Since 2026-07-24
+--   'duration' rows reuse this same column for the finer VIEW label they
+--   were measured in ("studio:grid", "studio:free", "marketplace", …), one
+--   row per visible segment — that's how /anneliese's per-view time is
+--   computed, with no extra column and still only a fixed category string.
 alter table fontane_events add column if not exists country text;
 alter table fontane_events add column if not exists device text;
 alter table fontane_events add column if not exists language text;

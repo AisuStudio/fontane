@@ -35,7 +35,6 @@ import { loadSettings, saveSettings, DEFAULT_SETTINGS, type StrokeSettings } fro
 import { downloadProjectFile, parseProjectFile, applyProjectFile, buildProjectFile } from "@/lib/projectFile";
 import { getStoredCode, setStoredCode, clearStoredCode } from "@/lib/cloudCode";
 import { layoutText } from "@/lib/layoutText";
-import { SAMPLE_TEXT } from "@/lib/marketplace";
 import {
   Undo2,
   Redo2,
@@ -56,9 +55,10 @@ import GridCell, { DEFAULT_LEFT_BEARING, DEFAULT_RIGHT_BEARING, type CellTool } 
 import BetaBadge from "./BetaBadge";
 import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
 import AnimatePanel from "./AnimatePanel";
-import EditorPanel, { DEFAULT_EDITOR_FONT_SIZE_PT } from "./EditorPanel";
+import EditorPanel, { DEFAULT_EDITOR_FONT_SIZE_PT, EDITOR_SAMPLE_TEXT } from "./EditorPanel";
 import { DEFAULT_PRESET_ID, type AnimationPresetId } from "@/lib/animationPresets";
-import { trackPageview, trackDuration, trackExport, trackToolUse } from "@/lib/analytics";
+import { trackExport, trackToolUse } from "@/lib/analytics";
+import { useVisitTracking } from "@/lib/visitDuration";
 import {
   getAuthorId,
   getDraftId,
@@ -109,13 +109,13 @@ const TRANSFORM_TOOLS = new Set<DrawTool>(["move", "rotate", "scale"]);
 // Every DrawTool whose button only ever appears when drawStyle==="free" —
 // leaving Free resets drawTool back to "pen" if it's one of these, since
 // their UI vanishes and a stale value would silently persist otherwise.
-// Select/Nudge/Move/Rotate/Scale all work in Grid too (GridCell has its own
-// local port of the same select/reshape/transform logic) — only Assign
-// (Grid auto-tags on draw, nothing to assign), Pan (a single small fixed
-// cell has nothing to pan around), and Anchor (single-anchor select/insert/
-// delete — Grid cells are small and already busy with bearing handles) stay
-// Free-exclusive.
-const FREE_ONLY_TOOLS = new Set<DrawTool>(["assign", "pan", "anchor", "vector"]);
+// Select/Nudge/Move/Rotate/Scale/Vector all work in Grid too (GridCell has
+// its own local port of the same select/reshape/transform/Bezier logic) —
+// only Assign (Grid auto-tags on draw, nothing to assign), Pan (a single
+// small fixed cell has nothing to pan around), and Anchor (single-anchor
+// select/insert/delete — Grid cells are small and already busy with bearing
+// handles) stay Free-exclusive.
+const FREE_ONLY_TOOLS = new Set<DrawTool>(["assign", "pan", "anchor"]);
 
 // Single source of truth for the sidebar's TOOLS section, the menu bar's
 // Tools dropdown, AND the keyboard shortcuts below — one place to add a
@@ -312,6 +312,47 @@ function toAnchorSpace(
   let scaleY = currentHeight / anchorHeight;
   if (keepProportions) scaleX = scaleY = Math.min(scaleX, scaleY);
   return points.map(([x, y, p]) => [x / scaleX, y / scaleY, p] as StrokePoint);
+}
+
+// Vector shapes tagged into a Grid glyph live in that same per-glyph anchor
+// space its strokes do (see fromAnchorSpace above), but as {x,y} anchors with
+// control handles rather than [x,y,pressure] tuples — so they need their own
+// thin wrapper around the same two scale factors. `invert` picks the
+// direction: default is fromAnchorSpace (stored → what a cell displays right
+// now), invert is toAnchorSpace (what a cell reports back → stored). Always
+// rebuilds every anchor, even at scale 1: GridCell mutates the shapes it's
+// handed in place during a drag, so passing aliases of the shared
+// vectorShapesRef objects either way would let a half-finished gesture corrupt
+// the store.
+function vectorShapeAcrossAnchorSpace(
+  shape: VectorShape,
+  anchorWidth: number | undefined,
+  anchorHeight: number | undefined,
+  currentWidth: number,
+  currentHeight: number,
+  keepProportions = false,
+  invert = false
+): VectorShape {
+  let scaleX = 1;
+  let scaleY = 1;
+  if (anchorWidth && anchorHeight) {
+    scaleX = currentWidth / anchorWidth;
+    scaleY = currentHeight / anchorHeight;
+    if (keepProportions) scaleX = scaleY = Math.min(scaleX, scaleY);
+  }
+  if (invert) {
+    scaleX = 1 / scaleX;
+    scaleY = 1 / scaleY;
+  }
+  const scaled = (p: BezierPoint): BezierPoint => ({ x: p.x * scaleX, y: p.y * scaleY });
+  return {
+    ...shape,
+    anchors: shape.anchors.map((a) => ({
+      ...scaled(a),
+      ...(a.handleIn ? { handleIn: scaled(a.handleIn) } : {}),
+      ...(a.handleOut ? { handleOut: scaled(a.handleOut) } : {}),
+    })),
+  };
 }
 
 // Pivot for Move/Rotate/Scale: the bounding-box center across every
@@ -962,7 +1003,7 @@ export default function Home() {
     // Empty editorText falls back to the same specimen pangram EditorPanel
     // itself renders in that case (see its displayText) — otherwise this
     // warning would silently miss whatever the canvas is actually showing.
-    const textToCheck = editorText || SAMPLE_TEXT;
+    const textToCheck = editorText || EDITOR_SAMPLE_TEXT;
     for (const line of textToCheck.split("\n")) {
       for (const c of layoutText(line, glyphs, completedRef.current, metrics, useLigatures).missing) all.add(c);
     }
@@ -1613,48 +1654,13 @@ export default function Home() {
     redrawRef.current();
   }, [selectedIds]);
 
-  // Mini analytics (see /anneliese): one pageview beacon per mount, plus a
-  // session-duration beacon on the way out. pagehide (not just
-  // visibilitychange/beforeunload) also covers mobile Safari's app-switch
-  // behavior, which never fires a reliable unload event otherwise.
-  // Duration counts only VISIBLE time, accumulated across visibility
-  // segments. The previous version sent wall-clock-since-mount on every
-  // pagehide: a tab left open overnight reported a 10-hour "visit", and a
-  // bfcache-restored session re-reported its full cumulative time on every
-  // app switch — which is how /anneliese's average climbed to 26m56s while
-  // the median visit was 31s. Counters reset after each send, so a session
-  // spanning several pagehides emits disjoint segments that sum to the true
-  // visible time instead of multiply-counting it.
-  useEffect(() => {
-    trackPageview();
-    let visibleSince: number | null = document.visibilityState === "visible" ? performance.now() : null;
-    let accumulatedMs = 0;
-    function closeSegment() {
-      if (visibleSince !== null) {
-        accumulatedMs += performance.now() - visibleSince;
-        visibleSince = null;
-      }
-    }
-    function onVisibilityChange() {
-      // Also reopens a segment on bfcache restore — the hidden→visible
-      // transition fires visibilitychange when the page comes back.
-      if (document.visibilityState === "hidden") closeSegment();
-      else if (visibleSince === null) visibleSince = performance.now();
-    }
-    function sendDuration() {
-      closeSegment();
-      trackDuration(accumulatedMs / 1000); // trackDuration itself drops < 1s
-      accumulatedMs = 0;
-    }
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("pagehide", sendDuration);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("pagehide", sendDuration);
-      sendDuration();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Mini analytics (see /anneliese): pageview on mount + visible-time
+  // duration beacons, all of it in lib/visitDuration.ts so the marketplace
+  // pages measure by the exact same rules. The pageview stays the coarse
+  // "editor" surface (the marketplace browse→download ratio counts those
+  // values); duration rows carry the finer view below, so switching between
+  // Free/Grid/Editor/Animate splits the visit into per-view segments.
+  useVisitTracking("editor", topMode === "draw" ? `studio:${drawStyle}` : `studio:${topMode}`);
 
   // Provenance queue: periodic flush so a long drawing session doesn't sit
   // on an ever-growing localStorage-backed queue, plus a pagehide flush so
@@ -2737,6 +2743,106 @@ export default function Home() {
     });
   }
 
+  // GridCell's Vector tool reports this cell's ENTIRE shape list on every
+  // commit (anchor placed, path closed, handle dragged, anchor/shape deleted)
+  // rather than a delta — the cell owns the live anchors, this owns
+  // persistence and the glyph tagging, the same "drawing IS tagging" fusion
+  // handleGridStroke does for strokes. Deliberately outside the undo history,
+  // exactly like Free's own Vector handlers: snapshotNow() only captures
+  // strokes and glyphs, so an undo across a vector edit would restore the
+  // glyph without restoring the shape it points at.
+  function handleGridVectorShapes(
+    slot: GridSlot,
+    shapes: VectorShape[],
+    currentCellWidth: number,
+    currentCellHeight: number
+  ) {
+    const glyph = glyphsRef.current.find((g) => g.kind === slot.kind && g.name === slot.name);
+    // Which shapes this call replaces. The glyph's own tag list is the primary
+    // answer, but the incoming ids have to count too: several commits can land
+    // before setGlyphs below has re-rendered (a pointerdown that places an
+    // anchor and the pointerup that finishes it are two commits, and the very
+    // first one is what CREATES the glyph), and going by a not-yet-updated tag
+    // list alone would re-append the same shape instead of replacing it.
+    const incomingIds = new Set(shapes.map((s) => s.id));
+    const replacedIds = new Set([...(glyph?.vectorShapeIds ?? []), ...incomingIds]);
+    // Same conversion handleGridStroke runs on points: the cell works in
+    // current-cell pixel space, the store keeps everything in the glyph's own
+    // fixed anchor space so a later Cell size/width change rescales a glyph's
+    // shapes and strokes together instead of drifting them apart.
+    const anchored = shapes.map((s) =>
+      vectorShapeAcrossAnchorSpace(
+        s,
+        glyph?.cellWidth,
+        glyph?.cellHeight,
+        currentCellWidth,
+        currentCellHeight,
+        keepProportions,
+        true
+      )
+    );
+
+    // One provenance event per anchor just placed — the same per-anchor
+    // granularity as Free's recordVectorProvenance(), reconstructed from the
+    // anchor-count delta since the cell reports whole shapes rather than
+    // individual actions. Deletions (a negative delta) record nothing, same
+    // as Free.
+    const anchorsBefore = vectorShapesRef.current
+      .filter((s) => replacedIds.has(s.id))
+      .reduce((n, s) => n + s.anchors.length, 0);
+    const anchorsAfter = anchored.reduce((n, s) => n + s.anchors.length, 0);
+
+    vectorShapesRef.current = [...vectorShapesRef.current.filter((s) => !replacedIds.has(s.id)), ...anchored];
+    saveVectorShapes(vectorShapesRef.current);
+
+    for (let i = 0; i < anchorsAfter - anchorsBefore; i++) {
+      enqueueProvenanceEvent({
+        draftId: getDraftId(),
+        authorId: getAuthorId(),
+        clientStrokeId: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+        context: "grid",
+        tool: "vector",
+        // A vector shape has no pressure data, so pointCount is pinned to 1
+        // and the pressure fields to a neutral constant — same shortcut
+        // recordVectorProvenance takes on the Free canvas.
+        ...summarizeStroke([[0, 0, 1]], Date.now()),
+      });
+      trackToolUse("vector");
+    }
+
+    const shapeIds = anchored.map((s) => s.id);
+    setGlyphs((gs) => {
+      const existing = gs.find((g) => g.kind === slot.kind && g.name === slot.name);
+      if (existing) {
+        return (
+          gs
+            .map((g) => (g.id === existing.id ? { ...g, vectorShapeIds: shapeIds } : g))
+            // Deleting a cell's last shape can leave a glyph referencing
+            // nothing at all — dropped, same rule Free's deleteVectorAnchorAt
+            // applies and the same one deleteStrokes uses for strokes.
+            .filter((g) => g.strokeIds.length > 0 || (g.vectorShapeIds?.length ?? 0) > 0)
+        );
+      }
+      if (shapeIds.length === 0) return gs;
+      const glyph: Glyph = {
+        id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+        name: slot.name,
+        kind: slot.kind,
+        strokeIds: [],
+        vectorShapeIds: shapeIds,
+        createdAt: Date.now(),
+        leftBearing: DEFAULT_LEFT_BEARING,
+        rightBearing: DEFAULT_RIGHT_BEARING,
+        cellWidth: currentCellWidth,
+        cellHeight: currentCellHeight,
+        ...(slot.kind === "base" ? { unicode: unicodeFor(slot.name) } : {}),
+        ...(slot.kind === "ligature" ? { components: slot.components ?? [] } : {}),
+        ...(slot.kind === "alternate" ? { alternateOf: slot.alternateOf } : {}),
+      };
+      return [...gs, glyph];
+    });
+  }
+
   // Commits a GridCell-side Nudge/Move/Rotate/Scale edit back into the
   // shared stroke store. Mirrors the direct in-place mutation style Free's
   // own Nudge/transform tools already use (patch by index, then save) —
@@ -3113,6 +3219,9 @@ export default function Home() {
               >
                 How to
               </button>
+              <Link href="/features" role="menuitem" className={styles.dropdownItem} onClick={() => setOpenMenu(null)}>
+                Features
+              </Link>
               <a
                 href="https://cnsl.aisu.studio/submit/fontane-cb43f90b"
                 target="_blank"
@@ -3713,6 +3822,29 @@ export default function Home() {
                 points: fittedPoints[i],
                 widthScale: (s.widthScale ?? 1) * fitScale.scale,
               }));
+              // This glyph's Vector shapes, rescaled into the cell's live
+              // pixel space the same way its strokes are above. There's no
+              // fitStrokesToCell equivalent for the needsFit case on purpose:
+              // that bbox fit is derived from the glyph's STROKES, and a
+              // Free-assigned glyph's shapes would have to ride along on
+              // exactly the same transform to stay aligned with them — until
+              // fitStrokesToCell reports its offsets too, they simply stay in
+              // whatever space they were assigned in.
+              const cellVectorShapes = (glyph?.vectorShapeIds ?? []).flatMap((id) => {
+                const shape = vectorShapesRef.current.find((s) => s.id === id);
+                return shape
+                  ? [
+                      vectorShapeAcrossAnchorSpace(
+                        shape,
+                        glyph?.cellWidth,
+                        glyph?.cellHeight,
+                        liveWidth,
+                        liveHeight,
+                        keepProportions
+                      ),
+                    ]
+                  : [];
+              });
               return (
                 <GridCell
                   key={cellKey}
@@ -3725,6 +3857,8 @@ export default function Home() {
                   onStrokeComplete={(stroke, reportedWidth, reportedHeight, durationMs) =>
                     handleGridStroke(slot, stroke, reportedWidth, reportedHeight, durationMs)
                   }
+                  vectorShapes={cellVectorShapes}
+                  onVectorShapesChange={(shapes) => handleGridVectorShapes(slot, shapes, liveWidth, liveHeight)}
                   metrics={metrics}
                   leftBearing={glyph?.leftBearing}
                   rightBearing={glyph?.rightBearing}

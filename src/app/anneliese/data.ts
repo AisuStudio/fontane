@@ -60,6 +60,7 @@ export async function getAnnelieseData(range: DateRange) {
     totalVisits: 0,
     avgVisitsPerDay: 0,
     medianSeconds: 0,
+    timeByView: [] as { view: string; medianSeconds: number; totalSeconds: number; samples: number }[],
     exportsByFormat: {} as Record<string, number>,
     toolsByUsage: [] as [string, number][],
     directCount: 0,
@@ -96,7 +97,12 @@ export async function getAnnelieseData(range: DateRange) {
           .eq("type", "pageview")
           .gte("created_at", fromTs)
           .lte("created_at", toTs),
-        supabase.from("fontane_events").select("seconds").eq("type", "duration").gte("created_at", fromTs).lte("created_at", toTs),
+        supabase
+          .from("fontane_events")
+          .select("seconds, page")
+          .eq("type", "duration")
+          .gte("created_at", fromTs)
+          .lte("created_at", toTs),
         supabase.from("fontane_events").select("format").eq("type", "export").gte("created_at", fromTs).lte("created_at", toTs),
         supabase.from("fontane_events").select("format").eq("type", "tool_use").gte("created_at", fromTs).lte("created_at", toTs),
         // All-time, deliberately NOT scoped to `range` — the one number on the
@@ -127,6 +133,30 @@ export async function getAnnelieseData(range: DateRange) {
       .filter((s): s is number => s != null)
       .sort((a, b) => a - b);
     const medianSeconds = seconds.length ? seconds[Math.floor(seconds.length / 2)] : 0;
+
+    // Same median-not-mean reasoning, per view: one duration row per visible
+    // segment (see lib/visitDuration.ts), so a visit that moves Grid → Free
+    // → Animate contributes to all three. Rows predating per-view labels
+    // have page=NULL and are excluded rather than lumped into a fake
+    // bucket — timeByViewTrackedSince below says when coverage starts.
+    const durationsByView = new Map<string, number[]>();
+    for (const row of durations ?? []) {
+      if (!row.page || row.seconds == null) continue;
+      const list = durationsByView.get(row.page) ?? [];
+      list.push(row.seconds);
+      durationsByView.set(row.page, list);
+    }
+    const timeByView = [...durationsByView.entries()]
+      .map(([view, values]) => {
+        const sorted = [...values].sort((a, b) => a - b);
+        return {
+          view,
+          medianSeconds: sorted[Math.floor(sorted.length / 2)],
+          totalSeconds: sorted.reduce((a, b) => a + b, 0),
+          samples: sorted.length,
+        };
+      })
+      .sort((a, b) => b.totalSeconds - a.totalSeconds);
     const exportsByFormat: Record<string, number> = {};
     for (const row of exports ?? []) {
       if (!row.format) continue;
@@ -258,6 +288,7 @@ export async function getAnnelieseData(range: DateRange) {
       totalVisits: totalVisits ?? 0,
       avgVisitsPerDay,
       medianSeconds,
+      timeByView,
       exportsByFormat,
       toolsByUsage,
       directCount,

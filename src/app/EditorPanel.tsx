@@ -5,7 +5,6 @@ import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
 import { layoutText, type LaidOutEntry } from "@/lib/layoutText";
 import { outlineToPath, type PathCommand } from "@/lib/contour";
-import { SAMPLE_TEXT } from "@/lib/marketplace";
 import type { Glyph } from "@/lib/glyphs";
 import type { Stroke, StrokePoint } from "@/lib/strokes";
 import type { Metrics } from "@/lib/metrics";
@@ -31,6 +30,13 @@ const LINE_GAP = 24; // breathing room between stacked lines, beyond each line's
 // protected by the previous line's height+gap but the first has nothing
 // above it.
 const TOP_PADDING = 48;
+
+// The Editor's own placeholder line — deliberately NOT the Marketplace's
+// SAMPLE_TEXT: that one stays short and letters-only so published fonts stay
+// comparable side by side on the browse cards, while this one is a full
+// pangram with digits, capitals and punctuation, so drawing against it
+// surfaces every glyph still missing from your own set.
+export const EDITOR_SAMPLE_TEXT = "Really, the 206 quick brown foxes jump over 57 dazy logs!";
 
 export const DEFAULT_EDITOR_FONT_SIZE_PT = 105; // keeps layoutText's built-in 140px cap-height as the out-of-the-box look
 const PT_TO_PX = 96 / 72; // standard CSS/print conversion at 96dpi
@@ -220,7 +226,7 @@ export default function EditorPanel({
       // is tagged. caretIndex still comes from the real (empty) textarea,
       // so the caret lands at the very start of this preview, signaling
       // "type to replace it" rather than looking like already-typed text.
-      const displayText = text || SAMPLE_TEXT;
+      const displayText = text || EDITOR_SAMPLE_TEXT;
       const paragraphs = displayText.split("\n");
       for (const paragraph of paragraphs) {
         const layout = layoutText(paragraph, glyphs, strokes, metrics, useLigatures);

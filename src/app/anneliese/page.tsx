@@ -109,6 +109,35 @@ export default async function AnnelieseePage({
         </p>
         <StackedBarChart buckets={stats.buckets} legend={stats.legend} />
 
+        <h2 style={{ fontSize: 16, margin: "40px 0 4px", opacity: 0.6 }}>time spent, by view</h2>
+        <p style={{ opacity: 0.4, fontSize: 12, marginBottom: 12 }}>
+          visible time only; one segment per view, so a visit can appear in several rows
+        </p>
+        {stats.timeByView.length === 0 ? (
+          <p style={{ opacity: 0.6 }}>no per-view timing yet — only recorded since this was added</p>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ opacity: 0.5, fontSize: 12, textAlign: "left" }}>
+                <th style={{ padding: "0 0 6px", fontWeight: "normal" }}>view</th>
+                <th style={{ padding: "0 0 6px", fontWeight: "normal", textAlign: "right" }}>median</th>
+                <th style={{ padding: "0 0 6px", fontWeight: "normal", textAlign: "right" }}>total</th>
+                <th style={{ padding: "0 0 6px", fontWeight: "normal", textAlign: "right" }}>segments</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.timeByView.map((row) => (
+                <tr key={row.view} style={{ borderTop: "1px solid rgba(31,25,52,0.15)" }}>
+                  <td style={{ padding: "8px 0" }}>{row.view}</td>
+                  <td style={{ padding: "8px 0", textAlign: "right" }}>{formatDuration(row.medianSeconds)}</td>
+                  <td style={{ padding: "8px 0", textAlign: "right" }}>{formatDuration(row.totalSeconds)}</td>
+                  <td style={{ padding: "8px 0", textAlign: "right", opacity: 0.6 }}>{row.samples}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
         <h2 style={{ fontSize: 16, margin: "40px 0 12px", opacity: 0.6 }}>exports by format</h2>
         {exportEntries.length === 0 ? (
           <p style={{ opacity: 0.6 }}>no exports yet</p>
