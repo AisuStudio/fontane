@@ -93,11 +93,11 @@ export default async function AnnelieseePage({
           </div>
           <div>
             <div style={{ fontSize: 40 }}>{stats.avgVisitsPerDay}</div>
-            <div style={{ opacity: 0.6, fontSize: 14 }}>avg. visitors / day</div>
+            <div style={{ opacity: 0.6, fontSize: 14 }}>avg. visits / day (since launch)</div>
           </div>
           <div>
-            <div style={{ fontSize: 40 }}>{formatDuration(stats.avgSeconds)}</div>
-            <div style={{ opacity: 0.6, fontSize: 14 }}>avg. time on site</div>
+            <div style={{ fontSize: 40 }}>{formatDuration(stats.medianSeconds)}</div>
+            <div style={{ opacity: 0.6, fontSize: 14 }}>median visit length</div>
           </div>
         </div>
 
@@ -146,7 +146,10 @@ export default async function AnnelieseePage({
           {stats.marketplaceViews} views, {stats.marketplaceDownloads} downloads
           {stats.marketplaceViews > 0 && ` (${Math.round((stats.marketplaceDownloads / stats.marketplaceViews) * 100)}%)`}
         </p>
-        <p style={{ opacity: 0.4, fontSize: 12 }}>aggregate ratio, not a per-visitor funnel</p>
+        <p style={{ opacity: 0.4, fontSize: 12 }}>
+          aggregate ratio, not a per-visitor funnel
+          {stats.viewsTrackedSince && ` — views tracked only since ${stats.viewsTrackedSince}; downloads since launch`}
+        </p>
 
         <h2 style={{ fontSize: 16, margin: "40px 0 12px", opacity: 0.6 }}>visitors by country, device, language</h2>
         <div style={{ display: "grid", gap: 24, gridTemplateColumns: "repeat(3, 1fr)" }}>

@@ -43,6 +43,14 @@ function daysBetween(from: string, to: string): number {
   return Math.round(ms / 86_400_000) + 1;
 }
 
+// One legend entry per actual source: Facebook alone otherwise shows up as
+// www.facebook.com / m.facebook.com / lm.facebook.com depending on app and
+// link shim — collapse the common host prefixes so one source aggregates
+// into one slice instead of occupying several "top referrer" slots.
+function normalizeReferrer(host: string): string {
+  return host.replace(/^(www|m|mobile|l|lm|web)\./, "");
+}
+
 // Traffic scoped to [from, to] (both inclusive, UTC calendar days) — every
 // stat on the page reads from this one query so the numbers always agree
 // with each other and with the chart, per the "filters scope everything
@@ -51,7 +59,7 @@ export async function getAnnelieseData(range: DateRange) {
   const empty = {
     totalVisits: 0,
     avgVisitsPerDay: 0,
-    avgSeconds: 0,
+    medianSeconds: 0,
     exportsByFormat: {} as Record<string, number>,
     toolsByUsage: [] as [string, number][],
     directCount: 0,
@@ -63,6 +71,7 @@ export async function getAnnelieseData(range: DateRange) {
     topLanguages: [] as [string, number][],
     marketplaceViews: 0,
     marketplaceDownloads: 0,
+    viewsTrackedSince: null as string | null,
     ok: false as const,
   };
 
@@ -73,8 +82,14 @@ export async function getAnnelieseData(range: DateRange) {
   const toTs = `${range.to}T23:59:59.999Z`;
 
   try {
-    const [{ data: pageviews }, { data: durations }, { data: exports }, { data: toolUses }, { count: totalVisits }] =
-      await Promise.all([
+    const [
+      { data: pageviews },
+      { data: durations },
+      { data: exports },
+      { data: toolUses },
+      { count: totalVisits },
+      { data: firstPageview },
+    ] = await Promise.all([
         supabase
           .from("fontane_events")
           .select("visitor_id, referrer, created_at, country, device, language, page")
@@ -90,11 +105,28 @@ export async function getAnnelieseData(range: DateRange) {
         // range-scoped, per-day breakdown; this headline number complements it
         // instead of duplicating it).
         supabase.from("fontane_events").select("*", { count: "exact", head: true }).eq("type", "pageview"),
+        // All-time first pageview — anchors avgVisitsPerDay's divisor to the
+        // site's actual lifetime (see below).
+        supabase
+          .from("fontane_events")
+          .select("created_at")
+          .eq("type", "pageview")
+          .order("created_at", { ascending: true })
+          .limit(1),
       ]);
 
     const rows = pageviews ?? [];
-    const seconds = (durations ?? []).map((r) => r.seconds).filter((s): s is number => s != null);
-    const avgSeconds = seconds.length ? Math.round(seconds.reduce((a, b) => a + b, 0) / seconds.length) : 0;
+    // Median, not mean: duration events are heavy-tailed — a handful of tabs
+    // left open for hours (the pre-fix beacon recorded wall-clock time since
+    // mount, re-sent per pagehide) dragged the mean to 26m56s while the
+    // median sat at 31s. The median is what a typical visit actually looks
+    // like, and stays robust against both the legacy outliers still in the
+    // table and any future ones.
+    const seconds = (durations ?? [])
+      .map((r) => r.seconds)
+      .filter((s): s is number => s != null)
+      .sort((a, b) => a - b);
+    const medianSeconds = seconds.length ? seconds[Math.floor(seconds.length / 2)] : 0;
     const exportsByFormat: Record<string, number> = {};
     for (const row of exports ?? []) {
       if (!row.format) continue;
@@ -133,19 +165,36 @@ export async function getAnnelieseData(range: DateRange) {
     // overview and individual listing pages.
     const marketplaceViews = rows.filter((r) => r.page === "marketplace" || r.page === "marketplace-listing").length;
     const marketplaceDownloads = (exports ?? []).filter((r) => r.format === "marketplace-download").length;
+    // The `page` dimension is younger than the event stream (added
+    // 2026-07-23): every pageview before then has page=NULL and is invisible
+    // to the views counter, while downloads were logged from day one — which
+    // once produced a nonsensical "0 views, 7 downloads" tile. Surface where
+    // page-coverage actually starts so the tile can say what its views
+    // number covers; null when coverage spans the whole selected range.
+    const firstPagedAt = rows
+      .filter((r) => r.page != null)
+      .map((r) => r.created_at as string)
+      .sort()[0];
+    const viewsTrackedSince = firstPagedAt && firstPagedAt.slice(0, 10) > range.from ? firstPagedAt.slice(0, 10) : null;
 
     // Range-scoped (unlike totalVisits, which is deliberately all-time) —
     // this number should move when the date filter changes, same as the
     // chart below it. One decimal so short ranges (e.g. "last 7 days") don't
-    // round away all the signal.
-    const avgVisitsPerDay = Math.round((rows.length / daysBetween(range.from, range.to)) * 10) / 10;
+    // round away all the signal. The divisor is clamped to the site's actual
+    // lifetime: dividing by days before the very first pageview existed
+    // (e.g. "Last 30 days" on a site launched 8 days ago) understated the
+    // average nearly 4× (196/30=6.5 instead of 196/8≈24.5).
+    const firstDate = firstPageview?.[0]?.created_at?.slice(0, 10);
+    const activeFrom = firstDate && firstDate > range.from ? firstDate : range.from;
+    const avgVisitsPerDay = Math.round((rows.length / Math.max(daysBetween(activeFrom, range.to), 1)) * 10) / 10;
 
     // Top N referrer hosts by total volume across the whole range — the
     // fixed set of "named" slices; everything else folds into "Other".
     const referrerTotals = new Map<string, number>();
     for (const r of rows) {
       if (!r.referrer) continue;
-      referrerTotals.set(r.referrer, (referrerTotals.get(r.referrer) ?? 0) + 1);
+      const host = normalizeReferrer(r.referrer);
+      referrerTotals.set(host, (referrerTotals.get(host) ?? 0) + 1);
     }
     const topReferrers = [...referrerTotals.entries()]
       .sort((a, b) => b[1] - a[1])
@@ -181,7 +230,8 @@ export async function getAnnelieseData(range: DateRange) {
     const countsByBucket = new Map<string, Map<string, number>>(); // bucketKey -> sourceLabel -> count
     for (const r of rows) {
       const key = bucketOf(r.created_at);
-      const source = !r.referrer ? "Direct" : topReferrers.includes(r.referrer) ? r.referrer : "Other";
+      const normalized = r.referrer ? normalizeReferrer(r.referrer) : null;
+      const source = !normalized ? "Direct" : topReferrers.includes(normalized) ? normalized : "Other";
       const bySource = countsByBucket.get(key) ?? new Map<string, number>();
       bySource.set(source, (bySource.get(source) ?? 0) + 1);
       countsByBucket.set(key, bySource);
@@ -207,7 +257,7 @@ export async function getAnnelieseData(range: DateRange) {
     return {
       totalVisits: totalVisits ?? 0,
       avgVisitsPerDay,
-      avgSeconds,
+      medianSeconds,
       exportsByFormat,
       toolsByUsage,
       directCount,
@@ -219,6 +269,7 @@ export async function getAnnelieseData(range: DateRange) {
       topLanguages,
       marketplaceViews,
       marketplaceDownloads,
+      viewsTrackedSince,
       ok: true as const,
     };
   } catch {

@@ -1617,14 +1617,39 @@ export default function Home() {
   // session-duration beacon on the way out. pagehide (not just
   // visibilitychange/beforeunload) also covers mobile Safari's app-switch
   // behavior, which never fires a reliable unload event otherwise.
+  // Duration counts only VISIBLE time, accumulated across visibility
+  // segments. The previous version sent wall-clock-since-mount on every
+  // pagehide: a tab left open overnight reported a 10-hour "visit", and a
+  // bfcache-restored session re-reported its full cumulative time on every
+  // app switch — which is how /anneliese's average climbed to 26m56s while
+  // the median visit was 31s. Counters reset after each send, so a session
+  // spanning several pagehides emits disjoint segments that sum to the true
+  // visible time instead of multiply-counting it.
   useEffect(() => {
     trackPageview();
-    const start = performance.now();
-    function sendDuration() {
-      trackDuration((performance.now() - start) / 1000);
+    let visibleSince: number | null = document.visibilityState === "visible" ? performance.now() : null;
+    let accumulatedMs = 0;
+    function closeSegment() {
+      if (visibleSince !== null) {
+        accumulatedMs += performance.now() - visibleSince;
+        visibleSince = null;
+      }
     }
+    function onVisibilityChange() {
+      // Also reopens a segment on bfcache restore — the hidden→visible
+      // transition fires visibilitychange when the page comes back.
+      if (document.visibilityState === "hidden") closeSegment();
+      else if (visibleSince === null) visibleSince = performance.now();
+    }
+    function sendDuration() {
+      closeSegment();
+      trackDuration(accumulatedMs / 1000); // trackDuration itself drops < 1s
+      accumulatedMs = 0;
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("pagehide", sendDuration);
     return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("pagehide", sendDuration);
       sendDuration();
     };
