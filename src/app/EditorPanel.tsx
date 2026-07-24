@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
 import { layoutText, type LaidOutEntry } from "@/lib/layoutText";
-import { outlineToPath, type PathCommand } from "@/lib/contour";
+import { outlineToPath, flattenVectorShape, type PathCommand } from "@/lib/contour";
+import type { VectorShape } from "@/lib/vectorShapes";
 import type { Glyph } from "@/lib/glyphs";
 import type { Stroke, StrokePoint } from "@/lib/strokes";
 import type { Metrics } from "@/lib/metrics";
@@ -13,6 +14,9 @@ import type { StrokeSettings } from "@/lib/settings";
 type Props = {
   glyphs: Glyph[];
   strokes: Stroke[];
+  // Vector-tool shapes, needed alongside strokes since Grid's Vector tool can
+  // produce a glyph made of nothing else.
+  vectorShapes: VectorShape[];
   metrics: Metrics;
   settings: StrokeSettings;
   text: string;
@@ -84,6 +88,20 @@ function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][])
   ctx.fill();
 }
 
+// Every ring in ONE path, then a single fill — unlike fillOutline above, which
+// is per-outline. unionOutlines/subtractOutlines hand back a glyph's rings
+// with the winding directions that make nonzero fill cut the counters out
+// (see contour.ts); filling each ring on its own would discard exactly that
+// relationship and paint an "o" as a solid disc.
+function fillRings(ctx: CanvasRenderingContext2D, rings: [number, number][][]) {
+  const usable = rings.filter((ring) => ring.length >= 3);
+  if (usable.length === 0) return;
+  ctx.beginPath();
+  for (const ring of usable) applyPath(ctx, outlineToPath(ring));
+  ctx.fillStyle = INK_COLOR;
+  ctx.fill();
+}
+
 // Most entries (space/missing, and any glyph without ligature substitution)
 // stand for exactly one raw text character; a ligature-substituted glyph
 // entry stands for however many characters useLigatures folded into it (see
@@ -137,6 +155,7 @@ function wrapEntries(entries: LaidOutEntry[], maxWidth: number): WrappedLine[] {
 export default function EditorPanel({
   glyphs,
   strokes,
+  vectorShapes,
   metrics,
   settings,
   text,
@@ -210,7 +229,7 @@ export default function EditorPanel({
         y: number;
         height: number;
         minX: number;
-        glyphSets: StrokePoint[][];
+        glyphInk: { strokeSets: StrokePoint[][]; shapeRings: [number, number][][] }[];
       };
       const lines: LineGeometry[] = [];
 
@@ -229,7 +248,7 @@ export default function EditorPanel({
       const displayText = text || EDITOR_SAMPLE_TEXT;
       const paragraphs = displayText.split("\n");
       for (const paragraph of paragraphs) {
-        const layout = layoutText(paragraph, glyphs, strokes, metrics, useLigatures);
+        const layout = layoutText(paragraph, glyphs, strokes, metrics, useLigatures, vectorShapes);
         const wrappedLines = wrapEntries(layout.entries, maxLineWidth);
 
         // Each entry's offsetX was computed against this cumulative cursor
@@ -245,18 +264,28 @@ export default function EditorPanel({
         for (const { entries: lineEntries, startIndex } of wrappedLines) {
           const lineStartX = cumulativeXAtStart[startIndex] ?? 0;
           let minX = 0;
-          const glyphSets: StrokePoint[][] = [];
+          // Grouped per glyph rather than flattened into one stroke list:
+          // a glyph carrying Vector-tool shapes has to be composited on its
+          // own (its shapes punch holes in ITS strokes, not in a neighbor's),
+          // which needs the boundary kept intact.
+          const glyphInk: { strokeSets: StrokePoint[][]; shapeRings: [number, number][][] }[] = [];
 
           for (const entry of lineEntries) {
             if (entry.kind !== "glyph") continue;
-            for (const strokePoints of entry.strokePointSets) {
-              const rebased: StrokePoint[] = strokePoints.map((p) => {
-                const x = p[0] * entry.scale + entry.offsetX - lineStartX;
-                if (x < minX) minX = x;
-                return [x, p[1] * entry.scale + entry.offsetY, p[2]];
-              });
-              glyphSets.push(rebased);
-            }
+            const rebaseX = (x: number) => {
+              const rx = x * entry.scale + entry.offsetX - lineStartX;
+              if (rx < minX) minX = rx;
+              return rx;
+            };
+            const strokeSets = entry.strokePointSets.map(
+              (strokePoints): StrokePoint[] =>
+                strokePoints.map((p) => [rebaseX(p[0]), p[1] * entry.scale + entry.offsetY, p[2]])
+            );
+            const shapeRings = entry.vectorShapes.map(
+              (shape): [number, number][] =>
+                flattenVectorShape(shape).map(([x, y]) => [rebaseX(x), y * entry.scale + entry.offsetY])
+            );
+            glyphInk.push({ strokeSets, shapeRings });
           }
 
           const lineCharLength = lineEntries.reduce((sum, e) => sum + entryCharLength(e), 0);
@@ -279,7 +308,7 @@ export default function EditorPanel({
           }
           remainingToCaret -= lineCharLength;
 
-          lines.push({ y: lineY, height: layout.height, minX, glyphSets });
+          lines.push({ y: lineY, height: layout.height, minX, glyphInk });
           lineY += layout.height + LINE_GAP;
         }
 
@@ -303,13 +332,41 @@ export default function EditorPanel({
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const shiftX = LEFT_MARGIN - Math.min(0, line.minX);
-        for (const strokePoints of line.glyphSets) {
-          const transformed: StrokePoint[] = strokePoints.map((p) => [
-            (p[0] + shiftX) * sizeFactor,
-            (p[1] + line.y) * sizeFactor,
-            p[2],
-          ]);
-          fillOutline(ctx!, outlineFor(transformed, effectiveSettingsFor(settings, sizeFactor)));
+        const penSettings = effectiveSettingsFor(settings, sizeFactor);
+        const place = (x: number, y: number): [number, number] => [
+          (x + shiftX) * sizeFactor,
+          (y + line.y) * sizeFactor,
+        ];
+        for (const { strokeSets, shapeRings } of line.glyphInk) {
+          for (const strokePoints of strokeSets) {
+            const transformed: StrokePoint[] = strokePoints.map((p) => {
+              const [x, y] = place(p[0], p[1]);
+              return [x, y, p[2]];
+            });
+            fillOutline(ctx!, outlineFor(transformed, penSettings));
+          }
+
+          if (shapeRings.length === 0) continue;
+          const placedRings = shapeRings.map((ring) => ring.map(([x, y]) => place(x, y)));
+
+          if (strokeSets.length === 0) {
+            // Vector-only glyph (Grid's Vector tool can produce one): the
+            // shapes ARE the letter, so they just fill.
+            fillRings(ctx!, placedRings);
+            continue;
+          }
+          // Strokes plus shapes: the shapes punch holes, exactly like the Free
+          // and Grid canvases do it live. Deliberately NOT routed through
+          // union/subtractOutlines the way compileDocument does at export
+          // time — feeding a pen stroke's annular outline into a polygon
+          // union collapses the letter's own counter (an "o" came out a solid
+          // disc), and destination-out keeps every counter intact. The one
+          // cost is that a shape reaching outside its glyph's advance would
+          // also erase into a neighbor, same as in Free.
+          ctx!.save();
+          ctx!.globalCompositeOperation = "destination-out";
+          fillRings(ctx!, placedRings);
+          ctx!.restore();
         }
         if (i === caretLineIndex) {
           caretX = (caretCharX + shiftX) * sizeFactor;

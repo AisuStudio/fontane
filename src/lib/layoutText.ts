@@ -1,6 +1,8 @@
 import type { Glyph } from "./glyphs";
 import type { Stroke, StrokePoint } from "./strokes";
 import type { Metrics } from "./metrics";
+import type { VectorShape } from "./vectorShapes";
+import { flattenVectorShape } from "./contour";
 
 // A shared row-of-text pixel space for the Animate preview/export — not a
 // real font em, just fixed constants big enough that every glyph (Grid- or
@@ -20,6 +22,11 @@ export type LaidOutEntry =
       // perfect-freehand. Callers that only need x/y (skeleton/SVG export)
       // just map it away.
       strokePointSets: StrokePoint[][];
+      // Closed Vector-tool shapes tagged into this glyph, untransformed like
+      // strokePointSets above. Renderers apply the same compile-time rule as
+      // compileDocument(): with strokes present they punch holes, alone they
+      // fill. Empty for every glyph drawn only with the pen.
+      vectorShapes: VectorShape[];
       scale: number;
       offsetX: number;
       offsetY: number;
@@ -69,9 +76,15 @@ export function layoutText(
   glyphs: Glyph[],
   strokes: Stroke[],
   metrics: Metrics,
-  useLigatures = false
+  useLigatures = false,
+  // Vector-tool shapes (src/lib/vectorShapes.ts) tagged into glyphs. Optional
+  // and last so the older 4/5-argument calls still compile — but a caller
+  // that omits it renders a vector-only glyph as blank, which is exactly the
+  // bug this parameter exists to fix, so pass it wherever glyphs are drawn.
+  vectorShapes: VectorShape[] = []
 ): TextLayout {
   const byId = new Map(strokes.map((s) => [s.id, s]));
+  const shapesById = new Map(vectorShapes.map((s) => [s.id, s]));
   // glyphs is append-only, so building the map in order already gives
   // "last tagged wins" for duplicate names — same tie-break GridCell.tsx uses
   // for overlapping strokes.
@@ -133,6 +146,11 @@ export function layoutText(
       .map((id) => byId.get(id))
       .filter((s): s is Stroke => Boolean(s))
       .map((s) => s.points);
+    // Only closed shapes are real geometry — an unfinished path has no fill,
+    // same rule compileDocument() applies at export time.
+    const glyphVectorShapes = (glyph.vectorShapeIds ?? [])
+      .map((id) => shapesById.get(id))
+      .filter((s): s is VectorShape => Boolean(s && s.closed));
 
     let scale: number;
     let offsetX: number;
@@ -158,7 +176,12 @@ export function layoutText(
       // shared baseline. If there's no ink at all (shouldn't normally happen,
       // but a tagged glyph could in principle have lost its strokes), treat
       // the character as missing rather than crash on a null bbox.
-      const bbox = bounds(strokePointSets.flat().map((p) => [p[0], p[1]] as [number, number]));
+      const bbox = bounds([
+        ...strokePointSets.flat().map((p) => [p[0], p[1]] as [number, number]),
+        // Vector shapes count as ink too — without them a glyph drawn ONLY
+        // with the Vector tool has an empty bbox and gets treated as missing.
+        ...glyphVectorShapes.flatMap((s) => flattenVectorShape(s)),
+      ]);
       if (!bbox) {
         missing.add(char);
         entries.push({ kind: "missing", advanceWidth: SPACE_ADVANCE, char });
@@ -173,7 +196,17 @@ export function layoutText(
       advanceWidth = (bbox.xmax - bbox.xmin) * scale + 2 * FALLBACK_SIDE_BEARING;
     }
 
-    entries.push({ kind: "glyph", glyph, strokePointSets, scale, offsetX, offsetY, advanceWidth, charLength });
+    entries.push({
+      kind: "glyph",
+      glyph,
+      strokePointSets,
+      vectorShapes: glyphVectorShapes,
+      scale,
+      offsetX,
+      offsetY,
+      advanceWidth,
+      charLength,
+    });
     cursorX += advanceWidth;
     i += charLength;
   }

@@ -1005,7 +1005,9 @@ export default function Home() {
     // warning would silently miss whatever the canvas is actually showing.
     const textToCheck = editorText || EDITOR_SAMPLE_TEXT;
     for (const line of textToCheck.split("\n")) {
-      for (const c of layoutText(line, glyphs, completedRef.current, metrics, useLigatures).missing) all.add(c);
+      for (const c of layoutText(line, glyphs, completedRef.current, metrics, useLigatures, vectorShapesRef.current)
+        .missing)
+        all.add(c);
     }
     return [...all];
   }, [editorText, glyphs, metrics, useLigatures]);
@@ -3908,6 +3910,7 @@ export default function Home() {
         <EditorPanel
           glyphs={glyphs}
           strokes={completedRef.current}
+          vectorShapes={vectorShapesRef.current}
           metrics={metrics}
           settings={settings}
           text={editorText}
