@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fontane VF Spike — 3 Achsen</title>
+<style>
+  @font-face {
+    font-family: "FontaneVF";
+    src: url("fontane-vf.ttf");
+  }
+  :root { color-scheme: light; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+    background: #eae8e0; color: #1f1934;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  header { padding: 20px 28px 0; }
+  header h1 { font-size: 14px; margin: 0; letter-spacing: 0.08em; text-transform: uppercase; }
+  header p { font-size: 12px; margin: 4px 0 0; opacity: 0.6; }
+  #stage {
+    flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  #sample {
+    font-family: "FontaneVF", sans-serif;
+    font-size: 160px; line-height: 1.1; text-align: center;
+    border: none; background: none; color: inherit; outline: none; width: 100%;
+    font-variation-settings: "wght" var(--wght, 400), "wdth" var(--wdth, 100), "slnt" var(--slnt, 0);
+  }
+  #controls {
+    display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 20px;
+    padding: 20px 28px 28px; border-top: 1px solid rgba(31,25,52,0.15);
+  }
+  label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+  label b { display: flex; justify-content: space-between; font-weight: 600; }
+  input[type="range"] { accent-color: #5100ff; }
+  @media (max-width: 640px) { #controls { grid-template-columns: 1fr; } #sample { font-size: 90px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fontane VF Spike</h1>
+  <p>Ein Skelett, drei Achsen: Strichbreite (wght) = echte Re-Renders · Breite (wdth) + Neigung (slnt) = affine Ableitungen. Keine Union, 96 Punkte/Kontur.</p>
+</header>
+<div id="stage">
+  <div id="sample" contenteditable="true" spellcheck="false">lolo ool llo</div>
+</div>
+<div id="controls">
+  <label><b>Strichbreite (wght) <span id="v-wght">400</span></b>
+    <input type="range" id="wght" min="100" max="900" value="400" step="1"></label>
+  <label><b>Buchstabenbreite (wdth) <span id="v-wdth">100</span></b>
+    <input type="range" id="wdth" min="70" max="135" value="100" step="1"></label>
+  <label><b>Neigung (slnt) <span id="v-slnt">0</span></b>
+    <input type="range" id="slnt" min="-12" max="12" value="0" step="0.5"></label>
+</div>
+<script>
+  for (const axis of ["wght", "wdth", "slnt"]) {
+    const input = document.getElementById(axis);
+    const out = document.getElementById("v-" + axis);
+    input.addEventListener("input", () => {
+      document.documentElement.style.setProperty("--" + axis, input.value);
+      out.textContent = input.value;
+    });
+  }
+</script>
+</body>
+</html>
