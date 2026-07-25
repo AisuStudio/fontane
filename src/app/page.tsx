@@ -3,11 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import styles from "./page.module.css";
-import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokePoint } from "@/lib/strokes";
+import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokeKind, type StrokePoint } from "@/lib/strokes";
+import { nibPolygon, type Nib } from "@/lib/calligraphy";
 import { loadGlyphs, saveGlyphs, unicodeFor, type Glyph, type GlyphKind } from "@/lib/glyphs";
 import { anyPointInPolygon, pointInPolygon } from "@/lib/geometry";
 import {
   applyBrush,
+  applyCalligraphy,
   inkPointCount,
   DEFAULT_NIB,
   DEFAULT_SCATTER,
@@ -71,6 +73,7 @@ import {
   Scaling,
   Hand,
   PenTool,
+  PenLine,
   CirclePlus,
   CircleMinus,
   Spline,
@@ -110,6 +113,7 @@ type DrawStyle = "free" | "grid" | "editor";
 type DrawTool =
   | "pen"
   | "brush"
+  | "calligraphy"
   | "eraser"
   | "nudge"
   | "anchor"
@@ -149,7 +153,7 @@ const LASSO_TOOLS = new Set<DrawTool>(["assign", "select"]);
 // the tools whose own gesture is a plain draw/erase qualify — Nudge/Anchor/
 // Vector/transform tools already have their own Cmd/Ctrl or modifier meaning
 // (see handleVectorPointerDown's directSelect) and are deliberately excluded.
-const CMD_SELECT_OVERRIDE_TOOLS = new Set<DrawTool>(["pen", "brush", "eraser"]);
+const CMD_SELECT_OVERRIDE_TOOLS = new Set<DrawTool>(["pen", "brush", "calligraphy", "eraser"]);
 // Tools that read (rather than replace) the current selection — switching
 // among these must NOT clear selectedIds, unlike switching to pen/eraser/
 // nudge/pan, which should.
@@ -170,7 +174,9 @@ const VECTOR_TOOLS = new Set<DrawTool>(["vector", "vectorAdd", "vectorDelete", "
 // stroke sliders are canvas-wide render settings, but showing them while a
 // vector or transform tool is active is pure noise — Glyphs shows only the
 // panels relevant to the active tool, so the Stroke section follows suit.
-const STROKE_TOOLS = new Set<DrawTool>(["pen", "brush", "eraser", "nudge", "anchor"]);
+// Calligraphy belongs here too, but shows its own nib panel instead of the
+// brush one — see the Stroke section in the sidebar.
+const STROKE_TOOLS = new Set<DrawTool>(["pen", "brush", "calligraphy", "eraser", "nudge", "anchor"]);
 // Every DrawTool whose button only ever appears when drawStyle==="free" —
 // leaving Free resets drawTool back to "pen" if it's one of these, since
 // their UI vanishes and a stale value would silently persist otherwise.
@@ -203,6 +209,7 @@ const TOOL_DEFS: ToolDef[] = [
   { value: "vectorDelete", label: "Delete Anchor", icon: CircleMinus, shortcut: "-", group: "penFamily" },
   { value: "vectorConvert", label: "Convert Anchor", icon: Spline, shortcut: "c", group: "penFamily" },
   { value: "brush", label: "Brush", icon: Brush, shortcut: "u" },
+  { value: "calligraphy", label: "Calligraphy", icon: PenLine, shortcut: "y" },
   { value: "eraser", label: "Erase", icon: Eraser, shortcut: "e" },
   { value: "select", label: "Select", icon: Lasso, shortcut: "l", group: "editFamily" },
   { value: "nudge", label: "Nudge", icon: SplinePointer, shortcut: "n", group: "editFamily" },
@@ -281,20 +288,79 @@ function optionsFor(settings: StrokeSettings): BrushOptions {
   };
 }
 
-// `seedKey` should be the stroke's own id wherever there is one — it's what
-// makes a scatter brush deterministic (see src/lib/brush.ts). The default
-// only covers the in-progress stroke, which has no id until it's committed
-// and is re-rendered from scratch every frame anyway.
-function outlineFor(points: StrokePoint[], settings: StrokeSettings, seedKey = "live"): BrushOutput {
+// The Calligraphy tool's own three settings, pulled out of the shared
+// StrokeSettings blob into the shape src/lib/calligraphy.ts works in.
+function nibFor(settings: StrokeSettings): Nib {
+  return { size: settings.nibSize, ratio: settings.nibRatio, angle: settings.nibAngle };
+}
+
+// Which outline generator a stroke gets is decided by the tool that DREW it,
+// not by whatever tool or brush is selected now — a calligraphy stroke keeps
+// its nib outline forever, the same way a pen stroke keeps its
+// pressure-thinned one; every other stroke goes through the active brush.
+// `kind` is optional so the live in-progress path can pass the active tool's
+// kind before there's a Stroke object to read it off. `seedKey` should be
+// the stroke's own id wherever there is one — it's what makes a scatter
+// brush deterministic (see src/lib/brush.ts). The default only covers the
+// in-progress stroke, which has no id until it's committed and is
+// re-rendered from scratch every frame anyway.
+function outlineFor(points: StrokePoint[], settings: StrokeSettings, kind?: StrokeKind, seedKey = "live"): BrushOutput {
+  if (kind === "calligraphy") return applyCalligraphy(points, nibFor(settings));
   return applyBrush(points, optionsFor(settings), seedKey);
 }
 
 // A Scale-tool gesture bakes its magnitude into the stroke's own widthScale
 // (see applyTransform) so relative thickness stays constant as the shape
-// grows/shrinks, instead of every stroke sharing one fixed global size.
+// grows/shrinks, instead of every stroke sharing one fixed global size. Both
+// widths scale together: a stroke only ever uses one of the two, depending on
+// whether it was drawn with the pen or the nib.
 function effectiveSettingsFor(stroke: Stroke, settings: StrokeSettings): StrokeSettings {
   const ws = stroke.widthScale ?? 1;
-  return ws === 1 ? settings : { ...settings, size: settings.size * ws };
+  return ws === 1 ? settings : { ...settings, size: settings.size * ws, nibSize: settings.nibSize * ws };
+}
+
+// The single call every already-completed stroke's outline goes through: its
+// own kind, its own id as the brush seed, and its own baked-in widthScale,
+// against the current settings.
+function strokeOutline(stroke: Stroke, settings: StrokeSettings): BrushOutput {
+  return outlineFor(stroke.points, effectiveSettingsFor(stroke, settings), stroke.kind, stroke.id);
+}
+
+// What the tool currently in hand records on the strokes it lays down (and
+// reports to provenance/analytics). Every other DrawTool edits existing ink
+// rather than making any, so they never reach here — "pen" is just the
+// unreachable default. GridCell.tsx keeps its own copy over CellTool, the
+// same local-duplication split the two canvases already use everywhere else.
+function strokeKindFor(tool: DrawTool): StrokeKind {
+  if (tool === "brush") return "brush";
+  if (tool === "calligraphy") return "calligraphy";
+  return "pen";
+}
+
+// The nib itself, drawn at true canvas size on the settings panel's dark
+// ground — the one picture that shows all three of its settings at once: how
+// big the oval is, how narrow, and how far it's tilted. The box is fixed at
+// the widest a nib can get (the Nib size slider's own max), so a bigger nib
+// genuinely looks bigger here instead of being auto-fitted back to the same
+// apparent size.
+const NIB_PREVIEW_BOX = 60;
+
+function NibPreview({ nib }: { nib: Nib }) {
+  const half = NIB_PREVIEW_BOX / 2;
+  const points = nibPolygon(0, 0, nib)
+    .map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`)
+    .join(" ");
+  return (
+    <svg
+      viewBox={`${-half} ${-half} ${NIB_PREVIEW_BOX} ${NIB_PREVIEW_BOX}`}
+      width="100%"
+      height={NIB_PREVIEW_BOX}
+      role="img"
+      aria-label={`Nib: ${nib.size} px, oval ${nib.ratio.toFixed(2)}, tilted ${nib.angle} degrees`}
+    >
+      <polygon points={points} fill={COLOR_SELECTED} />
+    </svg>
+  );
 }
 
 // Lowercase letters that dip below the baseline (their body still sits in
@@ -568,9 +634,7 @@ function compileDocument(
       // A brush can emit many polygons per stroke (one per stamp, for the
       // scatter brush) — they union in exactly like separately drawn strokes
       // already did, so the overlap handling below is unchanged.
-      const strokesUnion = unionOutlines(
-        glyphStrokes.flatMap((s) => outlineFor(s.points, effectiveSettingsFor(s, settings), s.id).polygons)
-      );
+      const strokesUnion = unionOutlines(glyphStrokes.flatMap((s) => strokeOutline(s, settings).polygons));
       // Vector-tool shapes (only closed ones are real geometry) default to
       // punching a hole in the glyph's strokes — see contour.ts's
       // subtractOutlines. A glyph with vector shapes but no strokes has
@@ -606,12 +670,15 @@ function compileDocument(
         // nib hulls and stamps (sparse exact polygons, where it rounds off
         // corners that were deliberate). The union can mix rings from both,
         // so the decision is per glyph: any non-freehand ink in it and the
-        // whole glyph emits straight edges. A glyph made only of Vector-tool
-        // shapes has no brushed ink at all and keeps the smoothing, which is
-        // what its dense curve flattening expects.
+        // whole glyph emits straight edges. Calligraphy strokes don't count
+        // as such ink — they bypass the brush entirely (see outlineFor), and
+        // their sampled half-oval end caps are exactly what the smoothing is
+        // there to round. A glyph made only of Vector-tool shapes has no
+        // brushed ink at all and keeps the smoothing too, which is what its
+        // dense curve flattening expects.
         contours: rings.map((ring) =>
           pathToSvgD(
-            glyphStrokes.length > 0 && settings.brush.kind !== "freehand"
+            glyphStrokes.some((s) => s.kind !== "calligraphy") && settings.brush.kind !== "freehand"
               ? outlineToSharpPath(ring)
               : outlineToPath(ring)
           )
@@ -1399,7 +1466,7 @@ export default function Home() {
     let contours = 0;
     let points = 0;
     for (const stroke of completedRef.current) {
-      const out = outlineFor(stroke.points, effectiveSettingsFor(stroke, settings), stroke.id);
+      const out = strokeOutline(stroke, settings);
       contours += out.polygons.length;
       points += inkPointCount(out);
     }
@@ -1482,7 +1549,11 @@ export default function Home() {
         paint(punches, true);
       }
       if (!LASSO_TOOLS.has(drawToolRef.current) && !cmdSelectRef.current && currentPointsRef.current.length > 0) {
-        fillOutline(ctx, outlineFor(currentPointsRef.current, settingsRef.current), COLOR_DEFAULT);
+        fillOutline(
+          ctx,
+          outlineFor(currentPointsRef.current, settingsRef.current, strokeKindFor(drawToolRef.current)),
+          COLOR_DEFAULT
+        );
       }
       if ((LASSO_TOOLS.has(drawToolRef.current) || cmdSelectRef.current) && lassoRef.current.length > 1) {
         strokeLassoPath(ctx, lassoRef.current);
@@ -1630,7 +1701,7 @@ export default function Home() {
     // Restore persisted strokes. Glyphs are already loaded via useState's lazy
     // initializer, so just prime the ref the first redraw() below will read.
     completedRef.current = loadStrokes();
-    outlinesRef.current = completedRef.current.map((s) => outlineFor(s.points, effectiveSettingsFor(s, settingsRef.current), s.id));
+    outlinesRef.current = completedRef.current.map((s) => strokeOutline(s, settingsRef.current));
     setStrokeCount(completedRef.current.length);
     vectorShapesRef.current = loadVectorShapes();
     taggedIdsRef.current = new Set(glyphs.flatMap((g) => g.strokeIds));
@@ -1800,7 +1871,7 @@ export default function Home() {
             const pointIdx = anchorIndicesRef.current[draggingAnchorRef.current];
             const prevPressure = stroke.points[pointIdx][2];
             stroke.points[pointIdx] = [p[0], p[1], prevPressure];
-            outlinesRef.current[idx] = outlineFor(stroke.points, effectiveSettingsFor(stroke, settingsRef.current), stroke.id);
+            outlinesRef.current[idx] = strokeOutline(stroke, settingsRef.current);
             redraw();
           }
           return;
@@ -1899,7 +1970,7 @@ export default function Home() {
               if (idx === -1) continue;
               const stroke = completedRef.current[idx];
               stroke.widthScale = (stroke.widthScale ?? 1) * widthFactor;
-              outlinesRef.current[idx] = outlineFor(stroke.points, effectiveSettingsFor(stroke, settingsRef.current), stroke.id);
+              outlinesRef.current[idx] = strokeOutline(stroke, settingsRef.current);
             }
           }
           transformStartRef.current = null;
@@ -1938,10 +2009,10 @@ export default function Home() {
             id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
             points: currentPointsRef.current,
             createdAt: Date.now(),
-            kind: drawToolRef.current === "brush" ? "brush" : "pen",
+            kind: strokeKindFor(drawToolRef.current),
           };
           completedRef.current = [...completedRef.current, stroke];
-          outlinesRef.current = [...outlinesRef.current, outlineFor(stroke.points, settingsRef.current, stroke.id)];
+          outlinesRef.current = [...outlinesRef.current, strokeOutline(stroke, settingsRef.current)];
           saveStrokes(completedRef.current);
           setStrokeCount(completedRef.current.length);
           enqueueProvenanceEvent({
@@ -1949,10 +2020,10 @@ export default function Home() {
             authorId: getAuthorId(),
             clientStrokeId: stroke.id,
             context: "free",
-            tool: stroke.kind === "brush" ? "brush" : "pen",
+            tool: stroke.kind ?? "pen",
             ...summarizeStroke(stroke.points, strokeStartTimeRef.current),
           });
-          trackToolUse(stroke.kind === "brush" ? "brush" : "pen", viewLabelRef.current);
+          trackToolUse(stroke.kind ?? "pen", viewLabelRef.current);
         }
         currentPointsRef.current = [];
       }
@@ -1994,7 +2065,7 @@ export default function Home() {
   useEffect(() => {
     settingsRef.current = settings;
     saveSettings(settings);
-    outlinesRef.current = completedRef.current.map((s) => outlineFor(s.points, effectiveSettingsFor(s, settings), s.id));
+    outlinesRef.current = completedRef.current.map((s) => strokeOutline(s, settings));
     redrawRef.current();
   }, [settings]);
 
@@ -2234,7 +2305,7 @@ export default function Home() {
         completedRef.current = [...completedRef.current, ...newStrokes];
         outlinesRef.current = [
           ...outlinesRef.current,
-          ...newStrokes.map((s) => outlineFor(s.points, effectiveSettingsFor(s, settingsRef.current), s.id)),
+          ...newStrokes.map((s) => strokeOutline(s, settingsRef.current)),
         ];
         saveStrokes(completedRef.current);
         setStrokeCount(completedRef.current.length);
@@ -2426,7 +2497,7 @@ export default function Home() {
 
   function applySnapshot(snap: { strokes: Stroke[]; glyphs: Glyph[] }) {
     completedRef.current = snap.strokes;
-    outlinesRef.current = snap.strokes.map((s) => outlineFor(s.points, effectiveSettingsFor(s, settingsRef.current), s.id));
+    outlinesRef.current = snap.strokes.map((s) => strokeOutline(s, settingsRef.current));
     saveStrokes(completedRef.current);
     setStrokeCount(completedRef.current.length);
     setGlyphs(snap.glyphs);
@@ -2526,7 +2597,7 @@ export default function Home() {
         const dy = py - snap.pivotY;
         return [snap.pivotX + dx + kH * dy, snap.pivotY + dy + kV * dx, pressure] as StrokePoint;
       });
-      outlinesRef.current[idx] = outlineFor(stroke.points, effectiveSettingsFor(stroke, settingsRef.current), stroke.id);
+      outlinesRef.current[idx] = strokeOutline(stroke, settingsRef.current);
     }
     saveStrokes(completedRef.current);
     redrawRef.current();
@@ -2691,7 +2762,7 @@ export default function Home() {
             stroke.points = anchorIndicesRef.current.map((i) => stroke.points[i]);
             anchorIndicesRef.current = stroke.points.map((_, i) => i);
             resampledRef.current = true;
-            outlinesRef.current[idx] = outlineFor(stroke.points, effectiveSettingsFor(stroke, settingsRef.current), stroke.id);
+            outlinesRef.current[idx] = strokeOutline(stroke, settingsRef.current);
           }
           draggingAnchorRef.current = rank;
           return;
@@ -2806,7 +2877,7 @@ export default function Home() {
       .map((i) => (i >= pointIndex ? i + 1 : i))
       .concat(pointIndex)
       .sort((a, b) => a - b);
-    outlinesRef.current[idx] = outlineFor(stroke.points, effectiveSettingsFor(stroke, settingsRef.current), stroke.id);
+    outlinesRef.current[idx] = strokeOutline(stroke, settingsRef.current);
     saveStrokes(completedRef.current);
     redrawRef.current();
   }
@@ -2849,7 +2920,7 @@ export default function Home() {
     }
 
     completedRef.current = completedRef.current.flatMap((s, i) => (i === idx ? newStrokes : [s]));
-    outlinesRef.current = completedRef.current.map((s) => outlineFor(s.points, effectiveSettingsFor(s, settingsRef.current), s.id));
+    outlinesRef.current = completedRef.current.map((s) => strokeOutline(s, settingsRef.current));
     saveStrokes(completedRef.current);
     setStrokeCount(completedRef.current.length);
 
@@ -3474,7 +3545,7 @@ export default function Home() {
         // scale
         return [t.pivotX + (px - t.pivotX) * scaleX, t.pivotY + (py - t.pivotY) * scaleY, pressure] as StrokePoint;
       });
-      outlinesRef.current[idx] = outlineFor(stroke.points, effectiveSettingsFor(stroke, settingsRef.current), stroke.id);
+      outlinesRef.current[idx] = strokeOutline(stroke, settingsRef.current);
     }
   }
 
@@ -3501,7 +3572,7 @@ export default function Home() {
     );
     const anchoredStroke = anchoredPoints === stroke.points ? stroke : { ...stroke, points: anchoredPoints };
     completedRef.current = [...completedRef.current, anchoredStroke];
-    outlinesRef.current = [...outlinesRef.current, outlineFor(anchoredStroke.points, settingsRef.current, anchoredStroke.id)];
+    outlinesRef.current = [...outlinesRef.current, strokeOutline(anchoredStroke, settingsRef.current)];
     saveStrokes(completedRef.current);
     setStrokeCount(completedRef.current.length);
     enqueueProvenanceEvent({
@@ -3509,7 +3580,7 @@ export default function Home() {
       authorId: getAuthorId(),
       clientStrokeId: anchoredStroke.id,
       context: "grid",
-      tool: anchoredStroke.kind === "brush" ? "brush" : "pen",
+      tool: anchoredStroke.kind ?? "pen",
       // durationMs was measured directly by GridCell (only it knows its own
       // pointerdown time) — reproduced here via summarizeStroke's own
       // Date.now()-startedAt math rather than adding a second code path.
@@ -3671,7 +3742,7 @@ export default function Home() {
         keepProportions
       );
       completedRef.current[idx] = { ...completedRef.current[idx], points, ...(widthScale !== undefined ? { widthScale } : {}) };
-      outlinesRef.current[idx] = outlineFor(points, effectiveSettingsFor(completedRef.current[idx], settingsRef.current), completedRef.current[idx].id);
+      outlinesRef.current[idx] = strokeOutline(completedRef.current[idx], settingsRef.current);
     }
     saveStrokes(completedRef.current);
 
@@ -4734,6 +4805,12 @@ export default function Home() {
                 id: s.id,
                 points: fittedPoints[i],
                 widthScale: (s.widthScale ?? 1) * fitScale.scale,
+                // Carried through so the cell can rebuild the SAME outline the
+                // stroke was drawn with — a calligraphy stroke re-rendered as
+                // a pen one comes back with round ends instead of the nib's
+                // flat cuts, and stops matching what Free/Editor show for the
+                // very same glyph.
+                kind: s.kind,
               }));
               // This glyph's Vector shapes, rescaled into the cell's live
               // pixel space the same way its strokes are above. There's no
@@ -4767,6 +4844,7 @@ export default function Home() {
                   onErase={(ids) => deleteStrokes(ids)}
                   onStrokesChange={(updates) => handleGridStrokesChange(slot, updates, liveWidth, liveHeight)}
                   strokeOptions={optionsFor(settings)}
+                  nib={nibFor(settings)}
                   onStrokeComplete={(stroke, reportedWidth, reportedHeight, durationMs) =>
                     handleGridStroke(slot, stroke, reportedWidth, reportedHeight, durationMs)
                   }
@@ -5210,10 +5288,61 @@ export default function Home() {
             </>
           )}
 
+          {/* The nib replaces the pen's own controls rather than sitting
+              below them: none of Mono/Dynamic, Thinning, Smoothing or
+              Streamline mean anything to a broad nib (it ignores pressure by
+              design — width comes from the direction you move), and Size
+              would read as one shared control while actually being two. The
+              Brush toggle stays out too: a calligraphy stroke never goes
+              through an applicator (see outlineFor). */}
+          {showStrokeControls && drawTool === "calligraphy" && (
+            <SettingsSection id="stroke" title="Stroke" defaultOpen>
+              <div className={styles.sliders}>
+                <NibPreview nib={nibFor(settings)} />
+                <label className={styles.sliderRow}>
+                  <span>Nib size</span>
+                  <input
+                    type="range"
+                    min={4}
+                    max={60}
+                    step={1}
+                    value={settings.nibSize}
+                    onChange={(e) => updateSetting("nibSize", Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{settings.nibSize}</span>
+                </label>
+                <label className={styles.sliderRow}>
+                  <span>Oval</span>
+                  <input
+                    type="range"
+                    min={0.05}
+                    max={1}
+                    step={0.05}
+                    value={settings.nibRatio}
+                    onChange={(e) => updateSetting("nibRatio", Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{settings.nibRatio.toFixed(2)}</span>
+                </label>
+                <label className={styles.sliderRow}>
+                  <span>Angle</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={180}
+                    step={1}
+                    value={settings.nibAngle}
+                    onChange={(e) => updateSetting("nibAngle", Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{settings.nibAngle}°</span>
+                </label>
+              </div>
+            </SettingsSection>
+          )}
+
           {/* Stroke sliders only while a stroke-family tool is active (see
               STROKE_TOOLS) — with a vector or transform tool up they'd
               promise an effect the tool can't deliver. */}
-          {showStrokeControls && STROKE_TOOLS.has(drawTool) && (
+          {showStrokeControls && STROKE_TOOLS.has(drawTool) && drawTool !== "calligraphy" && (
             <SettingsSection id="stroke" title="Stroke" defaultOpen>
               <div className={styles.sliders}>
                 {/* Which applicator turns the skeleton into ink. Everything

@@ -1,3 +1,4 @@
+import { DEFAULT_NIB as DEFAULT_CALLIGRAPHY_NIB } from "./calligraphy";
 import { DEFAULT_BRUSH, DEFAULT_NIB, DEFAULT_SCATTER, type BrushSettings } from "./brush";
 
 export type StrokeMode = "mono" | "dynamic";
@@ -8,10 +9,21 @@ export type StrokeSettings = {
   thinning: number;
   smoothing: number;
   streamline: number;
-  // Which applicator turns a skeleton into ink (src/lib/brush.ts). The four
-  // fields above are the freehand brush's own parameters — they predate the
-  // brush concept and keep their names, so nothing about an existing project
-  // file or a saved setting changes meaning.
+  // The Calligraphy tool's broad nib (see src/lib/calligraphy.ts) — a
+  // per-stroke applicator picked by drawing with that tool, unlike `brush`
+  // below. Kept alongside the pen/brush settings rather than in a store of
+  // its own so one load/save covers every drawing tool — the four fields
+  // above simply don't apply to a nib, and these three don't apply to the
+  // pen. mergeSettings's spread over DEFAULT_SETTINGS is what migrates
+  // projects saved before the nib existed.
+  nibSize: number;
+  nibRatio: number;
+  nibAngle: number;
+  // Which applicator turns a skeleton into ink (src/lib/brush.ts) for every
+  // NON-calligraphy stroke. The four fields above are the freehand brush's
+  // own parameters — they predate the brush concept and keep their names, so
+  // nothing about an existing project file or a saved setting changes
+  // meaning.
   brush: BrushSettings;
 };
 
@@ -21,6 +33,9 @@ export const DEFAULT_SETTINGS: StrokeSettings = {
   thinning: 0.7,
   smoothing: 0.5,
   streamline: 0.5,
+  nibSize: DEFAULT_CALLIGRAPHY_NIB.size,
+  nibRatio: DEFAULT_CALLIGRAPHY_NIB.ratio,
+  nibAngle: DEFAULT_CALLIGRAPHY_NIB.angle,
   brush: DEFAULT_BRUSH,
 };
 

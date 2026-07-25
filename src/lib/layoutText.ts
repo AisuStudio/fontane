@@ -1,5 +1,5 @@
 import type { Glyph } from "./glyphs";
-import type { Stroke, StrokePoint } from "./strokes";
+import type { Stroke, StrokeKind, StrokePoint } from "./strokes";
 import type { Metrics } from "./metrics";
 import type { VectorShape } from "./vectorShapes";
 import { flattenVectorShape } from "./contour";
@@ -19,14 +19,15 @@ export type LaidOutEntry =
       // Raw, untransformed points — pressure kept (unlike everything else in
       // this file, which only ever needed x/y) so a pressure-sensitive
       // canvas renderer (Editor mode) can feed these straight into
-      // perfect-freehand. Callers that only need x/y (skeleton/SVG export)
-      // just map it away.
-      strokePointSets: StrokePoint[][];
-      // The originating stroke id for each entry in strokePointSets, same
-      // order — a brush's deterministic seed (see applyBrush).
-      strokeIds: string[];
+      // perfect-freehand. Each set rides along with the kind of tool that drew
+      // it, since that decides which outline generator it belongs in (a
+      // broad-nib calligraphy stroke is not a perfect-freehand one), and with
+      // the originating stroke's id — a brush's deterministic seed (see
+      // applyBrush). Callers that only need x/y (skeleton/SVG export) map
+      // them away.
+      strokeSets: { points: StrokePoint[]; kind?: StrokeKind; id: string }[];
       // Closed Vector-tool shapes tagged into this glyph, untransformed like
-      // strokePointSets above. Renderers apply the same compile-time rule as
+      // strokeSets above. Renderers apply the same compile-time rule as
       // compileDocument(): with strokes present they punch holes, alone they
       // fill. Empty for every glyph drawn only with the pen.
       vectorShapes: VectorShape[];
@@ -145,14 +146,15 @@ export function layoutText(
       continue;
     }
 
-    const glyphStrokes = glyph.strokeIds.map((id) => byId.get(id)).filter((s): s is Stroke => Boolean(s));
-    const strokePointSets = glyphStrokes.map((s) => s.points);
-    // Parallel to strokePointSets, same order. Only a brush needs these (as
-    // its jitter seed, see applyBrush in src/lib/brush.ts) — but it needs
-    // exactly these: seeding off the array index instead would give the
+    // Each set keeps its stroke's real id. Only a brush needs it (as its
+    // jitter seed, see applyBrush in src/lib/brush.ts) — but it needs
+    // exactly this one: seeding off the array index instead would give the
     // preview a different scatter pattern than the compiled font, for the
     // same letter.
-    const strokeIds = glyphStrokes.map((s) => s.id);
+    const strokeSets = glyph.strokeIds
+      .map((id) => byId.get(id))
+      .filter((s): s is Stroke => Boolean(s))
+      .map((s) => ({ points: s.points, kind: s.kind, id: s.id }));
     // Only closed shapes are real geometry — an unfinished path has no fill,
     // same rule compileDocument() applies at export time.
     const glyphVectorShapes = (glyph.vectorShapeIds ?? [])
@@ -184,7 +186,7 @@ export function layoutText(
       // but a tagged glyph could in principle have lost its strokes), treat
       // the character as missing rather than crash on a null bbox.
       const bbox = bounds([
-        ...strokePointSets.flat().map((p) => [p[0], p[1]] as [number, number]),
+        ...strokeSets.flatMap((s) => s.points).map((p) => [p[0], p[1]] as [number, number]),
         // Vector shapes count as ink too — without them a glyph drawn ONLY
         // with the Vector tool has an empty bbox and gets treated as missing.
         ...glyphVectorShapes.flatMap((s) => flattenVectorShape(s)),
@@ -206,8 +208,7 @@ export function layoutText(
     entries.push({
       kind: "glyph",
       glyph,
-      strokePointSets,
-      strokeIds,
+      strokeSets,
       vectorShapes: glyphVectorShapes,
       scale,
       offsetX,

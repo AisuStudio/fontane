@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { layoutText } from "@/lib/layoutText";
 import { outlineToPath, outlineToSharpPath, type PathCommand } from "@/lib/contour";
-import { applyBrush, type BrushOptions, type BrushOutput } from "@/lib/brush";
+import { applyBrush, applyCalligraphy, type BrushOptions, type BrushOutput } from "@/lib/brush";
 import { loadGlyphs, type Glyph } from "@/lib/glyphs";
-import { loadStrokes, type Stroke, type StrokePoint } from "@/lib/strokes";
+import { loadStrokes, type Stroke, type StrokeKind, type StrokePoint } from "@/lib/strokes";
+import { type Nib } from "@/lib/calligraphy";
 import { loadMetrics, type Metrics } from "@/lib/metrics";
 import { loadSettings, type StrokeSettings } from "@/lib/settings";
 
@@ -39,8 +40,23 @@ function optionsFor(settings: StrokeSettings): BrushOptions {
   };
 }
 
+function nibFor(settings: StrokeSettings): Nib {
+  return { size: settings.nibSize, ratio: settings.nibRatio, angle: settings.nibAngle };
+}
+
+// Both widths scale on the same factor, so the wght axis reads as weight for
+// nib-drawn glyphs too — a stroke only ever uses one of the two.
 function effectiveSettingsFor(settings: StrokeSettings, scale: number): StrokeSettings {
-  return scale === 1 ? settings : { ...settings, size: settings.size * scale };
+  return scale === 1 ? settings : { ...settings, size: settings.size * scale, nibSize: settings.nibSize * scale };
+}
+
+// Same dispatch as page.tsx's outlineFor: the drawing tool decides the
+// outline (calligraphy keeps its nib), everything else goes through the
+// active brush, seeded per stroke id so the axes reshape a scatter-brushed
+// glyph without rerolling its stamp pattern.
+function outlineFor(points: StrokePoint[], settings: StrokeSettings, kind: StrokeKind | undefined, seedKey: string): BrushOutput {
+  if (kind === "calligraphy") return applyCalligraphy(points, nibFor(settings));
+  return applyBrush(points, optionsFor(settings), seedKey);
 }
 
 function applyPath(ctx: CanvasRenderingContext2D, commands: PathCommand[]) {
@@ -90,10 +106,10 @@ export default function VfLab() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      // Each set carries the id of the stroke it came from, so the wght/wdth
-      // axes reshape a scatter-brushed glyph without also rerolling its
-      // stamp pattern (see applyBrush's seedKey).
-      type GlyphSet = { points: StrokePoint[]; seed: string };
+      // Each set carries the id of the stroke it came from (the brush's
+      // deterministic seed, see applyBrush) and the kind of tool that drew
+      // it, which picks its outline generator.
+      type GlyphSet = { points: StrokePoint[]; kind?: StrokeKind; seed: string };
       type Line = { y: number; height: number; glyphSets: GlyphSet[] };
       const lines: Line[] = [];
       let lineY = TOP_PADDING;
@@ -103,16 +119,17 @@ export default function VfLab() {
         const glyphSets: GlyphSet[] = [];
         for (const entry of layout.entries) {
           if (entry.kind !== "glyph") continue;
-          entry.strokePointSets.forEach((strokePoints, i) => {
+          for (const set of entry.strokeSets) {
             glyphSets.push({
-              seed: entry.strokeIds[i] ?? `${entry.glyph.name}:${i}`,
-              points: strokePoints.map((p) => [
+              seed: set.id,
+              points: set.points.map((p) => [
                 p[0] * entry.scale + entry.offsetX,
                 p[1] * entry.scale + entry.offsetY,
                 p[2],
               ]),
+              kind: set.kind,
             });
-          });
+          }
         }
         lines.push({ y: lineY, height: layout.height, glyphSets });
         maxLineWidth = Math.max(maxLineWidth, layout.width);
@@ -152,13 +169,13 @@ export default function VfLab() {
         ctx.translate(LEFT_MARGIN, baseY);
         ctx.transform(wdthF, 0, -shear, 1, 0, 0);
         ctx.translate(-LEFT_MARGIN, -baseY);
-        for (const { points, seed } of line.glyphSets) {
+        for (const { points, kind, seed } of line.glyphSets) {
           const transformed: StrokePoint[] = points.map((p) => [
             (p[0] + LEFT_MARGIN) * SIZE_FACTOR,
             (p[1] + line.y) * SIZE_FACTOR,
             p[2],
           ]);
-          fillOutline(ctx, applyBrush(transformed, optionsFor(penSettings), seed));
+          fillOutline(ctx, outlineFor(transformed, penSettings, kind, seed));
         }
         ctx.restore();
       }
