@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check:analytics": "tsc -p tsconfig.check.json && node .analytics-check/app/anneliese/aggregate.check.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
