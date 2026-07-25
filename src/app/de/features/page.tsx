@@ -54,7 +54,7 @@ const jsonLd = {
     "Kompakter, kontextbezogener Arbeitsbereich: Illustrator-artige Werkzeuggruppen-Flyouts und eine Glyphs-artige Einstellungs-Palette, die nur zeigt, was das aktive Werkzeug nutzt",
     "Zeichensatz-Bibliothek: Latin Basic, mittel- und westeuropäische Akzente, Kyrillisch, Griechisch, Interpunktion sowie Währungs- und Mathe-Symbole",
     "Ligaturen exportieren mit einer echten, automatischen OpenType-liga-Regel — die Ligatur löst von selbst aus, in Apps, die das Feature respektieren",
-    "Stilistische Alternates exportieren als eigene benannte Glyphen zur manuellen Auswahl in einer Glyphen-Palette",
+    "Stilistische Alternates exportieren als eigene benannte Glyphen zur manuellen Auswahl in einer Glyphen-Palette — und wenn ein Buchstabe unmittelbar wiederholt, tauscht eine echte OpenType-calt-Regel automatisch die Alternate ein, damit er nicht zweimal identisch gestempelt wirkt",
     "Striche und Vektorformen kopieren und einfügen innerhalb von Free Draw, innerhalb von Grid, und zwischen beiden",
     "Verschieben-, Drehen- und Skalieren-Werkzeuge zum Umformen und Neupositionieren gezeichneter Buchstaben",
     "Illustrator-artige kurzzeitige Auswahl: Cmd (oder Ctrl) halten, während Draw, Brush, Kalligrafie oder Radierer aktiv ist, um Striche per Lasso auszuwählen — loslassen, und du zeichnest mit demselben Werkzeug weiter",
@@ -139,7 +139,7 @@ const SECTIONS: Section[] = [
       },
       {
         name: "Ligaturen & Alternates",
-        description: "Markiere eine gezeichnete Form als Ligatur (z. B. 'fi'), und sie exportiert mit einer echten, automatischen OpenType-liga-Regel — die Ligatur löst von selbst aus, in Apps, die das Feature respektieren. Stilistische Alternates exportieren als eigene benannte Glyphen zur manuellen Auswahl in einer Glyphen-Palette.",
+        description: "Markiere eine gezeichnete Form als Ligatur (z. B. 'fi'), und sie exportiert mit einer echten, automatischen OpenType-liga-Regel — die Ligatur löst von selbst aus, in Apps, die das Feature respektieren. Stilistische Alternates exportieren als eigene benannte Glyphen zur manuellen Auswahl — und zusätzlich als automatische Abwechslung: zeichne eine Alternate zu einem Buchstaben, und eine echte calt-Regel tauscht sie automatisch ein, sobald der Buchstabe unmittelbar wiederholt, damit handgezeichneter Text nicht wie gestempelt wirkt.",
       },
       {
         name: "Eigene Glyphen",

@@ -178,10 +178,18 @@ function glyphNameFor(entry: CompiledGlyph): string {
 // @types/opentype.js mistypes Font.substitution as `(font: Font) => any`
 // (a stale/wrong guess — the real runtime object, straight from opentype.js's
 // own source, is a Substitution instance with add/addLigature/addSingle/
-// addAlternate/getFeature methods). This is the real shape of the one method
-// this file actually calls.
+// addAlternate/getFeature/getTable/getLookupTables methods, all confirmed by
+// reading the actual library source, not the type package). This is the real
+// shape of the methods this file actually calls — getTable/getLookupTables
+// are the lower-level Layout-class methods (Substitution extends Layout)
+// needed for calt below, since there's no high-level add() case for
+// chaining-context lookups the way there is for liga.
+type GsubCoverage = { format: 1; glyphs: number[] };
+type GsubLookup = { lookupType: number; lookupFlag: number; subtables: unknown[] };
 type SubstitutionApi = {
   add(feature: string, sub: { sub: number[]; by: number }, script?: string, language?: string): void;
+  getTable(create: boolean): { lookups: GsubLookup[] };
+  getLookupTables(script: string | undefined, language: string | undefined, feature: string, lookupType: number, create: boolean): GsubLookup[];
 };
 
 // Wires up a real GSUB 'liga' feature (LookupType 4, Ligature Substitution)
@@ -202,6 +210,68 @@ function wireLigatures(font: Font, doc: CompiledDocument, nameToIndex: Map<strin
     const componentIndices = entry.components.map((name) => nameToIndex.get(name));
     if (ligatureIndex == null || componentIndices.some((i) => i == null)) continue; // a component glyph isn't in this export — skip rather than guess
     substitution.add("liga", { sub: componentIndices as number[], by: ligatureIndex });
+  }
+}
+
+// Wires up a real GSUB 'calt' feature so a base letter drawn with at least
+// one stylistic alternate doesn't render as an identical stamp every time it
+// repeats — the classic hand-lettering-font trick, and the actual reason
+// this matters more for a handwriting tool than kerning does: two identical
+// "e"s side by side read as mechanical in a way imprecise spacing never
+// does. Scope, deliberately minimal for a first version: only catches the
+// immediate doubled case ("ee" -> "e" + first alternate of "e"), not a full
+// cycle through every alternate — that's a straightforward extension of the
+// same mechanism (one more chaining subtable per step), not a different one.
+//
+// No high-level Substitution.add() case exists for chaining-context lookups
+// (LookupType 6) the way there is for liga, so this uses the lower-level
+// Layout methods (getTable/getLookupTables) both classes share, matching
+// exactly the shape opentype.js's own GSUB parser/writer expect for a Format
+// 3 (coverage-based) chaining context subtable: one glyph of backtrack (the
+// glyph immediately before), one glyph of input (the repeat that should
+// change), and a lookupRecord pointing at a plain single-substitution lookup
+// (added to the lookup list but deliberately never registered under any
+// feature of its own — chaining context is the only thing that ever invokes
+// it, exactly like real-world calt implementations).
+//
+// Must run BEFORE wireLigatures: opentype.js's feature table requires
+// features to be added in alphabetical tag order ("calt" < "liga"), and
+// getFeatureTable() asserts that order when creating a new entry.
+function wireContextualAlternates(font: Font, doc: CompiledDocument, nameToIndex: Map<string, number>) {
+  const alternatesByBase = new Map<string, string[]>();
+  for (const entry of doc.glyphs) {
+    if (entry.kind === "alternate" && entry.alternateOf) {
+      const list = alternatesByBase.get(entry.alternateOf) ?? [];
+      list.push(entry.name);
+      alternatesByBase.set(entry.alternateOf, list);
+    }
+  }
+  if (alternatesByBase.size === 0) return;
+
+  const gsub = font.substitution as unknown as SubstitutionApi;
+  const table = gsub.getTable(true);
+
+  for (const [baseName, altNames] of alternatesByBase) {
+    const baseIndex = nameToIndex.get(baseName);
+    const altIndex = nameToIndex.get(altNames[0]);
+    if (baseIndex == null || altIndex == null) continue;
+
+    const coverage: GsubCoverage = { format: 1, glyphs: [baseIndex] };
+    const actionLookupIndex = table.lookups.length;
+    table.lookups.push({
+      lookupType: 1,
+      lookupFlag: 0,
+      subtables: [{ substFormat: 2, coverage, substitute: [altIndex] }],
+    });
+
+    const [chainLookup] = gsub.getLookupTables("DFLT", "dflt", "calt", 6, true);
+    chainLookup.subtables.push({
+      substFormat: 3,
+      backtrackCoverage: [coverage],
+      inputCoverage: [coverage],
+      lookaheadCoverage: [],
+      lookupRecords: [{ sequenceIndex: 0, lookupListIndex: actionLookupIndex }],
+    });
   }
 }
 
@@ -252,6 +322,7 @@ export function buildFont(doc: CompiledDocument, familyName = "Fontane Sketch", 
     glyphs,
   });
 
+  wireContextualAlternates(font, doc, nameToIndex); // must run before wireLigatures — alphabetical feature-tag order
   wireLigatures(font, doc, nameToIndex);
 
   return font;

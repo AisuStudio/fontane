@@ -54,7 +54,7 @@ const jsonLd = {
     "Compact, context-aware workspace: Illustrator-style tool-group flyouts and a Glyphs-style settings palette that shows only what the active tool uses",
     "Character set library: Latin Basic, Central European and Western European accents, Cyrillic, Greek, punctuation, and currency/math symbols",
     "Ligatures export with a real, automatic OpenType liga substitution — type the letters and the ligature triggers on its own in apps that respect the feature",
-    "Stylistic alternates export as their own named glyphs for manual selection in a glyph panel",
+    "Stylistic alternates export as their own named glyphs for manual selection in a glyph panel — and if a letter repeats back to back, a real OpenType calt rule automatically swaps in its alternate so it doesn't stamp identically twice",
     "Copy and paste strokes and vector shapes within Free Draw, within Grid, and between the two",
     "Move, rotate, and scale tools for reshaping and repositioning drawn letters",
     "Illustrator-style momentary Select: hold Cmd (or Ctrl) while Draw, Brush, Calligraphy, or Eraser is active to lasso-select strokes, release to keep drawing with the same tool",
@@ -139,7 +139,7 @@ const SECTIONS: Section[] = [
       },
       {
         name: "Ligatures & alternates",
-        description: "Tag a drawn shape as a ligature (e.g. 'fi') and it exports with a real, automatic OpenType liga rule — the ligature triggers on its own in apps that respect the feature. Stylistic alternates export as their own named glyphs, for manual selection in a glyph panel.",
+        description: "Tag a drawn shape as a ligature (e.g. 'fi') and it exports with a real, automatic OpenType liga rule — the ligature triggers on its own in apps that respect the feature. Stylistic alternates export as their own named glyphs for manual selection, and double as automatic variety: draw one alternate for a letter and a real calt rule swaps it in whenever that letter repeats back to back, so hand-drawn text doesn't read as a stamped-out font.",
       },
       {
         name: "Custom glyphs",
