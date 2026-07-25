@@ -10,7 +10,16 @@ import type { StrokeKind, StrokePoint } from "@/lib/strokes";
 import type { Metrics } from "@/lib/metrics";
 import { unicodeFor } from "@/lib/glyphs";
 import { setClipboard, getClipboard, type ClipboardStroke } from "@/lib/clipboard";
-import { isSmoothAnchor, alignOppositeHandle, type BezierAnchor, type VectorShape } from "@/lib/vectorShapes";
+import {
+  isSmoothAnchor,
+  alignOppositeHandle,
+  constrainTo45,
+  toggleAnchorSmooth,
+  type BezierAnchor,
+  type VectorShape,
+} from "@/lib/vectorShapes";
+import { initHeldKeys, getHeldKeys } from "@/lib/heldKeys";
+import { PEN, PEN_ADD, PEN_MINUS, PEN_CLOSE, PEN_CONTINUE, CONVERT, PEN_ANCHOR_CLICK } from "@/lib/cursors";
 
 export type StrokeOptions = { size: number; thinning: number; smoothing: number; streamline: number };
 export type CellTool =
@@ -576,6 +585,10 @@ export default function GridCell({
   }
 
   useEffect(() => {
+    // Idempotent singleton (heldKeys.ts) — N cells all call this, one
+    // registration; the vector handlers below read live modifier state from
+    // it mid-gesture, same as the Free canvas.
+    initHeldKeys();
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -843,8 +856,15 @@ export default function GridCell({
     // different existing shape's anchor/curve (or on empty space with nothing
     // active) starts/switches the editing session onto it. Straight port of
     // Free's handleVectorPointerDown.
-    function handleVectorPointerDown(x: number, y: number, altKey: boolean, tool: CellTool) {
-      if (tool !== "vector") {
+    //
+    // `directSelect` (Cmd/Ctrl held) is Illustrator's momentary Direct
+    // Selection tool, for the WHOLE pen family: existing geometry stays
+    // grabbable (the handle-hit and anchor-drag branches below), but nothing
+    // new can happen — close-path, segment-insert, append-anchor and
+    // new-shape creation are all skipped, so a Cmd-click on empty space is a
+    // no-op.
+    function handleVectorPointerDown(x: number, y: number, altKey: boolean, tool: CellTool, directSelect: boolean) {
+      if (tool !== "vector" && !directSelect) {
         handleVectorAnchorToolPointerDown(x, y, tool);
         return;
       }
@@ -863,7 +883,7 @@ export default function GridCell({
             return;
           }
 
-          if (!shape.closed && shape.anchors.length >= 3) {
+          if (!directSelect && !shape.closed && shape.anchors.length >= 3) {
             const first = shape.anchors[0];
             if (Math.hypot(x - first.x, y - first.y) <= ANCHOR_HIT_PX) {
               shape.closed = true;
@@ -889,14 +909,27 @@ export default function GridCell({
             return;
           }
 
-          const segHit = vectorSegmentHit(shape, x, y);
-          if (segHit) {
-            insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
-            return;
+          if (!directSelect) {
+            const segHit = vectorSegmentHit(shape, x, y);
+            if (segHit) {
+              insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
+              return;
+            }
           }
 
           if (!shape.closed) {
-            shape.anchors = [...shape.anchors, { x, y }];
+            // Direct-select never extends the path — with nothing grabbable
+            // under the cursor the click is a no-op, and the open session
+            // survives untouched.
+            if (directSelect) return;
+            // Shift-click = Illustrator's 45°-constrained segment: the new
+            // anchor lands snapped around the PREVIOUS anchor; a drag that
+            // follows constrains its handles separately (see
+            // handleVectorPointerMove). Read live from heldKeys so the
+            // signature stays identical to Free's copy.
+            const prev = shape.anchors[shape.anchors.length - 1];
+            const pt = getHeldKeys().shift ? constrainTo45(prev.x, prev.y, x, y) : { x, y };
+            shape.anchors = [...shape.anchors, { x: pt.x, y: pt.y }];
             draggingHandleRef.current = { anchorIndex: shape.anchors.length - 1, which: "handleOut" };
             placingNewAnchorRef.current = true;
             vectorDragStartRef.current = { x, y };
@@ -905,8 +938,10 @@ export default function GridCell({
           }
 
           // Closed shape, click elsewhere on it: stop editing, fall through to
-          // check other shapes / empty space below.
-          editingShapeIdRef.current = null;
+          // check other shapes / empty space below. Direct-select instead
+          // keeps the session — deselecting is not what a missed Cmd-grab
+          // should do.
+          if (!directSelect) editingShapeIdRef.current = null;
         }
       }
 
@@ -933,13 +968,18 @@ export default function GridCell({
           vectorDragStartRef.current = { x, y };
           return;
         }
-        const segHit = vectorSegmentHit(shape, x, y);
-        if (segHit) {
-          editingShapeIdRef.current = shape.id;
-          insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
-          return;
+        if (!directSelect) {
+          const segHit = vectorSegmentHit(shape, x, y);
+          if (segHit) {
+            editingShapeIdRef.current = shape.id;
+            insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
+            return;
+          }
         }
       }
+
+      // Direct-select on empty space: a no-op, never a fresh path.
+      if (directSelect) return;
 
       const newShape: VectorShape = {
         id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
@@ -965,15 +1005,19 @@ export default function GridCell({
       if (draggingHandleRef.current) {
         const { anchorIndex, which } = draggingHandleRef.current;
         const anchor = shape.anchors[anchorIndex];
+        // Shift = Illustrator's 45° constraint, read live (heldKeys) so it
+        // can be pressed/released mid-drag: the dragged handle snaps around
+        // its own anchor, whichever of the two branches below is running.
+        const p = getHeldKeys().shift ? constrainTo45(anchor.x, anchor.y, x, y) : { x, y };
         if (placingNewAnchorRef.current) {
           // Symmetric: dragging out from a freshly-placed anchor (or from a
           // corner with the Convert tool) sets both handles at once, mirrored
           // — that IS a smooth curve point, so record it as one.
-          anchor.handleOut = { x, y };
-          anchor.handleIn = { x: anchor.x - (x - anchor.x), y: anchor.y - (y - anchor.y) };
+          anchor.handleOut = { x: p.x, y: p.y };
+          anchor.handleIn = { x: anchor.x - (p.x - anchor.x), y: anchor.y - (p.y - anchor.y) };
           anchor.smooth = true;
         } else {
-          anchor[which] = { x, y };
+          anchor[which] = { x: p.x, y: p.y };
           // Illustrator's tangent continuity on a smooth point: the opposite
           // handle swings to stay collinear but keeps its own length. A corner
           // (including one just broken by Alt or the Convert tool, which
@@ -1034,6 +1078,11 @@ export default function GridCell({
             anchor.handleOut = undefined;
             anchor.smooth = false;
             commitVectorShapes();
+          } else if (PEN_ANCHOR_CLICK === "delete") {
+            // Dormant behind cursors.ts's flag (the user chose "select"):
+            // Glyphs' click-deletes-anchor variant, kept wired so flipping
+            // the constant is the whole change.
+            deleteVectorAnchorAt(shape.id, index);
           }
         } else {
           commitVectorShapes();
@@ -1044,6 +1093,52 @@ export default function GridCell({
       draggingVectorAnchorRef.current = null;
       placingNewAnchorRef.current = false;
       vectorDragStartRef.current = null;
+    }
+
+    // Glyphs' double-click parity: toggle the anchor under the cursor between
+    // smooth and corner (see toggleAnchorSmooth) without reaching for the
+    // Convert tool. The dblclick's two constituent clicks have already run
+    // the normal pointer path — a known, acceptable quirk: the toggle lands
+    // last and wins. Mirrors Free's handleVectorDblClick, persisting through
+    // this cell's commit path instead of saveVectorShapes.
+    function handleVectorDblClick(x: number, y: number) {
+      if (!VECTOR_TOOLS.has(toolRef.current)) return;
+      for (let i = vectorShapesRef.current.length - 1; i >= 0; i--) {
+        const shape = vectorShapesRef.current[i];
+        const anchorHit = vectorAnchorNear(shape, x, y);
+        if (anchorHit === null) continue;
+        if (toggleAnchorSmooth(shape.anchors[anchorHit])) {
+          commitVectorShapes();
+          redraw();
+        }
+        return;
+      }
+    }
+
+    // Hover-contextual pen cursor (cursors.ts): what WOULD a click do right
+    // here? Mirrors handleVectorPointerDown's branch order — close beats
+    // continue beats plain anchor beats segment-insert — so the badge never
+    // promises something the click won't deliver. Cmd/Ctrl flips the whole
+    // family into direct-select, hence the plain arrow. Local copy of Free's
+    // vectorHoverCursor, on this cell's own hit-testers.
+    function vectorHoverCursor(x: number, y: number): string {
+      const held = getHeldKeys();
+      if (held.meta || held.ctrl) return "default";
+      const editing = vectorShapesRef.current.find((s) => s.id === editingShapeIdRef.current);
+      for (let i = vectorShapesRef.current.length - 1; i >= 0; i--) {
+        const shape = vectorShapesRef.current[i];
+        const anchorHit = vectorAnchorNear(shape, x, y);
+        if (anchorHit === null) continue;
+        if (editing && shape.id === editing.id && !editing.closed) {
+          if (anchorHit === 0 && shape.anchors.length >= 3) return PEN_CLOSE;
+          if (anchorHit === shape.anchors.length - 1) return PEN_CONTINUE;
+        }
+        // Alt over a smooth point = the cusp-break gesture (Convert's caret).
+        if (held.alt && isSmoothAnchor(shape.anchors[anchorHit])) return CONVERT;
+        return PEN_ANCHOR_CLICK === "delete" ? PEN_MINUS : "default";
+      }
+      if (editing && vectorSegmentHit(editing, x, y)) return PEN_ADD;
+      return PEN;
     }
 
     // Move/Rotate/Scale click: must land on an already-selected stroke
@@ -1167,7 +1262,9 @@ export default function GridCell({
       // them fight over a click near a guide would make the guides
       // undraggable in Vector mode.
       if (VECTOR_TOOLS.has(toolRef.current)) {
-        handleVectorPointerDown(x, y, e.altKey, toolRef.current);
+        // Cmd/Ctrl = Illustrator's momentary direct-select, see
+        // handleVectorPointerDown.
+        handleVectorPointerDown(x, y, e.altKey, toolRef.current, e.metaKey || e.ctrlKey);
         redraw();
         return;
       }
@@ -1222,11 +1319,9 @@ export default function GridCell({
         // Bearing hover keeps priority for the same reason pointerdown checks
         // bearings first — without the ew-resize hint the ±8px grab zone
         // around a guide would look like plain canvas to place an anchor in.
-        canvas!.style.cursor = bearingNear(x, canvas!.clientWidth)
-          ? "ew-resize"
-          : editingShapeIdRef.current
-            ? "crosshair"
-            : "pointer";
+        // Below that, the hover-contextual pen cursor (Illustrator parity)
+        // replaces the old crosshair/pointer pair.
+        canvas!.style.cursor = bearingNear(x, canvas!.clientWidth) ? "ew-resize" : vectorHoverCursor(x, y);
         return;
       }
       if (transformStartRef.current) {
@@ -1392,6 +1487,28 @@ export default function GridCell({
         return;
       }
 
+      // Esc/Enter = Illustrator's end-the-path, the same branch page.tsx's
+      // keyboard handler grows for the Free canvas: the shape stays exactly
+      // as drawn (an open path stays open, resumable by clicking it), only
+      // this cell's editing session ends. Focus-gated to the cell the user
+      // actually clicked into — the file's existing Paste convention — since
+      // every cell shares this window-level listener.
+      if (
+        (e.key === "Escape" || e.key === "Enter") &&
+        document.activeElement === canvas &&
+        editingShapeIdRef.current
+      ) {
+        e.preventDefault();
+        editingShapeIdRef.current = null;
+        draggingVectorAnchorRef.current = null;
+        draggingHandleRef.current = null;
+        placingNewAnchorRef.current = false;
+        vectorDragStartRef.current = null;
+        commitVectorShapes();
+        redraw();
+        return;
+      }
+
       if (selectedIdsRef.current.size === 0) return;
       if (e.key !== "Delete" && e.key !== "Backspace") return;
       const target = e.target as HTMLElement | null;
@@ -1402,10 +1519,19 @@ export default function GridCell({
       redraw();
     }
 
+    // Same pan-free coordinate math as pointFromEvent — the dblclick's two
+    // constituent clicks have already run the normal pointer path (see
+    // handleVectorDblClick).
+    function onDblClick(e: MouseEvent) {
+      const rect = canvas!.getBoundingClientRect();
+      handleVectorDblClick(e.clientX - rect.left, e.clientY - rect.top);
+    }
+
     canvas.addEventListener("pointerdown", onPointerDown);
     canvas.addEventListener("pointermove", onPointerMove);
     canvas.addEventListener("pointerup", onPointerUp);
     canvas.addEventListener("pointercancel", onPointerUp);
+    canvas.addEventListener("dblclick", onDblClick);
     window.addEventListener("keydown", onKeyDown);
 
     return () => {
@@ -1414,6 +1540,7 @@ export default function GridCell({
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("pointercancel", onPointerUp);
+      canvas.removeEventListener("dblclick", onDblClick);
       window.removeEventListener("keydown", onKeyDown);
     };
     // Mount once per cell; outlines/onStrokeComplete/metrics/bearings are read

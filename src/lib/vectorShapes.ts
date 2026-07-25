@@ -73,6 +73,40 @@ export function alignOppositeHandle(anchor: BezierAnchor, which: "handleIn" | "h
   };
 }
 
+// Illustrator's Shift constraint: snap the direction from origin (ox, oy) to
+// (x, y) onto the nearest multiple of 45°, preserving the distance. Pure —
+// both canvases apply it to whatever position is being dragged (a handle
+// around its anchor, a Shift-clicked new anchor around the previous one)
+// without caring which.
+export function constrainTo45(ox: number, oy: number, x: number, y: number): BezierPoint {
+  const dx = x - ox;
+  const dy = y - oy;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return { x, y };
+  const step = Math.PI / 4;
+  const snapped = Math.round(Math.atan2(dy, dx) / step) * step;
+  return { x: ox + Math.cos(snapped) * len, y: oy + Math.sin(snapped) * len };
+}
+
+// Glyphs' double-click parity: flip an anchor between smooth and corner in
+// place. A smooth point simply loses tangent continuity (handles stay where
+// they are, they just move independently from now on); a corner that still
+// has BOTH handles becomes smooth again, swinging handleIn collinear to
+// handleOut while keeping its own length (alignOppositeHandle — the same
+// tangent rule a smooth-point drag enforces). A corner without both handles
+// is left alone — pulling handles out of nothing stays the Convert tool's
+// job. Returns whether anything changed, so callers know whether to persist.
+export function toggleAnchorSmooth(anchor: BezierAnchor): boolean {
+  if (isSmoothAnchor(anchor)) {
+    anchor.smooth = false;
+    return true;
+  }
+  if (!anchor.handleIn || !anchor.handleOut) return false;
+  anchor.smooth = true;
+  alignOppositeHandle(anchor, "handleOut");
+  return true;
+}
+
 export type VectorShape = {
   id: string;
   anchors: BezierAnchor[];

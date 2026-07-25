@@ -25,11 +25,15 @@ import {
   clearVectorShapes,
   isSmoothAnchor,
   alignOppositeHandle,
+  constrainTo45,
+  toggleAnchorSmooth,
   type VectorShape,
   type BezierAnchor,
   type BezierPoint,
 } from "@/lib/vectorShapes";
 import { setClipboard, getClipboard, type ClipboardStroke, type ClipboardShape } from "@/lib/clipboard";
+import { initHeldKeys, getHeldKeys } from "@/lib/heldKeys";
+import { PEN, PEN_ADD, PEN_MINUS, PEN_CLOSE, PEN_CONTINUE, CONVERT, PEN_ANCHOR_CLICK } from "@/lib/cursors";
 import { simplifyStrokeIndices } from "@/lib/simplify";
 import { buildFont, downloadFont } from "@/lib/exportFont";
 import { downloadSkeletonSvg } from "@/lib/exportSkeleton";
@@ -150,12 +154,13 @@ const FREE_ONLY_TOOLS = new Set<DrawTool>(["assign", "pan", "anchor"]);
 // Tools dropdown, AND the keyboard shortcuts below — one place to add a
 // tool so none of the three can drift out of sync with each other.
 // altShortcut is a second key that selects the same tool without being the one
-// advertised in the UI — only Add Anchor needs it, so "=" works on keyboards
-// where "+" costs a Shift (Illustrator's own convention).
+// advertised in the UI — Add Anchor's "=" works on keyboards where "+" costs
+// a Shift (Illustrator's own convention), and Vector keeps "v" as a muscle-
+// memory alias from before it moved to Illustrator's own P.
 type ToolDef = { value: DrawTool; label: string; icon: typeof Brush; shortcut: string; altShortcut?: string };
 const TOOL_DEFS: ToolDef[] = [
   { value: "pen", label: "Draw", icon: Pencil, shortcut: "b" },
-  { value: "vector", label: "Vector", icon: PenTool, shortcut: "v" },
+  { value: "vector", label: "Vector", icon: PenTool, shortcut: "p", altShortcut: "v" },
   // Illustrator's Pen submenu, in its order: add / delete / convert.
   { value: "vectorAdd", label: "Add Anchor", icon: CirclePlus, shortcut: "+", altShortcut: "=" },
   { value: "vectorDelete", label: "Delete Anchor", icon: CircleMinus, shortcut: "-" },
@@ -164,7 +169,8 @@ const TOOL_DEFS: ToolDef[] = [
   { value: "eraser", label: "Erase", icon: Eraser, shortcut: "e" },
   { value: "select", label: "Select", icon: Lasso, shortcut: "l" },
   { value: "nudge", label: "Nudge", icon: SplinePointer, shortcut: "n" },
-  { value: "anchor", label: "Anchor", icon: MousePointer2, shortcut: "p" },
+  // "d" (Direct-ish) — Anchor gave its old "p" to Vector, Illustrator's Pen key.
+  { value: "anchor", label: "Anchor", icon: MousePointer2, shortcut: "d" },
   { value: "move", label: "Move", icon: Move, shortcut: "m" },
   { value: "rotate", label: "Rotate", icon: RotateCw, shortcut: "r" },
   { value: "scale", label: "Scale", icon: Scaling, shortcut: "s" },
@@ -645,6 +651,12 @@ export default function Home() {
   // rather than another dropdown, since this content is paragraph-length,
   // not a short action list.
   const [infoModal, setInfoModal] = useState<"info" | "howto" | null>(null);
+  // Ref twin for the mount-once keyboard effect below — its Esc/Enter
+  // end-vector-session branch must yield to the modal's own Escape closer.
+  const infoModalRef = useRef<"info" | "howto" | null>(null);
+  useEffect(() => {
+    infoModalRef.current = infoModal;
+  }, [infoModal]);
   // File > New File's "save first?" confirmation — same modal pattern as
   // infoModal, just a yes/no instead of paragraph content.
   const [confirmNewFile, setConfirmNewFile] = useState(false);
@@ -1009,6 +1021,19 @@ export default function Home() {
   // loop with the offset it's busy mutating.
   const panOffsetRef = useRef({ x: 0, y: 0 });
   const panDragStartRef = useRef<{ clientX: number; clientY: number; offsetX: number; offsetY: number } | null>(null);
+  // Space = momentary pan (Illustrator's spacebar hand). A ref the pointer
+  // handlers check FIRST, deliberately not setDrawTool("pan") — the
+  // [drawTool] effect clears selection and ends editing sessions, exactly
+  // what a momentary pan must not do. Reuses the pan refs above; only the
+  // entry condition differs.
+  const spacePanRef = useRef(false);
+  // Last hover position in canvas space — lets an Alt/Meta press refresh the
+  // hover-contextual pen cursor without waiting for the next pointermove.
+  const lastPointerPosRef = useRef<{ x: number; y: number } | null>(null);
+  // Last cursor string written to the canvas — the pen cursors are ~1KB
+  // data-URI strings, so style.cursor is only rewritten when the value
+  // actually changes, not on every pointermove.
+  const lastCursorRef = useRef("");
 
   const [settings, setSettings] = useState<StrokeSettings>(() => loadSettings());
   const settingsRef = useRef(settings);
@@ -1391,6 +1416,20 @@ export default function Home() {
       canvas!.setPointerCapture(e.pointerId);
       const p = pointFromEvent(e);
       setHud({ pointerType: e.pointerType, pressure: e.pressure, x: Math.round(p[0]), y: Math.round(p[1]) });
+      // Space held = momentary pan (Illustrator's spacebar hand), whatever
+      // tool is active — same body as the Pan tool's own branch below, just
+      // entered via spacePanRef so no tool switch (and none of the working
+      // state a switch would clear) is involved.
+      if (spacePanRef.current) {
+        panDragStartRef.current = {
+          clientX: e.clientX,
+          clientY: e.clientY,
+          offsetX: panOffsetRef.current.x,
+          offsetY: panOffsetRef.current.y,
+        };
+        canvas!.style.cursor = "grabbing";
+        return;
+      }
       if (topModeRef.current === "draw" && drawToolRef.current === "eraser") {
         if (eraseAt(p[0], p[1])) trackToolUse("eraser");
         redraw();
@@ -1407,7 +1446,9 @@ export default function Home() {
         return;
       }
       if (topModeRef.current === "draw" && VECTOR_TOOLS.has(drawToolRef.current)) {
-        handleVectorPointerDown(p[0], p[1], e.altKey, drawToolRef.current);
+        // Cmd/Ctrl = Illustrator's momentary direct-select, see
+        // handleVectorPointerDown.
+        handleVectorPointerDown(p[0], p[1], e.altKey, drawToolRef.current, e.metaKey || e.ctrlKey);
         redraw();
         return;
       }
@@ -1461,6 +1502,25 @@ export default function Home() {
     function onPointerMove(e: PointerEvent) {
       const p = pointFromEvent(e);
       setHud({ pointerType: e.pointerType, pressure: e.pressure, x: Math.round(p[0]), y: Math.round(p[1]) });
+      // Remembered so a bare modifier press (no pointer movement) can
+      // re-derive the hover-contextual pen cursor at this same spot — see
+      // refreshVectorCursor in the heldKeys/space effect below.
+      lastPointerPosRef.current = { x: p[0], y: p[1] };
+      // Space-pan mirrors the Pan tool's own move branch below — drag if one
+      // is live, otherwise just show the hand.
+      if (spacePanRef.current) {
+        if (panDragStartRef.current) {
+          const start = panDragStartRef.current;
+          panOffsetRef.current = {
+            x: start.offsetX + (e.clientX - start.clientX),
+            y: start.offsetY + (e.clientY - start.clientY),
+          };
+          redraw();
+          return;
+        }
+        canvas!.style.cursor = "grab";
+        return;
+      }
       if (topModeRef.current === "draw" && drawToolRef.current === "eraser") {
         canvas!.style.cursor = "crosshair";
         return;
@@ -1486,7 +1546,14 @@ export default function Home() {
           handleVectorPointerMove(p[0], p[1]);
           return;
         }
-        canvas!.style.cursor = editingShapeIdRef.current ? "crosshair" : "pointer";
+        // Idle: hover-contextual pen cursor (Illustrator parity) instead of
+        // the old crosshair/pointer pair. Written only on change —
+        // lastCursorRef — since the data-URI strings are ~1KB each.
+        const nextCursor = vectorHoverCursor(p[0], p[1]);
+        if (lastCursorRef.current !== nextCursor) {
+          lastCursorRef.current = nextCursor;
+          canvas!.style.cursor = nextCursor;
+        }
         return;
       }
       if (topModeRef.current === "draw" && TRANSFORM_TOOLS.has(drawToolRef.current)) {
@@ -1522,6 +1589,14 @@ export default function Home() {
     }
 
     function onPointerUp(e: PointerEvent) {
+      // Space-pan release mirrors the Pan tool's own up branch below; the
+      // keyup handler covers the Space-lifted-mid-drag case instead.
+      if (spacePanRef.current) {
+        panDragStartRef.current = null;
+        canvas!.releasePointerCapture(e.pointerId);
+        redraw();
+        return;
+      }
       if (topModeRef.current === "draw" && drawToolRef.current === "nudge") {
         if (draggingAnchorRef.current !== null) {
           draggingAnchorRef.current = null;
@@ -1615,10 +1690,23 @@ export default function Home() {
       redraw();
     }
 
+    // Double-click needs the same pan-corrected canvas coordinates as
+    // pointFromEvent — its two constituent clicks have already run through
+    // the normal pointer path by the time this fires (see
+    // handleVectorDblClick for why that's fine).
+    function onDblClick(e: MouseEvent) {
+      const rect = canvas!.getBoundingClientRect();
+      handleVectorDblClick(
+        e.clientX - rect.left - panOffsetRef.current.x,
+        e.clientY - rect.top - panOffsetRef.current.y
+      );
+    }
+
     canvas.addEventListener("pointerdown", onPointerDown);
     canvas.addEventListener("pointermove", onPointerMove);
     canvas.addEventListener("pointerup", onPointerUp);
     canvas.addEventListener("pointercancel", onPointerUp);
+    canvas.addEventListener("dblclick", onDblClick);
 
     return () => {
       window.removeEventListener("resize", resize);
@@ -1626,6 +1714,7 @@ export default function Home() {
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("pointercancel", onPointerUp);
+      canvas.removeEventListener("dblclick", onDblClick);
     };
   }, []);
 
@@ -1687,6 +1776,10 @@ export default function Home() {
     currentPointsRef.current = [];
     lassoRef.current = [];
     if (!SELECTION_TOOLS.has(drawTool)) setSelectedIds([]);
+    // Other tools write style.cursor directly, so the vector hover cache
+    // (write-on-change only) would otherwise believe its last value is still
+    // on screen and skip restoring it.
+    lastCursorRef.current = "";
     redrawRef.current();
   }, [drawTool]);
 
@@ -1909,9 +2002,97 @@ export default function Home() {
         deleteStrokes(new Set(selectedIdsRef.current));
         setSelectedIds([]);
       }
+      // Esc/Enter = Illustrator's end-the-path: the shape stays exactly as
+      // drawn (an open path stays open, resumable by clicking it later — see
+      // exitVectorEditing), only the editing session ends so the next click
+      // starts a fresh path instead of extending this one. Yields to the
+      // Info/How-to modal's own Escape closer while that is open.
+      else if (
+        (e.key === "Escape" || e.key === "Enter") &&
+        VECTOR_TOOLS.has(drawToolRef.current) &&
+        editingShapeIdRef.current &&
+        !infoModalRef.current
+      ) {
+        e.preventDefault();
+        exitVectorEditing();
+        redrawRef.current();
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  // Held-modifier singleton (heldKeys.ts — shared with every GridCell) plus
+  // the two behaviors that hang off bare key presses rather than pointer
+  // events: Space = momentary pan, and Alt/Meta/Ctrl refreshing the
+  // hover-contextual pen cursor in place. initHeldKeys() runs first so its
+  // own listeners are registered before these — getHeldKeys() is already
+  // current by the time refreshVectorCursor reads it.
+  useEffect(() => {
+    initHeldKeys();
+
+    // Re-derive the pen cursor at the LAST hover position when a modifier
+    // changes with the mouse still — Illustrator flips the cursor the moment
+    // Cmd or Alt goes down, not on the next accidental jiggle.
+    function refreshVectorCursor() {
+      const canvas = canvasRef.current;
+      const pos = lastPointerPosRef.current;
+      if (!canvas || !pos) return;
+      if (topModeRef.current !== "draw" || drawStyleRef.current !== "free") return;
+      if (!VECTOR_TOOLS.has(drawToolRef.current)) return;
+      // Mid-drag and space-pan cursors are owned by the pointer handlers.
+      if (draggingHandleRef.current || draggingVectorAnchorRef.current !== null) return;
+      if (spacePanRef.current) return;
+      const next = vectorHoverCursor(pos.x, pos.y);
+      if (lastCursorRef.current !== next) {
+        lastCursorRef.current = next;
+        canvas.style.cursor = next;
+      }
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Alt" || e.key === "Meta" || e.key === "Control") refreshVectorCursor();
+      if (e.code !== "Space") return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+      if (topModeRef.current !== "draw" || drawStyleRef.current !== "free") return;
+      // preventDefault on repeats too — held Space must never scroll the
+      // page mid-pan — but the ref/cursor writes only need doing once.
+      e.preventDefault();
+      if (e.repeat) return;
+      spacePanRef.current = true;
+      const canvas = canvasRef.current;
+      if (canvas) canvas.style.cursor = "grab";
+      lastCursorRef.current = "";
+    }
+
+    // Shared by keyup and window blur — Cmd+Tabbing away mid-pan would
+    // otherwise never deliver the Space keyup and leave the hand stuck on.
+    function endSpacePan() {
+      if (!spacePanRef.current) return;
+      spacePanRef.current = false;
+      // A drag still live when Space lifts commits where it is —
+      // panOffsetRef is already current, only the gesture bookkeeping and
+      // cursor need clearing.
+      panDragStartRef.current = null;
+      const canvas = canvasRef.current;
+      if (canvas) canvas.style.cursor = "";
+      lastCursorRef.current = "";
+    }
+
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.key === "Alt" || e.key === "Meta" || e.key === "Control") refreshVectorCursor();
+      if (e.code === "Space") endSpacePan();
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", endSpacePan);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", endSpacePan);
+    };
   }, []);
 
   // Dismiss an open menu-bar dropdown on any click outside the menu bar
@@ -2580,8 +2761,14 @@ export default function Home() {
   // different existing shape's anchor/curve (or on empty space with nothing
   // active) starts/switches the editing session onto it, exactly the
   // Nudge/Anchor tools' own convention.
-  function handleVectorPointerDown(x: number, y: number, altKey: boolean, tool: DrawTool) {
-    if (tool !== "vector") {
+  //
+  // `directSelect` (Cmd/Ctrl held) is Illustrator's momentary Direct
+  // Selection tool, for the WHOLE pen family: existing geometry stays
+  // grabbable (the handle-hit and anchor-drag branches below), but nothing
+  // new can happen — close-path, segment-insert, append-anchor and new-shape
+  // creation are all skipped, so a Cmd-click on empty space is a no-op.
+  function handleVectorPointerDown(x: number, y: number, altKey: boolean, tool: DrawTool, directSelect: boolean) {
+    if (tool !== "vector" && !directSelect) {
       handleVectorAnchorToolPointerDown(x, y, tool);
       return;
     }
@@ -2600,7 +2787,7 @@ export default function Home() {
           return;
         }
 
-        if (!shape.closed && shape.anchors.length >= 3) {
+        if (!directSelect && !shape.closed && shape.anchors.length >= 3) {
           const first = shape.anchors[0];
           if (Math.hypot(x - first.x, y - first.y) <= ANCHOR_HIT_PX) {
             shape.closed = true;
@@ -2628,14 +2815,27 @@ export default function Home() {
           return;
         }
 
-        const segHit = vectorSegmentHit(shape, x, y);
-        if (segHit) {
-          insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
-          return;
+        if (!directSelect) {
+          const segHit = vectorSegmentHit(shape, x, y);
+          if (segHit) {
+            insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
+            return;
+          }
         }
 
         if (!shape.closed) {
-          shape.anchors = [...shape.anchors, { x, y }];
+          // Direct-select never extends the path — with nothing grabbable
+          // under the cursor the click is a no-op, and the open session
+          // survives untouched.
+          if (directSelect) return;
+          // Shift-click = Illustrator's 45°-constrained segment: the new
+          // anchor lands snapped around the PREVIOUS anchor; a drag that
+          // follows constrains its handles separately (see
+          // handleVectorPointerMove). Read live from heldKeys so the
+          // signature stays identical to GridCell's copy.
+          const prev = shape.anchors[shape.anchors.length - 1];
+          const pt = getHeldKeys().shift ? constrainTo45(prev.x, prev.y, x, y) : { x, y };
+          shape.anchors = [...shape.anchors, { x: pt.x, y: pt.y }];
           draggingHandleRef.current = { anchorIndex: shape.anchors.length - 1, which: "handleOut" };
           placingNewAnchorRef.current = true;
           vectorDragStartRef.current = { x, y };
@@ -2645,8 +2845,10 @@ export default function Home() {
         }
 
         // Closed shape, click elsewhere on it: stop editing, fall through to
-        // check other shapes / empty space below.
-        editingShapeIdRef.current = null;
+        // check other shapes / empty space below. Direct-select instead
+        // keeps the session — deselecting is not what a missed Cmd-grab
+        // should do.
+        if (!directSelect) editingShapeIdRef.current = null;
       }
     }
 
@@ -2673,13 +2875,18 @@ export default function Home() {
         vectorDragStartRef.current = { x, y };
         return;
       }
-      const segHit = vectorSegmentHit(shape, x, y);
-      if (segHit) {
-        editingShapeIdRef.current = shape.id;
-        insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
-        return;
+      if (!directSelect) {
+        const segHit = vectorSegmentHit(shape, x, y);
+        if (segHit) {
+          editingShapeIdRef.current = shape.id;
+          insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
+          return;
+        }
       }
     }
+
+    // Direct-select on empty space: a no-op, never a fresh path.
+    if (directSelect) return;
 
     const newShape: VectorShape = {
       id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
@@ -2707,15 +2914,19 @@ export default function Home() {
     if (draggingHandleRef.current) {
       const { anchorIndex, which } = draggingHandleRef.current;
       const anchor = shape.anchors[anchorIndex];
+      // Shift = Illustrator's 45° constraint, read live (heldKeys) so it can
+      // be pressed/released mid-drag: the dragged handle snaps around its
+      // own anchor, whichever of the two branches below is running.
+      const p = getHeldKeys().shift ? constrainTo45(anchor.x, anchor.y, x, y) : { x, y };
       if (placingNewAnchorRef.current) {
         // Symmetric: dragging out from a freshly-placed anchor (or from a
         // corner with the Convert tool) sets both handles at once, mirrored —
         // that IS a smooth curve point, so record it as one.
-        anchor.handleOut = { x, y };
-        anchor.handleIn = { x: anchor.x - (x - anchor.x), y: anchor.y - (y - anchor.y) };
+        anchor.handleOut = { x: p.x, y: p.y };
+        anchor.handleIn = { x: anchor.x - (p.x - anchor.x), y: anchor.y - (p.y - anchor.y) };
         anchor.smooth = true;
       } else {
-        anchor[which] = { x, y };
+        anchor[which] = { x: p.x, y: p.y };
         // Illustrator's tangent continuity on a smooth point: the opposite
         // handle swings to stay collinear but keeps its own length. A corner
         // (including one just broken by Alt or the Convert tool, which
@@ -2776,6 +2987,11 @@ export default function Home() {
           anchor.handleOut = undefined;
           anchor.smooth = false;
           saveVectorShapes(vectorShapesRef.current);
+        } else if (PEN_ANCHOR_CLICK === "delete") {
+          // Dormant behind cursors.ts's flag (the user chose "select"):
+          // Glyphs' click-deletes-anchor variant, kept wired so flipping the
+          // constant is the whole change.
+          deleteVectorAnchorAt(shape.id, index);
         }
       } else {
         saveVectorShapes(vectorShapesRef.current);
@@ -2787,6 +3003,51 @@ export default function Home() {
     placingNewAnchorRef.current = false;
     vectorDragStartRef.current = null;
     redrawRef.current();
+  }
+
+  // Glyphs' double-click parity: toggle the anchor under the cursor between
+  // smooth and corner (see toggleAnchorSmooth) without reaching for the
+  // Convert tool. The dblclick's two constituent clicks have already run the
+  // normal pointer path (selecting the shape, possibly retracting a last
+  // anchor's handle) — a known, acceptable quirk: the toggle lands last and
+  // wins. Topmost shape first, same convention as every other vector hit-test.
+  function handleVectorDblClick(x: number, y: number) {
+    if (topModeRef.current !== "draw" || !VECTOR_TOOLS.has(drawToolRef.current)) return;
+    for (let i = vectorShapesRef.current.length - 1; i >= 0; i--) {
+      const shape = vectorShapesRef.current[i];
+      const anchorHit = vectorAnchorNear(shape, x, y);
+      if (anchorHit === null) continue;
+      if (toggleAnchorSmooth(shape.anchors[anchorHit])) {
+        saveVectorShapes(vectorShapesRef.current);
+        redrawRef.current();
+      }
+      return;
+    }
+  }
+
+  // Hover-contextual pen cursor (cursors.ts): what WOULD a click do right
+  // here? Mirrors handleVectorPointerDown's branch order — close beats
+  // continue beats plain anchor beats segment-insert — so the badge never
+  // promises something the click won't deliver. Cmd/Ctrl flips the whole
+  // family into direct-select, hence the plain arrow.
+  function vectorHoverCursor(x: number, y: number): string {
+    const held = getHeldKeys();
+    if (held.meta || held.ctrl) return "default";
+    const editing = vectorShapesRef.current.find((s) => s.id === editingShapeIdRef.current);
+    for (let i = vectorShapesRef.current.length - 1; i >= 0; i--) {
+      const shape = vectorShapesRef.current[i];
+      const anchorHit = vectorAnchorNear(shape, x, y);
+      if (anchorHit === null) continue;
+      if (editing && shape.id === editing.id && !editing.closed) {
+        if (anchorHit === 0 && shape.anchors.length >= 3) return PEN_CLOSE;
+        if (anchorHit === shape.anchors.length - 1) return PEN_CONTINUE;
+      }
+      // Alt over a smooth point = the cusp-break gesture (Convert's caret).
+      if (held.alt && isSmoothAnchor(shape.anchors[anchorHit])) return CONVERT;
+      return PEN_ANCHOR_CLICK === "delete" ? PEN_MINUS : "default";
+    }
+    if (editing && vectorSegmentHit(editing, x, y)) return PEN_ADD;
+    return PEN;
   }
 
   // Move/Rotate/Scale click: the pointerdown must land on a stroke that's
