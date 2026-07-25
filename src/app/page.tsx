@@ -835,21 +835,25 @@ export default function Home() {
     window.localStorage.setItem("fontane.keepProportions.v1", String(value));
   }
 
-  // Grid guides locked: the bearing lines and the per-cell width handle stop
-  // answering the pointer (see GridCell's lockGuides), so a stroke drawn over
-  // one is just a stroke instead of a dragged sidebearing. Drawing across a
-  // full Grid means crossing those lines constantly — this is the switch for
-  // "I'm shaping letters now, not spacing them". Read on first render rather
+  // Grid bearings locked: the bearing lines and the per-cell width handle stop
+  // answering the pointer (see GridCell's lockBearings), so a stroke drawn over
+  // one is just a stroke instead of a dragged sidebearing. Named for the
+  // bearings specifically, not the guides in general: the metric lines
+  // (baseline/x-height/ascender/descender) aren't draggable in a cell at all —
+  // they come from the sliders — so bearings and the width handle are the only
+  // things a lock has anything to say about. Drawing across a full Grid means
+  // crossing those lines constantly — this is the switch for "I'm shaping
+  // letters now, not spacing them". Read on first render rather
   // than defaulted-then-synced so a reload doesn't hand back an unlocked Grid
   // for a frame, which is exactly one frame of the accident it prevents.
-  const [lockGuides, setLockGuides] = useState(() => {
+  const [lockBearings, setLockBearings] = useState(() => {
     if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("fontane.lockGuides.v1") === "true";
+    return window.localStorage.getItem("fontane.lockBearings.v1") === "true";
   });
 
-  function updateLockGuides(value: boolean) {
-    setLockGuides(value);
-    window.localStorage.setItem("fontane.lockGuides.v1", String(value));
+  function updateLockBearings(value: boolean) {
+    setLockBearings(value);
+    window.localStorage.setItem("fontane.lockBearings.v1", String(value));
   }
 
   // Each GridCell's own actual rendered size, keyed by letter — the label
@@ -4089,7 +4093,7 @@ export default function Home() {
                   leftBearing={glyph?.leftBearing}
                   rightBearing={glyph?.rightBearing}
                   onBearingsChange={(left, right) => handleBearingsChange(slot, left, right)}
-                  lockGuides={lockGuides}
+                  lockBearings={lockBearings}
                   onResize={(width, height) => handleCellResize(cellKey, width, height)}
                   widthPx={effectiveWidthPx}
                   heightPx={cellHeightPx}
@@ -4265,7 +4269,7 @@ export default function Home() {
           {topMode === "draw" && drawStyle === "grid" && (
             <div className={styles.sliders}>
               {/* The label stays the same string in both states on purpose:
-                  lockGuides is read from localStorage during the first render
+                  lockBearings is read from localStorage during the first render
                   (so the Grid is already locked on the very first frame, not a
                   frame later), which means the server rendered this button
                   from the default. Swapping the TEXT on it made that a
@@ -4277,16 +4281,16 @@ export default function Home() {
                   "this one is active". */}
               <button
                 type="button"
-                aria-pressed={lockGuides}
-                className={`${styles.clearBtn} ${lockGuides ? styles.toggleBtnOn : ""}`}
-                onClick={() => updateLockGuides(!lockGuides)}
+                aria-pressed={lockBearings}
+                className={`${styles.clearBtn} ${lockBearings ? styles.toggleBtnOn : ""}`}
+                onClick={() => updateLockBearings(!lockBearings)}
                 title={
-                  lockGuides
-                    ? "Guides are locked — bearing lines and the cell width handle ignore the pointer, so you can draw straight over them"
+                  lockBearings
+                    ? "Bearings are locked — the bearing lines and the cell width handle ignore the pointer, so you can draw straight over them"
                     : "Lock the bearing lines and the cell width handle so drawing over them doesn't drag them"
                 }
               >
-                Lock Guides
+                Lock Bearings
               </button>
               <label className={styles.sliderRow}>
                 <span>Cell size</span>

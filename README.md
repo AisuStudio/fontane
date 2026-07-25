@@ -5,7 +5,7 @@ A web/PWA tool for capturing hand lettering (Apple Pencil, Wacom, mouse/trackpad
 ## Modes
 
 - **Write** — free-form canvas: Draw a letter/ligature, lasso-select strokes in Review, tag them with a name, export in Export.
-- **Grid** — one cell per character, draw directly into a cell (fuses capture + tagging). Cells show global baseline/x-height/ascender/descender guides and per-glyph draggable left/right bearings — these double as real calibration for the font export. Lock Guides makes the bearings (and the per-cell width handle) ignore the pointer so you can draw straight over them without dragging them.
+- **Grid** — one cell per character, draw directly into a cell (fuses capture + tagging). Cells show global baseline/x-height/ascender/descender guides and per-glyph draggable left/right bearings — these double as real calibration for the font export. Lock Bearings makes those bearings (and the per-cell width handle) ignore the pointer so you can draw straight over them without dragging them.
 
 ## Pipeline
 

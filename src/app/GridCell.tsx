@@ -147,7 +147,7 @@ function drawGuides(
   metrics: Metrics,
   leftBearing: number,
   rightBearing: number,
-  // Guides locked: the bearing lines still draw (they're the whole point of
+  // Bearings locked: the bearing lines still draw (they're the whole point of
   // the sidebearing display), but their grip handles don't — the handles are
   // purely the "you can drag this" affordance, and while locked you can't.
   locked: boolean
@@ -422,13 +422,13 @@ type Props = {
   leftBearing?: number;
   rightBearing?: number;
   onBearingsChange: (left: number, right: number) => void;
-  // When on, none of this cell's chrome answers the pointer: the bearing
-  // lines and the width handle stop hit-testing entirely, so a stroke that
-  // starts on top of one is just a stroke. The guides stay VISIBLE — locking
-  // is about not reacting, not about hiding. Global across the Grid (the
-  // parent owns the toggle), since the whole point is drawing across many
-  // cells without having to think about where the guides sit in each one.
-  lockGuides?: boolean;
+  // When on, none of this cell's draggable chrome answers the pointer: the
+  // bearing lines and the width handle stop hit-testing entirely, so a stroke
+  // that starts on top of one is just a stroke. They stay VISIBLE — locking is
+  // about not reacting, not about hiding. Global across the Grid (the parent
+  // owns the toggle), since the whole point is drawing across many cells
+  // without having to think about where the bearings sit in each one.
+  lockBearings?: boolean;
   // Reports the canvas's own actual CSS pixel size (not the grid row's
   // nominal height) — the label bar underneath the letter takes some of
   // that row's height for itself, so the canvas is always a bit shorter
@@ -469,7 +469,7 @@ export default function GridCell({
   leftBearing = DEFAULT_LEFT_BEARING,
   rightBearing = DEFAULT_RIGHT_BEARING,
   onBearingsChange,
-  lockGuides = false,
+  lockBearings = false,
   onResize,
   widthPx,
   heightPx,
@@ -490,7 +490,7 @@ export default function GridCell({
   const metricsRef = useRef(metrics);
   const bearingsRef = useRef({ leftBearing, rightBearing });
   const onBearingsChangeRef = useRef(onBearingsChange);
-  const lockGuidesRef = useRef(lockGuides);
+  const lockBearingsRef = useRef(lockBearings);
   const onResizeRef = useRef(onResize);
   const draggingRef = useRef<"left" | "right" | null>(null);
   const redrawRef = useRef<() => void>(() => {});
@@ -569,7 +569,7 @@ export default function GridCell({
     bearingsRef.current = { leftBearing, rightBearing };
   }
   onBearingsChangeRef.current = onBearingsChange;
-  lockGuidesRef.current = lockGuides;
+  lockBearingsRef.current = lockBearings;
   onResizeRef.current = onResize;
   cellDimsRef.current = { width: widthPx, height: heightPx };
   // Same clobber-guard, generalized: don't resync the working stroke data
@@ -605,7 +605,7 @@ export default function GridCell({
         metricsRef.current,
         bearingsRef.current.leftBearing,
         bearingsRef.current.rightBearing,
-        lockGuidesRef.current
+        lockBearingsRef.current
       );
       for (const s of strokesRef.current) {
         const color =
@@ -701,9 +701,9 @@ export default function GridCell({
     function bearingNear(x: number, width: number): "left" | "right" | null {
       // The single choke point for every bearing interaction — pointerdown's
       // drag start and both cursor-hint branches all go through here, so
-      // returning null while locked takes the guides out of the picture
+      // returning null while locked takes the bearings out of the picture
       // completely and the click falls through to whatever tool is active.
-      if (lockGuidesRef.current) return null;
+      if (lockBearingsRef.current) return null;
       const lx = bearingsRef.current.leftBearing * width;
       const rx = bearingsRef.current.rightBearing * width;
       if (Math.abs(x - lx) <= BEARING_HIT_PX) return "left";
@@ -1477,7 +1477,7 @@ export default function GridCell({
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawGuides(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing, lockGuides);
+    drawGuides(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing, lockBearings);
     for (const s of strokes) {
       const color = selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
       fillOutline(ctx, outlineFor(s.points, effectiveOptionsFor(s, strokeOptions)), color);
@@ -1486,7 +1486,7 @@ export default function GridCell({
     // editingShapeIdRef is guaranteed null by the guard above, so this only
     // ever draws the resting state (every shape's outline, no handles).
     if (tool === "vector") drawVectorAffordances(ctx, vectorShapes, null);
-  }, [strokes, vectorShapes, tool, metrics, leftBearing, rightBearing, lockGuides, strokeOptions]);
+  }, [strokes, vectorShapes, tool, metrics, leftBearing, rightBearing, lockBearings, strokeOptions]);
 
   const unicode = unicodeFor(label);
 
@@ -1513,13 +1513,13 @@ export default function GridCell({
   useEffect(() => {
     const el = widthHandleRef.current;
     if (!el) return;
-    const active = Boolean(onWidthCommit) && !lockGuides;
+    const active = Boolean(onWidthCommit) && !lockBearings;
     el.style.pointerEvents = active ? "auto" : "none";
     el.style.opacity = active ? "1" : "0";
-  }, [onWidthCommit, lockGuides]);
+  }, [onWidthCommit, lockBearings]);
 
   function handleWidthPointerDown(e: React.PointerEvent) {
-    if (lockGuides) return;
+    if (lockBearings) return;
     e.stopPropagation();
     (e.target as Element).setPointerCapture(e.pointerId);
     widthDragRef.current = {

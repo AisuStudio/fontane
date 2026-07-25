@@ -315,6 +315,19 @@
   color: var(--color-blueberry);
 }
 
+/* The panel inverts .clearBtn to a transparent-on-dark outline, which at one
+   class deeper also swallows a plain .toggleBtnOn — leaving a pressed button
+   identical to an unpressed one. Restate it here at matching specificity,
+   using the panel's own active idiom (see .settingsPanel .modeBtnActive
+   above). Both rules tie with their .clearBtn counterparts on specificity, so
+   this block has to sit AFTER the hover rule above or the cursor flattens a
+   pressed button back to looking unpressed. */
+.settingsPanel .toggleBtnOn,
+.settingsPanel .toggleBtnOn:hover {
+  background: var(--color-vanilla);
+  color: var(--color-blueberry);
+}
+
 .settingsPanel .contextField,
 .settingsPanel .nameInput {
   background: rgba(234, 232, 224, 0.08); /* vanilla, translucent */
@@ -474,9 +487,11 @@
   background: var(--color-lemon);
 }
 
-/* A .clearBtn that latches on (aria-pressed) — same filled treatment the
-   Base/Ligature/Alt toggle uses for its active segment, including on hover,
-   so an on state doesn't read as a plain button under the cursor. */
+/* A .clearBtn that latches on (aria-pressed) — the filled treatment the
+   Grid/Free/Editor toggle already uses for its active segment, held through
+   hover so an on button doesn't drop back to looking off under the cursor.
+   Since the label of a latching button doesn't change, this fill is the only
+   thing carrying its state — it has to survive the theming below. */
 .toggleBtnOn,
 .toggleBtnOn:hover {
   background: var(--color-blueberry);
