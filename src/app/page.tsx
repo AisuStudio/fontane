@@ -835,6 +835,23 @@ export default function Home() {
     window.localStorage.setItem("fontane.keepProportions.v1", String(value));
   }
 
+  // Grid guides locked: the bearing lines and the per-cell width handle stop
+  // answering the pointer (see GridCell's lockGuides), so a stroke drawn over
+  // one is just a stroke instead of a dragged sidebearing. Drawing across a
+  // full Grid means crossing those lines constantly — this is the switch for
+  // "I'm shaping letters now, not spacing them". Read on first render rather
+  // than defaulted-then-synced so a reload doesn't hand back an unlocked Grid
+  // for a frame, which is exactly one frame of the accident it prevents.
+  const [lockGuides, setLockGuides] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("fontane.lockGuides.v1") === "true";
+  });
+
+  function updateLockGuides(value: boolean) {
+    setLockGuides(value);
+    window.localStorage.setItem("fontane.lockGuides.v1", String(value));
+  }
+
   // Each GridCell's own actual rendered size, keyed by letter — the label
   // bar under the canvas eats some of the grid row's nominal height (see
   // GridCell's onResize), so cellWidth/cellHeightPx alone don't match what a
@@ -4072,6 +4089,7 @@ export default function Home() {
                   leftBearing={glyph?.leftBearing}
                   rightBearing={glyph?.rightBearing}
                   onBearingsChange={(left, right) => handleBearingsChange(slot, left, right)}
+                  lockGuides={lockGuides}
                   onResize={(width, height) => handleCellResize(cellKey, width, height)}
                   widthPx={effectiveWidthPx}
                   heightPx={cellHeightPx}
@@ -4246,6 +4264,19 @@ export default function Home() {
           )}
           {topMode === "draw" && drawStyle === "grid" && (
             <div className={styles.sliders}>
+              <button
+                type="button"
+                aria-pressed={lockGuides}
+                className={`${styles.clearBtn} ${lockGuides ? styles.toggleBtnOn : ""}`}
+                onClick={() => updateLockGuides(!lockGuides)}
+                title={
+                  lockGuides
+                    ? "Guides are locked — bearing lines and the cell width handle ignore the pointer, so you can draw straight over them"
+                    : "Lock the bearing lines and the cell width handle so drawing over them doesn't drag them"
+                }
+              >
+                {lockGuides ? "Guides Locked" : "Lock Guides"}
+              </button>
               <label className={styles.sliderRow}>
                 <span>Cell size</span>
                 <input

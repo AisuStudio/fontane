@@ -474,6 +474,15 @@
   background: var(--color-lemon);
 }
 
+/* A .clearBtn that latches on (aria-pressed) — same filled treatment the
+   Base/Ligature/Alt toggle uses for its active segment, including on hover,
+   so an on state doesn't read as a plain button under the cursor. */
+.toggleBtnOn,
+.toggleBtnOn:hover {
+  background: var(--color-blueberry);
+  color: var(--color-vanilla);
+}
+
 .dangerBtn {
   border-color: #c0334d;
   color: #c0334d;
