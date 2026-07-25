@@ -22,6 +22,9 @@ export type LaidOutEntry =
       // perfect-freehand. Callers that only need x/y (skeleton/SVG export)
       // just map it away.
       strokePointSets: StrokePoint[][];
+      // The originating stroke id for each entry in strokePointSets, same
+      // order — a brush's deterministic seed (see applyBrush).
+      strokeIds: string[];
       // Closed Vector-tool shapes tagged into this glyph, untransformed like
       // strokePointSets above. Renderers apply the same compile-time rule as
       // compileDocument(): with strokes present they punch holes, alone they
@@ -142,10 +145,14 @@ export function layoutText(
       continue;
     }
 
-    const strokePointSets = glyph.strokeIds
-      .map((id) => byId.get(id))
-      .filter((s): s is Stroke => Boolean(s))
-      .map((s) => s.points);
+    const glyphStrokes = glyph.strokeIds.map((id) => byId.get(id)).filter((s): s is Stroke => Boolean(s));
+    const strokePointSets = glyphStrokes.map((s) => s.points);
+    // Parallel to strokePointSets, same order. Only a brush needs these (as
+    // its jitter seed, see applyBrush in src/lib/brush.ts) — but it needs
+    // exactly these: seeding off the array index instead would give the
+    // preview a different scatter pattern than the compiled font, for the
+    // same letter.
+    const strokeIds = glyphStrokes.map((s) => s.id);
     // Only closed shapes are real geometry — an unfinished path has no fill,
     // same rule compileDocument() applies at export time.
     const glyphVectorShapes = (glyph.vectorShapeIds ?? [])
@@ -200,6 +207,7 @@ export function layoutText(
       kind: "glyph",
       glyph,
       strokePointSets,
+      strokeIds,
       vectorShapes: glyphVectorShapes,
       scale,
       offsetX,

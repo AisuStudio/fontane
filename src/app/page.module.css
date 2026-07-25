@@ -254,6 +254,35 @@
   color: var(--color-vanilla);
 }
 
+/* Section heading INSIDE a .sliders group (Brush, Jitter) — quieter than
+   .settingsPanelLabel, which titles the panel itself, so the hierarchy still
+   reads as one panel with sections rather than several stacked panels. */
+.settingsSubLabel {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-vanilla);
+  opacity: 0.55;
+  margin-top: var(--sp-sm);
+}
+
+.settingsSubLabel:first-child {
+  margin-top: 0;
+}
+
+/* Live point/contour cost of the current brush. Deliberately styled as a
+   readout, not a warning — a five-figure count is a legitimate choice for a
+   stipple face, it just shouldn't be a surprise at export time. */
+.brushBudget {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--color-vanilla);
+  opacity: 0.7;
+  padding: var(--sp-xs) 0;
+}
+
 .settingsPanel .sliders {
   flex-direction: column;
   flex-wrap: nowrap;

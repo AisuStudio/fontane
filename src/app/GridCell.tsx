@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
-import { outlineToPath, skeletonToPath, cubicPoint, splitVectorSegment, type PathCommand } from "@/lib/contour";
+import { outlineToPath, outlineToSharpPath, skeletonToPath, cubicPoint, splitVectorSegment, type PathCommand } from "@/lib/contour";
+import { applyBrush, type BrushOptions, type BrushOutput } from "@/lib/brush";
 import { pointInPolygon, anyPointInPolygon, fitPointsToBox } from "@/lib/geometry";
 import { simplifyStrokeIndices } from "@/lib/simplify";
 import type { StrokeKind, StrokePoint } from "@/lib/strokes";
@@ -12,7 +12,10 @@ import { unicodeFor } from "@/lib/glyphs";
 import { setClipboard, getClipboard, type ClipboardStroke } from "@/lib/clipboard";
 import { isSmoothAnchor, alignOppositeHandle, type BezierAnchor, type VectorShape } from "@/lib/vectorShapes";
 
-export type StrokeOptions = { size: number; thinning: number; smoothing: number; streamline: number };
+// The pen settings a cell renders with, brush included — page.tsx's
+// optionsFor() builds it, so a cell always paints with exactly the same
+// applicator the export will use.
+export type StrokeOptions = BrushOptions;
 export type CellTool =
   | "pen"
   | "brush"
@@ -96,16 +99,23 @@ function applyVectorShapePath(ctx: CanvasRenderingContext2D, shape: VectorShape)
   if (shape.closed) ctx.closePath();
 }
 
-function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][], color: string = CELL_COLOR) {
-  if (outline.length < 3) return;
+// One path across every polygon the brush produced, filled once — see
+// page.tsx's twin for why nonzero winding stands in for a real union here.
+function fillOutline(ctx: CanvasRenderingContext2D, out: BrushOutput, color: string = CELL_COLOR) {
+  if (out.polygons.length === 0) return;
   ctx.beginPath();
-  applyPath(ctx, outlineToPath(outline));
+  for (const polygon of out.polygons) {
+    if (polygon.length < 3) continue;
+    applyPath(ctx, out.smooth ? outlineToPath(polygon) : outlineToSharpPath(polygon));
+  }
   ctx.fillStyle = color;
   ctx.fill();
 }
 
-function outlineFor(points: StrokePoint[], options: StrokeOptions): [number, number][] {
-  return getStroke(points, options) as [number, number][];
+// Seeded per stroke id, same as everywhere else, so a scatter-brushed glyph
+// looks identical in its cell, in the Editor preview and in the export.
+function outlineFor(points: StrokePoint[], options: StrokeOptions, seedKey = "live"): BrushOutput {
+  return applyBrush(points, options, seedKey);
 }
 
 // Mirrors page.tsx's effectiveSettingsFor — bakes a stroke's own widthScale
@@ -595,7 +605,7 @@ export default function GridCell({
       for (const s of strokesRef.current) {
         const color =
           s.id === editingStrokeIdRef.current || selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
-        fillOutline(ctx, outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current)), color);
+        fillOutline(ctx, outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current), s.id), color);
       }
       renderVectorShapes(ctx, vectorShapesRef.current, strokesRef.current.length > 0);
       if (pointsRef.current.length > 0) {
@@ -724,7 +734,7 @@ export default function GridCell({
         // A brush stroke's points trace its own edge, not a true centerline
         // — skip it, same as page.tsx's own Nudge/Anchor gating.
         if ((s.kind ?? "pen") === "brush") continue;
-        if (pointInPolygon([x, y], outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current)))) {
+        if (pointInPolygon([x, y], outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current), s.id).envelope)) {
           editingStrokeIdRef.current = s.id;
           anchorIndicesRef.current = simplifyStrokeIndices(s.points.map((p) => [p[0], p[1]]));
           resampledRef.current = false;
@@ -1063,7 +1073,7 @@ export default function GridCell({
         const s = strokesRef.current[i];
         if (
           selectedIdsRef.current.has(s.id) &&
-          pointInPolygon([x, y], outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current)))
+          pointInPolygon([x, y], outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current), s.id).envelope)
         ) {
           hit = true;
           break;
@@ -1150,7 +1160,7 @@ export default function GridCell({
         // Topmost (last-drawn) stroke wins when strokes overlap.
         for (let i = strokesRef.current.length - 1; i >= 0; i--) {
           const s = strokesRef.current[i];
-          if (pointInPolygon([x, y], outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current)))) {
+          if (pointInPolygon([x, y], outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current), s.id).envelope)) {
             onEraseRef.current(new Set([s.id]));
             break;
           }
@@ -1460,7 +1470,7 @@ export default function GridCell({
     drawGuides(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing);
     for (const s of strokes) {
       const color = selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
-      fillOutline(ctx, outlineFor(s.points, effectiveOptionsFor(s, strokeOptions)), color);
+      fillOutline(ctx, outlineFor(s.points, effectiveOptionsFor(s, strokeOptions), s.id), color);
     }
     renderVectorShapes(ctx, vectorShapes, strokes.length > 0);
     // editingShapeIdRef is guaranteed null by the guard above, so this only
