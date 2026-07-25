@@ -638,12 +638,15 @@ function compileDocument(
         // nib hulls and stamps (sparse exact polygons, where it rounds off
         // corners that were deliberate). The union can mix rings from both,
         // so the decision is per glyph: any non-freehand ink in it and the
-        // whole glyph emits straight edges. A glyph made only of Vector-tool
-        // shapes has no brushed ink at all and keeps the smoothing, which is
-        // what its dense curve flattening expects.
+        // whole glyph emits straight edges. Calligraphy strokes don't count
+        // as such ink — they bypass the brush entirely (see outlineFor), and
+        // their sampled half-oval end caps are exactly what the smoothing is
+        // there to round. A glyph made only of Vector-tool shapes has no
+        // brushed ink at all and keeps the smoothing too, which is what its
+        // dense curve flattening expects.
         contours: rings.map((ring) =>
           pathToSvgD(
-            glyphStrokes.length > 0 && settings.brush.kind !== "freehand"
+            glyphStrokes.some((s) => s.kind !== "calligraphy") && settings.brush.kind !== "freehand"
               ? outlineToSharpPath(ring)
               : outlineToPath(ring)
           )
