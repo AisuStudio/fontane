@@ -287,6 +287,33 @@
   color: var(--color-vanilla);
 }
 
+/* Disclosure header of a collapsible palette section (SettingsSection.tsx,
+   Glyphs' palette-section model) — same typography as .settingsPanelLabel,
+   just clickable, with the chevron riding in front of the title. */
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-vanilla);
+  cursor: pointer;
+}
+
+.sectionBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-sm);
+  margin-top: var(--sp-sm);
+}
+
 .settingsPanel .sliders {
   flex-direction: column;
   flex-wrap: nowrap;

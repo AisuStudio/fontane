@@ -63,6 +63,7 @@ import {
   Spline,
 } from "lucide-react";
 import GridCell, { DEFAULT_LEFT_BEARING, DEFAULT_RIGHT_BEARING, type CellTool } from "./GridCell";
+import SettingsSection from "./SettingsSection";
 import BetaBadge from "./BetaBadge";
 import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
 import AnimatePanel from "./AnimatePanel";
@@ -144,6 +145,12 @@ const TRANSFORM_TOOLS = new Set<DrawTool>(["move", "rotate", "scale"]);
 // mid-shape must not drop the shape you're working on, since those tools have
 // nothing to show without it.
 const VECTOR_TOOLS = new Set<DrawTool>(["vector", "vectorAdd", "vectorDelete", "vectorConvert"]);
+// Tools whose work product is (or reshapes) a perfect-freehand STROKE — the
+// ones the Mono/Dynamic + Size/Thinning/… sliders actually apply to. The
+// stroke sliders are canvas-wide render settings, but showing them while a
+// vector or transform tool is active is pure noise — Glyphs shows only the
+// panels relevant to the active tool, so the Stroke section follows suit.
+const STROKE_TOOLS = new Set<DrawTool>(["pen", "brush", "eraser", "nudge", "anchor"]);
 // Every DrawTool whose button only ever appears when drawStyle==="free" —
 // leaving Free resets drawTool back to "pen" if it's one of these, since
 // their UI vanishes and a stale value would silently persist otherwise.
@@ -1048,6 +1055,41 @@ export default function Home() {
   const placingNewAnchorRef = useRef(false);
   const vectorDragStartRef = useRef<{ x: number; y: number } | null>(null);
 
+  // The settings palette's "Path" section — Glyphs' Info box parallel: a
+  // read-only digest of the vector editing session (which canvas it lives
+  // on, anchor count, open/closed, smooth-vs-corner split). Deliberately
+  // React state, unlike everything else vector: it drives palette JSX, not
+  // the canvas. Written ONLY at commit points (pointerdown/up, dblclick,
+  // session end — see syncVectorPanelInfo callers), never on pointermove,
+  // so drags don't re-render the page per frame.
+  const [vectorPanelInfo, setVectorPanelInfo] = useState<{
+    source: string;
+    anchorCount: number;
+    closed: boolean;
+    smoothCount: number;
+  } | null>(null);
+  // Which of the editing shape's anchors the last Free-canvas pointerdown
+  // landed on — the palette's "Toggle smooth" button needs a target anchor,
+  // and "the one you last clicked" is Glyphs' own convention for it.
+  const lastClickedAnchorIndexRef = useRef<number | null>(null);
+
+  // Derives the Path section from the live Free-canvas session refs. Grid
+  // cells report their own sessions via onVectorSessionChange instead —
+  // their shapes live in cell-local pixel space, not in these refs.
+  function syncVectorPanelInfo() {
+    const shape = vectorShapesRef.current.find((s) => s.id === editingShapeIdRef.current);
+    if (!shape) {
+      setVectorPanelInfo(null);
+      return;
+    }
+    setVectorPanelInfo({
+      source: "Free",
+      anchorCount: shape.anchors.length,
+      closed: shape.closed,
+      smoothCount: shape.anchors.filter(isSmoothAnchor).length,
+    });
+  }
+
   // Move/Rotate/Scale: a snapshot of every selected stroke's points taken at
   // gesture start, plus the pivot (bbox center) and start pointer position —
   // every pointermove recomputes from this frozen snapshot rather than the
@@ -1519,6 +1561,10 @@ export default function Home() {
         // Cmd/Ctrl = Illustrator's momentary direct-select, see
         // handleVectorPointerDown.
         handleVectorPointerDown(p[0], p[1], e.altKey, drawToolRef.current, e.metaKey || e.ctrlKey);
+        // One sync per commit point, at the call site — the handler itself
+        // returns from half a dozen branches, and every one of them is a
+        // session start/switch/mutation the Path section must reflect.
+        syncVectorPanelInfo();
         redraw();
         return;
       }
@@ -1680,6 +1726,9 @@ export default function Home() {
       if (topModeRef.current === "draw" && VECTOR_TOOLS.has(drawToolRef.current)) {
         const p = pointFromEvent(e);
         handleVectorPointerUp(p[0], p[1]);
+        // Same call-site sync as pointerdown — pointerup is where drags
+        // (handle pulls, anchor moves, corner collapses) actually commit.
+        syncVectorPanelInfo();
         canvas!.releasePointerCapture(e.pointerId);
         redraw();
         return;
@@ -1897,6 +1946,9 @@ export default function Home() {
     draggingHandleRef.current = null;
     placingNewAnchorRef.current = false;
     vectorDragStartRef.current = null;
+    lastClickedAnchorIndexRef.current = null;
+    // No session — the palette's Path section (Glyphs' Info box) empties too.
+    setVectorPanelInfo(null);
   }
 
   useEffect(() => {
@@ -2878,6 +2930,9 @@ export default function Home() {
 
         const anchorHit = vectorAnchorNear(shape, x, y);
         if (anchorHit !== null) {
+          // Arms the palette's "Toggle smooth" button (see the Path
+          // section) — same in the fallback scan loop below.
+          lastClickedAnchorIndexRef.current = anchorHit;
           if (altKey) {
             // Alt+drag pulls a fresh symmetric handle pair out of ANY
             // anchor — including the first/last point of the path, which
@@ -2944,6 +2999,7 @@ export default function Home() {
       const anchorHit = vectorAnchorNear(shape, x, y);
       if (anchorHit !== null) {
         editingShapeIdRef.current = shape.id;
+        lastClickedAnchorIndexRef.current = anchorHit;
         if (altKey) {
           draggingHandleRef.current = { anchorIndex: anchorHit, which: "handleOut" };
           placingNewAnchorRef.current = true;
@@ -3100,7 +3156,27 @@ export default function Home() {
         saveVectorShapes(vectorShapesRef.current);
         redrawRef.current();
       }
+      // The toggle changes the Path section's smooth/corner tally, and the
+      // dblclick fires AFTER its two constituent clicks already synced.
+      syncVectorPanelInfo();
       return;
+    }
+  }
+
+  // The Path section's "Toggle smooth" button — the same smooth/corner flip
+  // as double-clicking the anchor (Glyphs offers both routes too), aimed at
+  // the anchor the last Free-canvas click landed on. Bounds-checked because
+  // the ref can outlive the anchor it named (e.g. Delete Anchor removed it).
+  function handleToggleSmoothClick() {
+    const shape = vectorShapesRef.current.find((s) => s.id === editingShapeIdRef.current);
+    const index = lastClickedAnchorIndexRef.current;
+    if (!shape || index === null) return;
+    const anchor = shape.anchors[index];
+    if (!anchor) return;
+    if (toggleAnchorSmooth(anchor)) {
+      saveVectorShapes(vectorShapesRef.current);
+      redrawRef.current();
+      syncVectorPanelInfo();
     }
   }
 
@@ -4504,6 +4580,16 @@ export default function Home() {
                   }
                   vectorShapes={cellVectorShapes}
                   onVectorShapesChange={(shapes) => handleGridVectorShapes(slot, shapes, liveWidth, liveHeight)}
+                  // Feeds the palette's Path section, tagging the cell's
+                  // label as the source. A cell's session-END (null) only
+                  // clears the panel if the panel was showing THAT cell —
+                  // sessions are per-cell and several can be open at once,
+                  // so cell A ending must not blank cell B's fresh report.
+                  onVectorSessionChange={(info) =>
+                    setVectorPanelInfo((prev) =>
+                      info ? { source: name, ...info } : prev && prev.source === name ? null : prev
+                    )
+                  }
                   metrics={metrics}
                   leftBearing={glyph?.leftBearing}
                   rightBearing={glyph?.rightBearing}
@@ -4595,6 +4681,49 @@ export default function Home() {
             })}
           </div>
           <div className={styles.settingsPanelLabel}>Settings</div>
+          {/* Glyphs' Info box, as a palette section: while a pen-family tool
+              is active, the current path's vitals live here — fed by the
+              Free canvas's own session refs (syncVectorPanelInfo) or by
+              whichever Grid cell last reported via onVectorSessionChange. */}
+          {topMode === "draw" && VECTOR_TOOLS.has(drawTool) && (
+            <SettingsSection id="anchorInfo" title="Path" defaultOpen>
+              {vectorPanelInfo ? (
+                <>
+                  <div className={styles.sliders}>
+                    <div className={styles.sliderRow}>
+                      <span>Source</span>
+                      <span className={styles.val}>{vectorPanelInfo.source}</span>
+                    </div>
+                    <div className={styles.sliderRow}>
+                      <span>Anchors</span>
+                      <span className={styles.val}>{vectorPanelInfo.anchorCount}</span>
+                    </div>
+                    <div className={styles.sliderRow}>
+                      <span>Closed</span>
+                      <span className={styles.val}>{vectorPanelInfo.closed ? "yes" : "no"}</span>
+                    </div>
+                    <div className={styles.sliderRow}>
+                      <span>Smooth</span>
+                      <span className={styles.val}>
+                        {vectorPanelInfo.smoothCount}/{vectorPanelInfo.anchorCount}
+                      </span>
+                    </div>
+                  </div>
+                  {vectorPanelInfo.source === "Free" ? (
+                    <button type="button" className={styles.clearBtn} onClick={handleToggleSmoothClick}>
+                      Toggle smooth
+                    </button>
+                  ) : (
+                    // Grid sessions live in cell-local space the page can't
+                    // reach into — the cells' own dblclick toggle covers it.
+                    <span className={styles.unicodeHint}>Double-click an anchor to toggle smooth/corner</span>
+                  )}
+                </>
+              ) : (
+                <span className={styles.unicodeHint}>Click or draw a path</span>
+              )}
+            </SettingsSection>
+          )}
           {topMode === "draw" && drawStyle === "free" && drawTool === "assign" && (
             <>
               <input
@@ -4681,116 +4810,127 @@ export default function Home() {
             </>
           )}
           {topMode === "draw" && drawStyle === "grid" && (
-            <div className={styles.sliders}>
-              <label className={styles.sliderRow}>
-                <span>Cell size</span>
-                <input
-                  type="range"
-                  min={60}
-                  max={240}
-                  step={10}
-                  value={cellSize}
-                  onChange={(e) => updateCellSize(Number(e.target.value))}
-                />
-                <span className={styles.val}>{cellSize}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>Width</span>
-                <input
-                  type="range"
-                  min={0.5}
-                  max={2}
-                  step={0.05}
-                  value={cellWidthRatio}
-                  onChange={(e) => updateCellWidthRatio(Number(e.target.value))}
-                />
-                <span className={styles.val}>{cellWidthRatio.toFixed(2)}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>
+            <>
+              <div className={styles.sliders}>
+                <label className={styles.sliderRow}>
+                  <span>Cell size</span>
                   <input
-                    type="checkbox"
-                    checked={keepProportions}
-                    onChange={(e) => updateKeepProportions(e.target.checked)}
-                  />{" "}
-                  Keep Proportions
-                </span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>Ascender</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={metrics.ascender}
-                  onChange={(e) => updateMetric("ascender", Math.min(Number(e.target.value), metrics.xHeight - 0.02))}
-                />
-                <span className={styles.val}>{metrics.ascender.toFixed(2)}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>X-height</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={metrics.xHeight}
-                  onChange={(e) =>
-                    updateMetric(
-                      "xHeight",
-                      Math.min(Math.max(Number(e.target.value), metrics.ascender + 0.02), metrics.baseline - 0.02)
-                    )
-                  }
-                />
-                <span className={styles.val}>{metrics.xHeight.toFixed(2)}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>Baseline</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={metrics.baseline}
-                  onChange={(e) =>
-                    updateMetric(
-                      "baseline",
-                      Math.min(Math.max(Number(e.target.value), metrics.xHeight + 0.02), metrics.descender - 0.02)
-                    )
-                  }
-                />
-                <span className={styles.val}>{metrics.baseline.toFixed(2)}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>Descender</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={metrics.descender}
-                  onChange={(e) => updateMetric("descender", Math.max(Number(e.target.value), metrics.baseline + 0.02))}
-                />
-                <span className={styles.val}>{metrics.descender.toFixed(2)}</span>
-              </label>
-            </div>
+                    type="range"
+                    min={60}
+                    max={240}
+                    step={10}
+                    value={cellSize}
+                    onChange={(e) => updateCellSize(Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{cellSize}</span>
+                </label>
+                <label className={styles.sliderRow}>
+                  <span>Width</span>
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={2}
+                    step={0.05}
+                    value={cellWidthRatio}
+                    onChange={(e) => updateCellWidthRatio(Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{cellWidthRatio.toFixed(2)}</span>
+                </label>
+                <label className={styles.sliderRow}>
+                  <span>
+                    <input
+                      type="checkbox"
+                      checked={keepProportions}
+                      onChange={(e) => updateKeepProportions(e.target.checked)}
+                    />{" "}
+                    Keep Proportions
+                  </span>
+                </label>
+              </div>
+              {/* Collapsed by default, Glyphs' Font Info parallel: the four
+                  font metrics get set once early on and then mostly rest,
+                  unlike the cell-layout controls above them. */}
+              <SettingsSection id="metrics" title="Metrics" defaultOpen={false}>
+                <div className={styles.sliders}>
+                  <label className={styles.sliderRow}>
+                    <span>Ascender</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={metrics.ascender}
+                      onChange={(e) => updateMetric("ascender", Math.min(Number(e.target.value), metrics.xHeight - 0.02))}
+                    />
+                    <span className={styles.val}>{metrics.ascender.toFixed(2)}</span>
+                  </label>
+                  <label className={styles.sliderRow}>
+                    <span>X-height</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={metrics.xHeight}
+                      onChange={(e) =>
+                        updateMetric(
+                          "xHeight",
+                          Math.min(Math.max(Number(e.target.value), metrics.ascender + 0.02), metrics.baseline - 0.02)
+                        )
+                      }
+                    />
+                    <span className={styles.val}>{metrics.xHeight.toFixed(2)}</span>
+                  </label>
+                  <label className={styles.sliderRow}>
+                    <span>Baseline</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={metrics.baseline}
+                      onChange={(e) =>
+                        updateMetric(
+                          "baseline",
+                          Math.min(Math.max(Number(e.target.value), metrics.xHeight + 0.02), metrics.descender - 0.02)
+                        )
+                      }
+                    />
+                    <span className={styles.val}>{metrics.baseline.toFixed(2)}</span>
+                  </label>
+                  <label className={styles.sliderRow}>
+                    <span>Descender</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={metrics.descender}
+                      onChange={(e) => updateMetric("descender", Math.max(Number(e.target.value), metrics.baseline + 0.02))}
+                    />
+                    <span className={styles.val}>{metrics.descender.toFixed(2)}</span>
+                  </label>
+                </div>
+              </SettingsSection>
+            </>
           )}
           {topMode === "draw" && drawStyle === "free" && (
-            <div className={styles.sliders}>
-              <label className={styles.sliderRow}>
-                <span>Line spacing</span>
-                <input
-                  type="range"
-                  min={20}
-                  max={300}
-                  step={5}
-                  value={lineSpacing}
-                  onChange={(e) => updateLineSpacing(Number(e.target.value))}
-                />
-                <span className={styles.val}>{lineSpacing}</span>
-              </label>
-            </div>
+            <SettingsSection id="freeCanvas" title="Canvas" defaultOpen>
+              <div className={styles.sliders}>
+                <label className={styles.sliderRow}>
+                  <span>Line spacing</span>
+                  <input
+                    type="range"
+                    min={20}
+                    max={300}
+                    step={5}
+                    value={lineSpacing}
+                    onChange={(e) => updateLineSpacing(Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{lineSpacing}</span>
+                </label>
+              </div>
+            </SettingsSection>
           )}
           {topMode === "draw" && drawStyle === "free" && selectedIds.length > 0 && (
             <div className={styles.sliders}>
@@ -4853,81 +4993,86 @@ export default function Home() {
             </>
           )}
 
-          {showStrokeControls && (
-            <div className={styles.sliders}>
-              <div className={styles.modeToggle} role="radiogroup" aria-label="Stroke mode">
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={settings.mode === "mono"}
-                  className={`${styles.modeBtn} ${settings.mode === "mono" ? styles.modeBtnActive : ""}`}
-                  onClick={() => updateSetting("mode", "mono")}
-                >
-                  Mono line
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={settings.mode === "dynamic"}
-                  className={`${styles.modeBtn} ${settings.mode === "dynamic" ? styles.modeBtnActive : ""}`}
-                  onClick={() => updateSetting("mode", "dynamic")}
-                >
-                  Dynamic
-                </button>
+          {/* Stroke sliders only while a stroke-family tool is active (see
+              STROKE_TOOLS) — with a vector or transform tool up they'd
+              promise an effect the tool can't deliver. */}
+          {showStrokeControls && STROKE_TOOLS.has(drawTool) && (
+            <SettingsSection id="stroke" title="Stroke" defaultOpen>
+              <div className={styles.sliders}>
+                <div className={styles.modeToggle} role="radiogroup" aria-label="Stroke mode">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={settings.mode === "mono"}
+                    className={`${styles.modeBtn} ${settings.mode === "mono" ? styles.modeBtnActive : ""}`}
+                    onClick={() => updateSetting("mode", "mono")}
+                  >
+                    Mono line
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={settings.mode === "dynamic"}
+                    className={`${styles.modeBtn} ${settings.mode === "dynamic" ? styles.modeBtnActive : ""}`}
+                    onClick={() => updateSetting("mode", "dynamic")}
+                  >
+                    Dynamic
+                  </button>
+                </div>
+                <label className={styles.sliderRow}>
+                  <span>Size</span>
+                  <input
+                    type="range"
+                    min={4}
+                    max={60}
+                    step={1}
+                    value={settings.size}
+                    onChange={(e) => updateSetting("size", Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{settings.size}</span>
+                </label>
+                {settings.mode === "dynamic" && (
+                  <>
+                    <label className={styles.sliderRow}>
+                      <span>Thinning</span>
+                      <input
+                        type="range"
+                        min={-1}
+                        max={1}
+                        step={0.05}
+                        value={settings.thinning}
+                        onChange={(e) => updateSetting("thinning", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.thinning.toFixed(2)}</span>
+                    </label>
+                    <label className={styles.sliderRow}>
+                      <span>Smoothing</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={settings.smoothing}
+                        onChange={(e) => updateSetting("smoothing", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.smoothing.toFixed(2)}</span>
+                    </label>
+                    <label className={styles.sliderRow}>
+                      <span>Streamline</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={settings.streamline}
+                        onChange={(e) => updateSetting("streamline", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.streamline.toFixed(2)}</span>
+                    </label>
+                  </>
+                )}
               </div>
-              <label className={styles.sliderRow}>
-                <span>Size</span>
-                <input
-                  type="range"
-                  min={4}
-                  max={60}
-                  step={1}
-                  value={settings.size}
-                  onChange={(e) => updateSetting("size", Number(e.target.value))}
-                />
-                <span className={styles.val}>{settings.size}</span>
-              </label>
-              {settings.mode === "dynamic" && (
-                <>
-                  <label className={styles.sliderRow}>
-                    <span>Thinning</span>
-                    <input
-                      type="range"
-                      min={-1}
-                      max={1}
-                      step={0.05}
-                      value={settings.thinning}
-                      onChange={(e) => updateSetting("thinning", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.thinning.toFixed(2)}</span>
-                  </label>
-                  <label className={styles.sliderRow}>
-                    <span>Smoothing</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={settings.smoothing}
-                      onChange={(e) => updateSetting("smoothing", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.smoothing.toFixed(2)}</span>
-                  </label>
-                  <label className={styles.sliderRow}>
-                    <span>Streamline</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={settings.streamline}
-                      onChange={(e) => updateSetting("streamline", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.streamline.toFixed(2)}</span>
-                  </label>
-                </>
-              )}
-            </div>
+            </SettingsSection>
           )}
         </aside>
       </div>

@@ -423,6 +423,13 @@ type Props = {
   // shape/anchor/handle is currently being edited stays local to the cell, so
   // clicking into a different cell just starts a fresh session.
   onVectorShapesChange: (shapes: VectorShape[]) => void;
+  // Fires whenever this cell's vector EDITING SESSION changes at a commit
+  // point (session start/switch on pointerdown, end of pointerup, session
+  // end via Esc/Enter/tool-leave/unmount → null) with a digest for the
+  // settings palette's Path section (Glyphs' Info box) — the session itself
+  // stays cell-local, so this is the only way the parent can know about it.
+  // Optional: a parent that renders no Path section just doesn't pass it.
+  onVectorSessionChange?: (info: { anchorCount: number; closed: boolean; smoothCount: number } | null) => void;
   metrics: Metrics;
   leftBearing?: number;
   rightBearing?: number;
@@ -463,6 +470,7 @@ export default function GridCell({
   onStrokeComplete,
   vectorShapes,
   onVectorShapesChange,
+  onVectorSessionChange,
   metrics,
   leftBearing = DEFAULT_LEFT_BEARING,
   rightBearing = DEFAULT_RIGHT_BEARING,
@@ -516,6 +524,7 @@ export default function GridCell({
   // mutate + redraw() on every move and report upward only on pointerup.
   const vectorShapesRef = useRef(vectorShapes);
   const onVectorShapesChangeRef = useRef(onVectorShapesChange);
+  const onVectorSessionChangeRef = useRef(onVectorSessionChange);
   const editingShapeIdRef = useRef<string | null>(null);
   // Set (with a drag-start position) when a click lands on an existing anchor
   // — moving beyond ANCHOR_HIT_PX before pointerup repositions it instead of
@@ -576,12 +585,33 @@ export default function GridCell({
     strokesRef.current = strokes;
   }
   onVectorShapesChangeRef.current = onVectorShapesChange;
+  onVectorSessionChangeRef.current = onVectorSessionChange;
   // Same clobber-guard once more: while a Vector session is live the cell owns
   // the authoritative anchors, and the props copy is only ever a round-trip
   // through the glyph's anchor space — resyncing mid-edit would replace the
   // shape being dragged with a float-drifted echo of itself.
   if (editingShapeIdRef.current === null) {
     vectorShapesRef.current = vectorShapes;
+  }
+
+  // Reports this cell's vector session upward for the settings palette's
+  // Path section (Glyphs' Info box parallel) — reads only refs, so the
+  // mount-once pointer handlers, the [tool] effect, and the unmount cleanup
+  // can all share it. Same commit-point-only cadence as page.tsx's
+  // syncVectorPanelInfo: never called from pointermove.
+  function syncVectorSession() {
+    const report = onVectorSessionChangeRef.current;
+    if (!report) return;
+    const shape = vectorShapesRef.current.find((s) => s.id === editingShapeIdRef.current);
+    report(
+      shape
+        ? {
+            anchorCount: shape.anchors.length,
+            closed: shape.closed,
+            smoothCount: shape.anchors.filter(isSmoothAnchor).length,
+          }
+        : null
+    );
   }
 
   useEffect(() => {
@@ -1111,6 +1141,10 @@ export default function GridCell({
           commitVectorShapes();
           redraw();
         }
+        // The toggle changes the Path section's smooth/corner tally, and
+        // the dblclick fires AFTER its two constituent clicks already
+        // synced — same trailing sync as page.tsx's handleVectorDblClick.
+        syncVectorSession();
         return;
       }
     }
@@ -1265,6 +1299,10 @@ export default function GridCell({
         // Cmd/Ctrl = Illustrator's momentary direct-select, see
         // handleVectorPointerDown.
         handleVectorPointerDown(x, y, e.altKey, toolRef.current, e.metaKey || e.ctrlKey);
+        // Session start/switch commit point — same call-site sync as
+        // page.tsx's Free canvas, since the handler returns from many
+        // branches and each is a session change the Path section reflects.
+        syncVectorSession();
         redraw();
         return;
       }
@@ -1369,6 +1407,9 @@ export default function GridCell({
       if (VECTOR_TOOLS.has(toolRef.current)) {
         const [x, y] = pointFromEvent(e);
         handleVectorPointerUp(x, y);
+        // End-of-gesture commit point (handle pulls, anchor moves, corner
+        // collapses all land in the pointerup).
+        syncVectorSession();
         canvas!.releasePointerCapture(e.pointerId);
         redraw();
         return;
@@ -1505,6 +1546,8 @@ export default function GridCell({
         placingNewAnchorRef.current = false;
         vectorDragStartRef.current = null;
         commitVectorShapes();
+        // Session over — the Path section empties (derives null now).
+        syncVectorSession();
         redraw();
         return;
       }
@@ -1542,6 +1585,10 @@ export default function GridCell({
       canvas.removeEventListener("pointercancel", onPointerUp);
       canvas.removeEventListener("dblclick", onDblClick);
       window.removeEventListener("keydown", onKeyDown);
+      // A cell that unmounts mid-session (view switch, character set
+      // removed) can't keep the Path section pointing at it — same
+      // had-a-session guard as the [tool] effect below.
+      if (editingShapeIdRef.current !== null) onVectorSessionChangeRef.current?.(null);
     };
     // Mount once per cell; outlines/onStrokeComplete/metrics/bearings are read
     // via refs above so redraws after a parent re-render don't need to tear
@@ -1560,15 +1607,22 @@ export default function GridCell({
       resampledRef.current = false;
       draggingAnchorRef.current = null;
     }
-    // Same as Free's exitVectorEditing: leaving Vector ends the session but
-    // does NOT discard an unclosed path — switching tools mid-draw shouldn't
-    // silently lose points, and picking Vector again resumes it on click.
-    if (tool !== "vector") {
+    // Same as Free's exitVectorEditing: leaving the vector FAMILY ends the
+    // session but does NOT discard an unclosed path — switching tools
+    // mid-draw shouldn't silently lose points, and picking a vector tool
+    // again resumes it on click. Family-wide (not just "vector"), matching
+    // page.tsx: switching Pen → Add Anchor keeps the same editing session.
+    if (!VECTOR_TOOLS.has(tool)) {
+      // Only a cell that actually HAD a session reports the end — otherwise
+      // every mounted cell would fire null on every tool switch, and one
+      // cell's stale null could clear a session another cell just reported.
+      const hadSession = editingShapeIdRef.current !== null;
       editingShapeIdRef.current = null;
       draggingVectorAnchorRef.current = null;
       draggingHandleRef.current = null;
       placingNewAnchorRef.current = false;
       vectorDragStartRef.current = null;
+      if (hadSession) onVectorSessionChangeRef.current?.(null);
     }
     transformStartRef.current = null;
     redrawRef.current();
