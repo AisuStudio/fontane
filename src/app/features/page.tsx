@@ -83,6 +83,11 @@ const SECTIONS: Section[] = [
         name: "Mono line & Dynamic strokes",
         description: "Switch between constant-width ink and pressure-responsive thickness, with live size/thinning/smoothing/streamline controls.",
       },
+      {
+        name: "Swappable brushes",
+        description:
+          "One skeleton, many typefaces: the drawn path stays the source, and the brush applied to it — pressure envelope, swept calligraphy nib, or stipple stamps at your own spacing, rotation and jitter — is swapped at any time and restyles every letter at once.",
+      },
     ],
   },
   {

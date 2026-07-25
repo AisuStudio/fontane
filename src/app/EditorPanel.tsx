@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
 import { layoutText, type LaidOutEntry } from "@/lib/layoutText";
-import { outlineToPath, flattenVectorShape, type PathCommand } from "@/lib/contour";
+import { outlineToPath, outlineToSharpPath, flattenVectorShape, type PathCommand } from "@/lib/contour";
+import { applyBrush, type BrushOptions, type BrushOutput } from "@/lib/brush";
 import type { VectorShape } from "@/lib/vectorShapes";
 import type { Glyph } from "@/lib/glyphs";
 import type { Stroke, StrokePoint } from "@/lib/strokes";
@@ -50,17 +50,21 @@ const REFERENCE_CAP_HEIGHT_PX = 140; // layoutText.ts's internal TARGET_CAP_HEIG
 // outlineFor) — same duplication convention already used between page.tsx
 // and GridCell.tsx, since each owns its own <canvas> and there's no shared
 // canvas-rendering module in this codebase.
-function optionsFor(settings: StrokeSettings) {
+function optionsFor(settings: StrokeSettings): BrushOptions {
   return {
     size: settings.size,
     thinning: settings.mode === "mono" ? 0 : settings.thinning,
     smoothing: settings.smoothing,
     streamline: settings.streamline,
+    brush: settings.brush,
   };
 }
 
-function outlineFor(points: StrokePoint[], settings: StrokeSettings): [number, number][] {
-  return getStroke(points, optionsFor(settings)) as [number, number][];
+// Seeded by the originating stroke id (layoutText carries them through for
+// exactly this) so the preview's scatter pattern is the one the export will
+// produce, not a second roll of the same dice.
+function outlineFor(points: StrokePoint[], settings: StrokeSettings, seedKey: string): BrushOutput {
+  return applyBrush(points, optionsFor(settings), seedKey);
 }
 
 // The composed glyph geometry below is uniformly rescaled by sizeFactor (see
@@ -80,10 +84,18 @@ function applyPath(ctx: CanvasRenderingContext2D, commands: PathCommand[]) {
   }
 }
 
-function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][]) {
-  if (outline.length < 3) return;
+// A glyph's stroke paired with the id of the stroke it came from — the
+// brush's deterministic seed (see applyBrush), carried this far so the
+// preview and the export scatter identically.
+type BrushedStrokeSet = { points: StrokePoint[]; seed: string };
+
+function fillOutline(ctx: CanvasRenderingContext2D, out: BrushOutput) {
+  if (out.polygons.length === 0) return;
   ctx.beginPath();
-  applyPath(ctx, outlineToPath(outline));
+  for (const polygon of out.polygons) {
+    if (polygon.length < 3) continue;
+    applyPath(ctx, out.smooth ? outlineToPath(polygon) : outlineToSharpPath(polygon));
+  }
   ctx.fillStyle = INK_COLOR;
   ctx.fill();
 }
@@ -235,7 +247,7 @@ export default function EditorPanel({
         y: number;
         height: number;
         minX: number;
-        glyphInk: { strokeSets: StrokePoint[][]; shapeRings: [number, number][][] }[];
+        glyphInk: { strokeSets: BrushedStrokeSet[]; shapeRings: [number, number][][] }[];
       };
       const lines: LineGeometry[] = [];
 
@@ -274,7 +286,7 @@ export default function EditorPanel({
           // a glyph carrying Vector-tool shapes has to be composited on its
           // own (its shapes punch holes in ITS strokes, not in a neighbor's),
           // which needs the boundary kept intact.
-          const glyphInk: { strokeSets: StrokePoint[][]; shapeRings: [number, number][][] }[] = [];
+          const glyphInk: { strokeSets: BrushedStrokeSet[]; shapeRings: [number, number][][] }[] = [];
 
           for (const entry of lineEntries) {
             if (entry.kind !== "glyph") continue;
@@ -283,10 +295,14 @@ export default function EditorPanel({
               if (rx < minX) minX = rx;
               return rx;
             };
-            const strokeSets = entry.strokePointSets.map(
-              (strokePoints): StrokePoint[] =>
-                strokePoints.map((p) => [rebaseX(p[0]), p[1] * entry.scale + entry.offsetY, p[2]])
-            );
+            const strokeSets = entry.strokePointSets.map((strokePoints, i) => ({
+              // The stroke's own id rides along as the brush seed — see
+              // LaidOutEntry.strokeIds.
+              seed: entry.strokeIds[i] ?? `${entry.glyph.name}:${i}`,
+              points: strokePoints.map(
+                (p): StrokePoint => [rebaseX(p[0]), p[1] * entry.scale + entry.offsetY, p[2]]
+              ),
+            }));
             const shapeRings = entry.vectorShapes.map(
               (shape): [number, number][] =>
                 flattenVectorShape(shape).map(([x, y]) => [rebaseX(x), y * entry.scale + entry.offsetY])
@@ -344,12 +360,12 @@ export default function EditorPanel({
           (y + line.y) * sizeFactor,
         ];
         for (const { strokeSets, shapeRings } of line.glyphInk) {
-          for (const strokePoints of strokeSets) {
-            const transformed: StrokePoint[] = strokePoints.map((p) => {
+          for (const { points, seed } of strokeSets) {
+            const transformed: StrokePoint[] = points.map((p) => {
               const [x, y] = place(p[0], p[1]);
               return [x, y, p[2]];
             });
-            fillOutline(ctx!, outlineFor(transformed, penSettings));
+            fillOutline(ctx!, outlineFor(transformed, penSettings, seed));
           }
 
           if (shapeRings.length === 0) continue;

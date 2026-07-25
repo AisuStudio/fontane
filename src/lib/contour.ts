@@ -48,6 +48,21 @@ export function skeletonToPath(points: [number, number][]): PathCommand[] {
   return commands;
 }
 
+// The same closed ring as outlineToPath, with straight edges instead of
+// midpoint quadratics. Freehand outlines are dense point clouds where the
+// quadratic smoothing reproduces the drawn curve; nib hulls and scatter
+// stamps are exact low-point-count polygons where it does the opposite —
+// running a square stamp through outlineToPath rounds off the corners that
+// were the entire reason for picking that stamp. See BrushOutput.smooth in
+// src/lib/brush.ts, which is what decides between the two.
+export function outlineToSharpPath(outline: [number, number][]): PathCommand[] {
+  if (outline.length < 3) return [];
+  const commands: PathCommand[] = [{ type: "M", x: outline[0][0], y: outline[0][1] }];
+  for (let i = 1; i < outline.length; i++) commands.push({ type: "L", x: outline[i][0], y: outline[i][1] });
+  commands.push({ type: "Z" });
+  return commands;
+}
+
 // Shoelace formula. Used to drop degenerate slivers polygon-clipping can
 // produce at exact intersection points (floating-point noding artifacts —
 // near-zero-area rings, not real geometry).

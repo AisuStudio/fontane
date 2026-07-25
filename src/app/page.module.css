@@ -314,6 +314,35 @@
   margin-top: var(--sp-sm);
 }
 
+/* Section heading INSIDE a .sliders group (Brush, Jitter) — quieter than
+   .settingsPanelLabel, which titles the panel itself, so the hierarchy still
+   reads as one panel with sections rather than several stacked panels. */
+.settingsSubLabel {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-vanilla);
+  opacity: 0.55;
+  margin-top: var(--sp-sm);
+}
+
+.settingsSubLabel:first-child {
+  margin-top: 0;
+}
+
+/* Live point/contour cost of the current brush. Deliberately styled as a
+   readout, not a warning — a five-figure count is a legitimate choice for a
+   stipple face, it just shouldn't be a surprise at export time. */
+.brushBudget {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--color-vanilla);
+  opacity: 0.7;
+  padding: var(--sp-xs) 0;
+}
+
 .settingsPanel .sliders {
   flex-direction: column;
   flex-wrap: nowrap;
@@ -372,6 +401,19 @@
 
 .settingsPanel .clearBtn:hover {
   background: var(--color-lemon);
+  color: var(--color-blueberry);
+}
+
+/* The panel inverts .clearBtn to a transparent-on-dark outline, which at one
+   class deeper also swallows a plain .toggleBtnOn — leaving a pressed button
+   identical to an unpressed one. Restate it here at matching specificity,
+   using the panel's own active idiom (see .settingsPanel .modeBtnActive
+   above). Both rules tie with their .clearBtn counterparts on specificity, so
+   this block has to sit AFTER the hover rule above or the cursor flattens a
+   pressed button back to looking unpressed. */
+.settingsPanel .toggleBtnOn,
+.settingsPanel .toggleBtnOn:hover {
+  background: var(--color-vanilla);
   color: var(--color-blueberry);
 }
 
@@ -532,6 +574,17 @@
 
 .clearBtn:hover {
   background: var(--color-lemon);
+}
+
+/* A .clearBtn that latches on (aria-pressed) — the filled treatment the
+   Grid/Free/Editor toggle already uses for its active segment, held through
+   hover so an on button doesn't drop back to looking off under the cursor.
+   Since the label of a latching button doesn't change, this fill is the only
+   thing carrying its state — it has to survive the theming below. */
+.toggleBtnOn,
+.toggleBtnOn:hover {
+  background: var(--color-blueberry);
+  color: var(--color-vanilla);
 }
 
 .dangerBtn {
