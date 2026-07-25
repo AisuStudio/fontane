@@ -166,7 +166,8 @@ export default function LexiconPage() {
         minHeight: "100vh",
         background: "#eae8e0",
         color: "#1f1934",
-        fontFamily: "monospace",
+        fontFamily: "var(--font-sans)",
+        fontWeight: 400,
         padding: "48px 24px",
         display: "flex",
         justifyContent: "center",
@@ -175,8 +176,8 @@ export default function LexiconPage() {
       <div style={{ maxWidth: 720, width: "100%" }}>
         <MarketplaceNav />
 
-        <h1 style={{ fontSize: 28, marginBottom: 8 }}>Type Lexicon</h1>
-        <p style={{ marginBottom: 40, fontSize: 14, lineHeight: 1.7, opacity: 0.75 }}>
+        <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>Type Lexicon</h1>
+        <p style={{ marginBottom: 40, fontSize: 14, fontWeight: 400, lineHeight: 1.7, opacity: 0.75 }}>
           A small glossary of type-design terms, written for someone drawing their first font rather than
           someone who already has a shelf of typography books.
         </p>
@@ -186,6 +187,7 @@ export default function LexiconPage() {
             <h2
               style={{
                 fontSize: 18,
+                fontWeight: 700,
                 marginBottom: 16,
                 paddingBottom: 8,
                 borderBottom: "1px solid rgba(31,25,52,0.15)",
@@ -195,8 +197,8 @@ export default function LexiconPage() {
             </h2>
             {section.terms.map((t) => (
               <div key={t.term} style={{ marginBottom: 16 }}>
-                <h3 style={{ fontSize: 15, marginBottom: 4 }}>{t.term}</h3>
-                <p style={{ fontSize: 14, lineHeight: 1.7, opacity: 0.85 }}>{t.definition}</p>
+                <h3 style={{ fontSize: 15, fontWeight: 500, marginBottom: 4 }}>{t.term}</h3>
+                <p style={{ fontSize: 14, fontWeight: 400, lineHeight: 1.7, opacity: 0.85 }}>{t.definition}</p>
               </div>
             ))}
           </section>
