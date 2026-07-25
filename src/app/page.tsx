@@ -111,8 +111,13 @@ type DrawTool =
   | "pan";
 // The 5 menu-bar dropdowns — "charset" (the Grid context bar's Character
 // sets picker) is a separate, click-only dropdown, not part of the hover
-// group below.
-type MenuKey = "glypher" | "file" | "edit" | "view" | "tools" | "marketplace" | "charset" | "cloud";
+// group below. The "flyout-*" keys are the toolbar's Illustrator-style
+// tool-group flyouts (see ToolGroup) — they ride the same openMenu state
+// so outside-click dismissal and only-one-menu-open-at-a-time come for
+// free (the toolbar row is tagged data-chrome-menu just like the menu bar).
+type MenuKey =
+  | "glypher" | "file" | "edit" | "view" | "tools" | "marketplace" | "charset" | "cloud"
+  | "flyout-penFamily" | "flyout-editFamily" | "flyout-transform";
 // One entry per Grid cell — the fixed character sets contribute one slot
 // per character (kind always "base"), and a user can append arbitrary extra
 // slots (ligatures, alternates, or a one-off base symbol outside any set) via
@@ -157,23 +162,28 @@ const FREE_ONLY_TOOLS = new Set<DrawTool>(["assign", "pan", "anchor"]);
 // advertised in the UI — Add Anchor's "=" works on keyboards where "+" costs
 // a Shift (Illustrator's own convention), and Vector keeps "v" as a muscle-
 // memory alias from before it moved to Illustrator's own P.
-type ToolDef = { value: DrawTool; label: string; icon: typeof Brush; shortcut: string; altShortcut?: string };
+// Tools sharing a group collapse into ONE toolbar slot with a long-press/
+// hover flyout — Illustrator's stacked-tool flyouts (Pen ▸ Add/Delete/
+// Convert Anchor) exactly. Grouping only compacts the toolbar row: the menu
+// bar's Tools dropdown and the keyboard shortcuts keep reading the flat list.
+type ToolGroup = "penFamily" | "editFamily" | "transform";
+type ToolDef = { value: DrawTool; label: string; icon: typeof Brush; shortcut: string; altShortcut?: string; group?: ToolGroup };
 const TOOL_DEFS: ToolDef[] = [
   { value: "pen", label: "Draw", icon: Pencil, shortcut: "b" },
-  { value: "vector", label: "Vector", icon: PenTool, shortcut: "p", altShortcut: "v" },
+  { value: "vector", label: "Vector", icon: PenTool, shortcut: "p", altShortcut: "v", group: "penFamily" },
   // Illustrator's Pen submenu, in its order: add / delete / convert.
-  { value: "vectorAdd", label: "Add Anchor", icon: CirclePlus, shortcut: "+", altShortcut: "=" },
-  { value: "vectorDelete", label: "Delete Anchor", icon: CircleMinus, shortcut: "-" },
-  { value: "vectorConvert", label: "Convert Anchor", icon: Spline, shortcut: "c" },
+  { value: "vectorAdd", label: "Add Anchor", icon: CirclePlus, shortcut: "+", altShortcut: "=", group: "penFamily" },
+  { value: "vectorDelete", label: "Delete Anchor", icon: CircleMinus, shortcut: "-", group: "penFamily" },
+  { value: "vectorConvert", label: "Convert Anchor", icon: Spline, shortcut: "c", group: "penFamily" },
   { value: "brush", label: "Brush", icon: Brush, shortcut: "u" },
   { value: "eraser", label: "Erase", icon: Eraser, shortcut: "e" },
-  { value: "select", label: "Select", icon: Lasso, shortcut: "l" },
-  { value: "nudge", label: "Nudge", icon: SplinePointer, shortcut: "n" },
+  { value: "select", label: "Select", icon: Lasso, shortcut: "l", group: "editFamily" },
+  { value: "nudge", label: "Nudge", icon: SplinePointer, shortcut: "n", group: "editFamily" },
   // "d" (Direct-ish) — Anchor gave its old "p" to Vector, Illustrator's Pen key.
-  { value: "anchor", label: "Anchor", icon: MousePointer2, shortcut: "d" },
-  { value: "move", label: "Move", icon: Move, shortcut: "m" },
-  { value: "rotate", label: "Rotate", icon: RotateCw, shortcut: "r" },
-  { value: "scale", label: "Scale", icon: Scaling, shortcut: "s" },
+  { value: "anchor", label: "Anchor", icon: MousePointer2, shortcut: "d", group: "editFamily" },
+  { value: "move", label: "Move", icon: Move, shortcut: "m", group: "transform" },
+  { value: "rotate", label: "Rotate", icon: RotateCw, shortcut: "r", group: "transform" },
+  { value: "scale", label: "Scale", icon: Scaling, shortcut: "s", group: "transform" },
   { value: "pan", label: "Pan", icon: Hand, shortcut: "h" },
   { value: "assign", label: "Assign", icon: BookA, shortcut: "a" },
 ];
@@ -647,6 +657,54 @@ export default function Home() {
       menuHoverCloseTimeoutRef.current = null;
     }, 200);
   }
+  // Toolbar tool-group flyouts (Illustrator's stacked tools) open two ways,
+  // both deliberately slower than the menu bar's instant hover-open, since
+  // these buttons sit right above the canvas where the pointer constantly
+  // passes through en route to drawing:
+  // - long-press (~300ms, Illustrator's own gesture): pointerdown arms a
+  //   timer; if it fires before pointerup, the flyout opens AND the click
+  //   that still fires on release must be swallowed — a completed
+  //   long-press means "show me the stack", not "…and also activate".
+  // - hover (~500ms): a discovery affordance for mouse users who'd never
+  //   guess long-press; any leave before the timer fires cancels it, so
+  //   merely crossing the toolbar never pops a flyout.
+  const flyoutLongPressTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flyoutLongPressFiredRef = useRef(false);
+  const flyoutHoverOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function cancelFlyoutLongPress() {
+    if (flyoutLongPressTimeoutRef.current !== null) {
+      clearTimeout(flyoutLongPressTimeoutRef.current);
+      flyoutLongPressTimeoutRef.current = null;
+    }
+  }
+  function armFlyoutLongPress(key: MenuKey) {
+    cancelFlyoutLongPress();
+    flyoutLongPressFiredRef.current = false;
+    flyoutLongPressTimeoutRef.current = setTimeout(() => {
+      flyoutLongPressTimeoutRef.current = null;
+      flyoutLongPressFiredRef.current = true;
+      setOpenMenu(key);
+    }, 300);
+  }
+  function cancelFlyoutHoverOpen() {
+    if (flyoutHoverOpenTimeoutRef.current !== null) {
+      clearTimeout(flyoutHoverOpenTimeoutRef.current);
+      flyoutHoverOpenTimeoutRef.current = null;
+    }
+  }
+  function scheduleFlyoutHoverOpen(key: MenuKey) {
+    // Re-entering the slot (or its open flyout) cancels a pending
+    // hover-close, same as openMenuOnHover does for the menu bar.
+    if (menuHoverCloseTimeoutRef.current !== null) {
+      clearTimeout(menuHoverCloseTimeoutRef.current);
+      menuHoverCloseTimeoutRef.current = null;
+    }
+    cancelFlyoutHoverOpen();
+    flyoutHoverOpenTimeoutRef.current = setTimeout(() => {
+      flyoutHoverOpenTimeoutRef.current = null;
+      setOpenMenu(key);
+    }, 500);
+  }
   // Info/How-to modal, opened from the Fontane menu — a plain overlay
   // rather than another dropdown, since this content is paragraph-length,
   // not a short action list.
@@ -934,6 +992,18 @@ export default function Home() {
 
   const [drawTool, setDrawTool] = useState<DrawTool>("pen");
   const drawToolRef = useRef(drawTool);
+  // Which member each Illustrator-style toolbar group (see ToolGroup) last
+  // had active — the group's slot button wears this tool's face, exactly
+  // like Illustrator's toolbar remembers whether the Pen slot shows Pen or
+  // Delete Anchor. Written in ONE place, the [drawTool] effect below, so
+  // keyboard shortcuts, the menu bar's Tools list, the flyouts, and
+  // programmatic switches all move the slot face the same way. Initial
+  // values are each group's first (headline) tool.
+  const [activeByGroup, setActiveByGroup] = useState<Record<ToolGroup, DrawTool>>({
+    penFamily: "vector",
+    editFamily: "select",
+    transform: "move",
+  });
 
   // Nudge tool: which stroke is currently being reshaped, its anchor
   // indices (Douglas-Peucker-simplified — see src/lib/simplify.ts), whether
@@ -1780,6 +1850,15 @@ export default function Home() {
     // (write-on-change only) would otherwise believe its last value is still
     // on screen and skip restoring it.
     lastCursorRef.current = "";
+    // The ONE writer of activeByGroup: whenever the newly active tool
+    // belongs to a toolbar group, its slot button starts wearing that
+    // tool's face (Illustrator's flyout memory) — routing this through the
+    // [drawTool] chokepoint means keyboard, menu bar, flyout clicks, and
+    // programmatic switches all update the slot identically.
+    const toolGroup = TOOL_DEFS.find((t) => t.value === drawTool)?.group;
+    if (toolGroup) {
+      setActiveByGroup((prev) => (prev[toolGroup] === drawTool ? prev : { ...prev, [toolGroup]: drawTool }));
+    }
     redrawRef.current();
   }, [drawTool]);
 
@@ -3652,6 +3731,29 @@ export default function Home() {
 
   const visibleTools = TOOL_DEFS.filter((t) => (FREE_ONLY_TOOLS.has(t.value) ? drawStyle === "free" : true));
 
+  // The toolbar row compacts visibleTools into slots, Illustrator-style: a
+  // ToolGroup collapses into ONE slot at its first visible member's position,
+  // holding the whole (visible) family for the flyout; ungrouped tools stay
+  // one slot each. Derived from visibleTools, not TOOL_DEFS, so FREE_ONLY
+  // filtering composes for free — Anchor outside Free simply drops out of
+  // the editFamily flyout rather than needing its own special case.
+  type ToolSlot = { kind: "single"; def: ToolDef } | { kind: "group"; group: ToolGroup; defs: ToolDef[] };
+  const toolSlots: ToolSlot[] = [];
+  {
+    const defsByGroup = new Map<ToolGroup, ToolDef[]>();
+    for (const t of visibleTools) {
+      if (!t.group) {
+        toolSlots.push({ kind: "single", def: t });
+      } else if (defsByGroup.has(t.group)) {
+        defsByGroup.get(t.group)!.push(t); // same array the slot already holds
+      } else {
+        const defs = [t];
+        defsByGroup.set(t.group, defs);
+        toolSlots.push({ kind: "group", group: t.group, defs });
+      }
+    }
+  }
+
   return (
     <div className={styles.page}>
       <BetaBadge />
@@ -4137,19 +4239,92 @@ export default function Home() {
         <div className={styles.toolsViewsBar} data-chrome-menu>
           <div className={styles.hBarGroup}>
             <span className={styles.hBarLabel}>Tools</span>
-            {visibleTools.map((t) => (
-              <button
-                key={t.value}
-                type="button"
-                className={`${styles.hBarItem} ${drawTool === t.value ? styles.hBarItemActive : ""}`}
-                onClick={() => setDrawTool(t.value)}
-                aria-label={`${t.label} (${t.shortcut})`}
-                title={`${t.label} (${t.shortcut})`}
-              >
-                <t.icon size={16} strokeWidth={2} />
-                <span>{t.label}</span>
-              </button>
-            ))}
+            {toolSlots.map((slot) => {
+              if (slot.kind === "single") {
+                const t = slot.def;
+                return (
+                  <button
+                    key={t.value}
+                    type="button"
+                    className={`${styles.hBarItem} ${drawTool === t.value ? styles.hBarItemActive : ""}`}
+                    onClick={() => setDrawTool(t.value)}
+                    aria-label={`${t.label} (${t.shortcut})`}
+                    title={`${t.label} (${t.shortcut})`}
+                  >
+                    <t.icon size={16} strokeWidth={2} />
+                    <span>{t.label}</span>
+                  </button>
+                );
+              }
+              // Illustrator-style grouped slot: the button wears the
+              // last-used member's face (activeByGroup), falling back to the
+              // group's headline tool when the remembered one is filtered out
+              // of this view (Anchor in Grid) — the fallback also keeps the
+              // click handler from re-activating a tool with no button here.
+              // hBarItemActive tracks the LIVE drawTool, not the remembered
+              // face: the slot only lights up while one of its members is
+              // actually the current tool.
+              const face = slot.defs.find((t) => t.value === activeByGroup[slot.group]) ?? slot.defs[0];
+              const flyoutKey: MenuKey = `flyout-${slot.group}`;
+              return (
+                <div
+                  key={slot.group}
+                  className={styles.toolSlot}
+                  onMouseEnter={() => scheduleFlyoutHoverOpen(flyoutKey)}
+                  onMouseLeave={() => {
+                    cancelFlyoutHoverOpen();
+                    scheduleMenuHoverClose();
+                  }}
+                >
+                  <button
+                    type="button"
+                    className={`${styles.hBarItem} ${styles.toolSlotCorner} ${slot.defs.some((t) => t.value === drawTool) ? styles.hBarItemActive : ""}`}
+                    aria-haspopup="menu"
+                    aria-expanded={openMenu === flyoutKey}
+                    aria-label={`${face.label} (${face.shortcut})`}
+                    title={`${face.label} (${face.shortcut}) — hold for more tools`}
+                    onPointerDown={() => armFlyoutLongPress(flyoutKey)}
+                    onPointerUp={cancelFlyoutLongPress}
+                    onPointerLeave={cancelFlyoutLongPress}
+                    onClick={() => {
+                      // A completed long-press already opened the flyout —
+                      // the click that fires on release must not ALSO
+                      // activate (armFlyoutLongPress resets the flag on the
+                      // next press, so a swallowed click can't go stale).
+                      if (flyoutLongPressFiredRef.current) {
+                        flyoutLongPressFiredRef.current = false;
+                        return;
+                      }
+                      setDrawTool(face.value);
+                    }}
+                  >
+                    <face.icon size={16} strokeWidth={2} />
+                    <span>{face.label}</span>
+                  </button>
+                  {openMenu === flyoutKey && (
+                    <div className={styles.dropdown} role="menu">
+                      {slot.defs.map((t) => (
+                        <button
+                          key={t.value}
+                          type="button"
+                          role="menuitem"
+                          className={`${styles.dropdownItem} ${styles.flyoutItem} ${drawTool === t.value ? styles.dropdownItemActive : ""}`}
+                          onClick={() => {
+                            setDrawTool(t.value);
+                            setOpenMenu(null);
+                          }}
+                        >
+                          <t.icon size={14} strokeWidth={2} />
+                          <span>
+                            {t.label} ({t.shortcut})
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
