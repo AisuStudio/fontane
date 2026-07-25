@@ -1,4 +1,5 @@
 import VfLab from "./VfLab";
+import PageviewTracker from "../PageviewTracker";
 
 // Deliberately not in any nav/sitemap and not disallowed in robots.txt either
 // (a Disallow would just draw attention to it) — reachable only by URL, same
@@ -10,5 +11,13 @@ export const metadata = {
 };
 
 export default function VfPage() {
-  return <VfLab />;
+  return (
+    <>
+      {/* Private today, but the moment it's handed to a beta tester the
+          question "did anyone open it, and for how long" becomes real —
+          and self-traffic is already excluded by IP (api/track/route.ts). */}
+      <PageviewTracker page="vf" />
+      <VfLab />
+    </>
+  );
 }

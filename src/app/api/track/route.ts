@@ -4,11 +4,27 @@ import { getSupabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
-type TrackBody =
+// Every variant also carries `session` — a random per-page-load id from
+// lib/analytics.ts, stored as-is (see fontane_events.sql for why that stays
+// within the same privacy position as everything else here).
+type TrackBody = { session?: string } & (
   | { type: "pageview"; referrer?: string | null; page?: string; language?: string | null }
   | { type: "duration"; seconds: number; page?: string }
-  | { type: "export"; format: string }
-  | { type: "tool_use"; tool: string };
+  | { type: "export"; format: string; bucket?: string | null }
+  | { type: "tool_use"; tool: string; view?: string; pointer?: string | null }
+  | { type: "undo"; tool?: string | null }
+  | { type: "charset"; format: string; bucket?: string | null }
+  | { type: "gate"; format: string }
+  | { type: "error"; format: string }
+);
+
+// Anything client-supplied that lands in a column is clamped to a short
+// string first — these are all meant to be fixed category labels, and a
+// beacon is trivially forgeable, so the table should stay bounded even if
+// someone posts nonsense at it by hand.
+function label(value: unknown, max = 40): string | null {
+  return typeof value === "string" && value.length > 0 ? value.slice(0, max) : null;
+}
 
 // Coarse device category from User-Agent — the full string is never stored,
 // only this one-of-three label. iPad's UA on recent iPadOS omits "Mobile"
@@ -79,15 +95,19 @@ export async function POST(request: Request) {
 
   const supabase = getSupabase();
   if (supabase) {
+    // On every row, whatever the type — it's what makes "did this visit draw
+    // anything" answerable at all.
+    const session = label(body.session, 64);
     try {
       if (body.type === "pageview") {
         const userAgent = request.headers.get("user-agent") ?? "unknown";
         await supabase.from("fontane_events").insert({
           type: "pageview",
+          session_id: session,
           visitor_id: dailyVisitorFingerprint(ip, userAgent),
           referrer: body.referrer ?? null,
-          page: typeof body.page === "string" ? body.page : "editor",
-          language: typeof body.language === "string" ? body.language : null,
+          page: label(body.page) ?? "editor",
+          language: label(body.language, 2),
           country: geolocation(request).country ?? null,
           device: deviceCategory(userAgent),
         });
@@ -97,15 +117,35 @@ export async function POST(request: Request) {
         // string, never a path or URL.
         await supabase.from("fontane_events").insert({
           type: "duration",
+          session_id: session,
           seconds: Math.round(body.seconds),
-          page: typeof body.page === "string" ? body.page : null,
+          page: label(body.page),
         });
       } else if (body.type === "export" && body.format) {
-        await supabase.from("fontane_events").insert({ type: "export", format: body.format });
+        await supabase
+          .from("fontane_events")
+          .insert({ type: "export", session_id: session, format: label(body.format), bucket: label(body.bucket, 8) });
       } else if (body.type === "tool_use" && body.tool) {
-        // Reuses the `format` column — unused for this type, same
-        // aggregate-count shape as exports-by-format (see fontane_events.sql).
-        await supabase.from("fontane_events").insert({ type: "tool_use", format: body.tool });
+        // Reuses the `format` column for the tool and the `page` column for
+        // the view — both unused for this type, same aggregate-count shape as
+        // exports-by-format (see fontane_events.sql).
+        await supabase.from("fontane_events").insert({
+          type: "tool_use",
+          session_id: session,
+          format: label(body.tool),
+          page: label(body.view),
+          pointer: label(body.pointer, 8),
+        });
+      } else if (body.type === "undo") {
+        await supabase
+          .from("fontane_events")
+          .insert({ type: "undo", session_id: session, format: label(body.tool) ?? "unknown" });
+      } else if (body.type === "charset" && body.format) {
+        await supabase
+          .from("fontane_events")
+          .insert({ type: "charset", session_id: session, format: label(body.format), bucket: label(body.bucket, 8) });
+      } else if ((body.type === "gate" || body.type === "error") && body.format) {
+        await supabase.from("fontane_events").insert({ type: body.type, session_id: session, format: label(body.format) });
       }
     } catch {
       // Supabase reachable but the query itself failed (bad table/policy) —

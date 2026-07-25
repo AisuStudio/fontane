@@ -49,9 +49,48 @@ alter table fontane_events add column if not exists page text;
 -- actually changed something) — which tool, not what it did. Reuses the
 -- existing `format` column (unused for this type) rather than adding a
 -- dedicated column, same aggregate-count-only shape as exports-by-format.
+-- Since 2026-07-25 tool_use rows also carry `page` (the view the action
+-- happened in, same labels duration rows use) — "Vector in Grid" and
+-- "Vector in the Editor" are different facts about what the tool is for.
+
+-- Product-usage additions (2026-07-25). Every one of these is still a fixed
+-- category or a bucket, never a free value, never anything about content:
+-- - session_id: a random id generated per PAGE LOAD and held only in a JS
+--   variable (see lib/analytics.ts) — nothing is written to the visitor's
+--   device, so the "no consent needed" position is unchanged, and it is
+--   strictly less identifying than visitor_id above (which is derived from
+--   the IP; this is derived from nothing). It exists so events within one
+--   visit can be counted together: did this visit draw anything, did it
+--   export, how long until the first stroke. It cannot link two visits, two
+--   tabs, or two days — a reload is a new session, by construction.
+-- - pointer: "pen" | "touch" | "mouse" | "other" on tool_use rows, from the
+--   PointerEvent that produced the action. The one number that says whether
+--   pressure/stylus work pays off at all.
+-- - bucket: a coarse magnitude, never an exact count. On export rows it is
+--   how many glyphs the exported document actually had ("0", "1-5", "6-20",
+--   "21-60", "60+") — five buckets can't identify a document, but they do
+--   answer "are people making five letters or a typeface". On charset rows
+--   it is "on" | "off".
+alter table fontane_events add column if not exists session_id text;
+alter table fontane_events add column if not exists pointer text;
+alter table fontane_events add column if not exists bucket text;
+
+-- Four more event types (2026-07-25), each answering a question the counts
+-- above structurally cannot:
+-- - undo: one row per undo, `format` = the last tool that reported a use.
+--   Raw usage says a tool is reached for; the undo rate says whether it did
+--   what the person expected.
+-- - charset: a character set toggled on or off in Grid (`format` = set id,
+--   `bucket` = on/off) — the most direct evidence of which glyph coverage is
+--   actually wanted, rather than which we guessed as the default.
+-- - gate: a wall someone hit and could not pass (`format` = which one, e.g.
+--   "cloud-code"). Every rejected betacode is a person asking for accounts.
+-- - error: a user-visible failure (`format` = where, e.g. "export:otf").
+--   Without it a failed export is indistinguishable from a successful one,
+--   since the export event fires when the button is pressed.
 alter table fontane_events drop constraint if exists fontane_events_type_check;
 alter table fontane_events add constraint fontane_events_type_check
-  check (type in ('pageview', 'duration', 'export', 'tool_use'));
+  check (type in ('pageview', 'duration', 'export', 'tool_use', 'undo', 'charset', 'gate', 'error'));
 
 -- RLS enabled with NO policies = deny-all for the anon/authenticated roles.
 -- The app only ever reads/writes via the service_role key (server-side
@@ -60,6 +99,10 @@ alter table fontane_events add constraint fontane_events_type_check
 alter table fontane_events enable row level security;
 
 create index if not exists fontane_events_type_idx on fontane_events (type);
+-- /anneliese scopes every query to a date range, and the per-session metrics
+-- group by session_id within that range.
+create index if not exists fontane_events_created_at_idx on fontane_events (created_at);
+create index if not exists fontane_events_session_idx on fontane_events (session_id);
 
 -- service_role bypasses RLS but NOT plain SQL privileges — a table created
 -- outside Supabase's dashboard SQL editor (e.g. via a direct psql/pg

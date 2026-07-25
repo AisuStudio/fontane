@@ -1,7 +1,11 @@
+import PageviewTracker from "../PageviewTracker";
+
 export const metadata = { title: "Imprint & Privacy — Fontane.Studio" };
 
 export default function LegalPage() {
   return (
+    <>
+      <PageviewTracker page="legal" />
     <div
       style={{
         minHeight: "100vh",
@@ -102,5 +106,6 @@ export default function LegalPage() {
         </p>
       </div>
     </div>
+    </>
   );
 }
