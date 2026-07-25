@@ -24,6 +24,14 @@ const RESAMPLE_POINTS = 96;
 // Muss optionsFor() in src/app/page.tsx spiegeln (gleiche Keys, gleiche
 // Defaults — simulatePressure etc. bewusst NICHT gesetzt, damit der Render
 // byte-gleich zur App bleibt). factor skaliert nur die Stiftbreite.
+//
+// Bewusst NUR der Freehand-Brush: dieser Spike lebt davon, dass alle drei
+// Masters dieselbe Punktzahl pro Kontur haben (siehe resampleRing und die
+// Korrespondenz-Prüfung in build_vf.py). Ein Nib-Brush ließe sich so
+// interpolieren, ein Stipple-Brush grundsätzlich nicht — seine Stempelanzahl
+// ändert sich mit der Stiftbreite, und damit bricht die Punkt-zu-Punkt-
+// Zuordnung, auf der gvar beruht. Bis das entschieden ist, rendert dieses
+// Skript jedes .fff als Freehand und sagt das unten laut.
 function optionsFor(settings, widthScale, factor) {
   return {
     size: settings.size * (widthScale ?? 1) * factor,
@@ -74,6 +82,13 @@ const inputPath = process.argv[2] ?? join(here, "fixtures", "spike-lo.fff");
 const outputPath = process.argv[3] ?? join(here, "vf-masters.json");
 
 const fff = JSON.parse(readFileSync(inputPath, "utf8"));
+const fffBrush = fff.settings?.brush?.kind ?? "freehand";
+if (fffBrush !== "freehand") {
+  console.warn(
+    `WARNUNG: ${inputPath} benutzt den "${fffBrush}"-Brush. Dieses Skript rendert trotzdem Freehand ` +
+      `(siehe optionsFor oben) — die gebaute VF sieht also anders aus als die App.`
+  );
+}
 const strokesById = new Map(fff.strokes.map((s) => [s.id, s]));
 
 const glyphs = [];

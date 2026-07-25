@@ -345,6 +345,15 @@ function applyScatter(points: StrokePoint[], options: BrushOptions, seedKey: str
   return polygons;
 }
 
+// Just the hit-test envelope, skipping the brush geometry entirely. Grid's
+// cells recompute this per stroke on every pointer move (they cache no
+// outlines, unlike Free's canvas), and building a few hundred nib hulls or
+// stipple stamps only to throw them away and test against the envelope would
+// put all of that in the drag path.
+export function brushEnvelope(points: StrokePoint[], options: BrushOptions): [number, number][] {
+  return points.length === 0 ? [] : freehandOutline(points, options);
+}
+
 // Applies `options.brush` to a skeleton. seedKey should be stable for the
 // life of the stroke — the stroke's own id everywhere it has one — so the
 // same stroke scatters identically on every render and in every export.

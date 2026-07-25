@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import styles from "./page.module.css";
 import { outlineToPath, outlineToSharpPath, skeletonToPath, cubicPoint, splitVectorSegment, type PathCommand } from "@/lib/contour";
-import { applyBrush, type BrushOptions, type BrushOutput } from "@/lib/brush";
+import { applyBrush, brushEnvelope, type BrushOptions, type BrushOutput } from "@/lib/brush";
 import { pointInPolygon, anyPointInPolygon, fitPointsToBox } from "@/lib/geometry";
 import { simplifyStrokeIndices } from "@/lib/simplify";
 import type { StrokeKind, StrokePoint } from "@/lib/strokes";
@@ -734,7 +734,7 @@ export default function GridCell({
         // A brush stroke's points trace its own edge, not a true centerline
         // — skip it, same as page.tsx's own Nudge/Anchor gating.
         if ((s.kind ?? "pen") === "brush") continue;
-        if (pointInPolygon([x, y], outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current), s.id).envelope)) {
+        if (pointInPolygon([x, y], brushEnvelope(s.points, effectiveOptionsFor(s, strokeOptionsRef.current)))) {
           editingStrokeIdRef.current = s.id;
           anchorIndicesRef.current = simplifyStrokeIndices(s.points.map((p) => [p[0], p[1]]));
           resampledRef.current = false;
@@ -1073,7 +1073,7 @@ export default function GridCell({
         const s = strokesRef.current[i];
         if (
           selectedIdsRef.current.has(s.id) &&
-          pointInPolygon([x, y], outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current), s.id).envelope)
+          pointInPolygon([x, y], brushEnvelope(s.points, effectiveOptionsFor(s, strokeOptionsRef.current)))
         ) {
           hit = true;
           break;
@@ -1160,7 +1160,7 @@ export default function GridCell({
         // Topmost (last-drawn) stroke wins when strokes overlap.
         for (let i = strokesRef.current.length - 1; i >= 0; i--) {
           const s = strokesRef.current[i];
-          if (pointInPolygon([x, y], outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current), s.id).envelope)) {
+          if (pointInPolygon([x, y], brushEnvelope(s.points, effectiveOptionsFor(s, strokeOptionsRef.current)))) {
             onEraseRef.current(new Set([s.id]));
             break;
           }
