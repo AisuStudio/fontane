@@ -60,6 +60,7 @@ const jsonLd = {
     "Editor view to type live preview text using your own tagged glyphs",
     "Animate mode: CSS-driven text animations exportable as a self-contained HTML embed",
     "Instant OTF font export, generated entirely client-side, no upload required",
+    "Weight family export: Light, Regular, and Bold as three independent OTF files sharing one family name",
     "Skeleton SVG export for manual refinement in Glyphs.app or other type tools",
     "FFF project files to save and resume a font in progress",
     "Glyphs.app import script for glyph-level fine-tuning by professional type designers",
@@ -188,6 +189,10 @@ const SECTIONS: Section[] = [
       {
         name: "OTF export",
         description: "A complete OpenType font file, compiled entirely in your browser — nothing is uploaded, nothing to install.",
+      },
+      {
+        name: "Weight family export",
+        description: "Export Light, Regular, and Bold as three independent OTF files sharing one family name — generated client-side from the same drawn strokes, no server round-trip.",
       },
       {
         name: "Skeleton SVG export",

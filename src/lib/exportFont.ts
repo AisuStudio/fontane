@@ -17,7 +17,7 @@ const SIDE_BEARING = 40;
 // 1000-unit em — a reasonable cap-height-ish target, not a real calibration.
 const TARGET_GLYPH_HEIGHT = 700;
 
-type CompiledGlyph = {
+export type CompiledGlyph = {
   name: string;
   kind: "base" | "ligature" | "alternate";
   unicode?: string;
@@ -33,9 +33,9 @@ type CompiledGlyph = {
   cellHeight?: number;
 };
 
-type DocMetrics = { ascender: number; baseline: number; descender: number };
+export type DocMetrics = { ascender: number; baseline: number; descender: number };
 
-type CompiledDocument = {
+export type CompiledDocument = {
   version: number;
   glyphs: CompiledGlyph[];
   metrics?: DocMetrics;
@@ -175,7 +175,7 @@ function glyphNameFor(entry: CompiledGlyph): string {
   return entry.name;
 }
 
-export function buildFont(doc: CompiledDocument, familyName = "Fontane Sketch"): Font {
+export function buildFont(doc: CompiledDocument, familyName = "Fontane Sketch", styleName = "Regular"): Font {
   const notdefGlyph = new Glyph({
     name: ".notdef",
     advanceWidth: DEFAULT_ADVANCE,
@@ -213,7 +213,7 @@ export function buildFont(doc: CompiledDocument, familyName = "Fontane Sketch"):
 
   return new Font({
     familyName,
-    styleName: "Regular",
+    styleName,
     unitsPerEm: UPM,
     ascender: ASCENT,
     descender: DESCENT,

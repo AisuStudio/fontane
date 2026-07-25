@@ -60,6 +60,7 @@ const jsonLd = {
     "Editor-Ansicht, um mit den eigenen getaggten Glyphen live Vorschautext zu tippen",
     "Animate-Modus: CSS-basierte Textanimationen, exportierbar als eigenständiges HTML-Embed",
     "Sofortiger OTF-Font-Export, komplett clientseitig erzeugt, kein Upload nötig",
+    "Gewichtsfamilien-Export: Light, Regular und Bold als drei unabhängige OTF-Dateien mit gemeinsamem Familiennamen",
     "Skeleton-SVG-Export zur manuellen Weiterbearbeitung in Glyphs.app oder anderen Vektor-Werkzeugen",
     "FFF-Projektdateien, um einen Font zwischenzuspeichern und später fortzusetzen",
     "Glyphs.app-Importskript für die Feinarbeit auf Glyphenebene durch professionelle Schriftgestalter",
@@ -188,6 +189,10 @@ const SECTIONS: Section[] = [
       {
         name: "OTF-Export",
         description: "Eine vollständige OpenType-Font-Datei, komplett im Browser erzeugt — nichts wird hochgeladen, nichts muss installiert werden.",
+      },
+      {
+        name: "Gewichtsfamilien-Export",
+        description: "Exportiere Light, Regular und Bold als drei unabhängige OTF-Dateien mit gemeinsamem Familiennamen — clientseitig aus denselben gezeichneten Strichen erzeugt, kein Server-Umweg.",
       },
       {
         name: "Skeleton-SVG-Export",

@@ -9,6 +9,8 @@ import { loadStrokes, type Stroke, type StrokeKind, type StrokePoint } from "@/l
 import { type Nib } from "@/lib/calligraphy";
 import { loadMetrics, type Metrics } from "@/lib/metrics";
 import { loadSettings, type StrokeSettings } from "@/lib/settings";
+import { wghtFactor } from "@/lib/fontAxes";
+import { exportInstanceFamily } from "@/lib/vfExport";
 
 const INK_COLOR = "#1f1934";
 const BG_COLOR = "#eae8e0";
@@ -21,12 +23,6 @@ const TOP_PADDING = 48; // same reasoning as EditorPanel: bbox-fallback ascender
 const LINE_GAP = 24;
 const LEFT_MARGIN = 32;
 const MAX_SIZE_FACTOR = 1.15; // upper display-size bound — draw() auto-fits below this so long text never clips
-
-// wght 100..400..900 → pen-size factor 0.45..1..1.9, the same mapping the
-// generated variable font uses (font-build/gen-vf-masters.mjs MASTERS).
-function wghtFactor(wght: number): number {
-  return wght <= 400 ? 0.45 + (wght - 100) * (0.55 / 300) : 1 + (wght - 400) * (0.9 / 500);
-}
 
 // Local duplicates of the app's canvas helpers — same convention as
 // EditorPanel.tsx/GridCell.tsx (each canvas owner keeps its own copies).
@@ -91,6 +87,7 @@ export default function VfLab() {
   const [wdth, setWdth] = useState(100);
   const [slnt, setSlnt] = useState(0);
   const [breathe, setBreathe] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Loaded once from the same localStorage the studio writes — read-only
   // here, so the lab can never corrupt drawing state.
@@ -211,6 +208,18 @@ export default function VfLab() {
 
   const taggedCount = glyphs.filter((g) => g.kind === "base").length;
 
+  // Fixed Light/Regular/Bold at wdth 100 / slnt 0 — the wdth/wght/slnt combo
+  // matrix (Bold Italic, Condensed Bold, ...) is a later step; three weight
+  // instances is the first real family, not a one-off custom export.
+  async function handleExportFamily() {
+    setExporting(true);
+    try {
+      await exportInstanceFamily(glyphs, strokes, metrics, settings);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   if (!mounted) {
     return <div style={{ minHeight: "100vh", background: BG_COLOR }} />;
   }
@@ -278,6 +287,21 @@ export default function VfLab() {
               <input type="checkbox" checked={breathe} onChange={(e) => setBreathe(e.target.checked)} />
               Atmen (wght animiert)
             </label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={handleExportFamily}
+                disabled={exporting}
+                style={{
+                  fontFamily: "inherit", fontSize: 12, fontWeight: 600, padding: "8px 14px",
+                  border: `1px solid ${INK_COLOR}`, borderRadius: 4, background: exporting ? "transparent" : INK_COLOR,
+                  color: exporting ? INK_COLOR : BG_COLOR, cursor: exporting ? "default" : "pointer",
+                }}
+              >
+                {exporting ? "Exportiere …" : "Export Family (Light/Regular/Bold)"}
+              </button>
+              <span style={{ fontSize: 11, opacity: 0.55 }}>3 echte, unabhängige OTF-Dateien — kein Backend, keine Variable Font.</span>
+            </div>
           </div>
         </>
       )}
