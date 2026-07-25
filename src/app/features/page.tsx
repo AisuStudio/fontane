@@ -38,6 +38,7 @@ const jsonLd = {
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
   featureList: [
     "Pressure-sensitive freehand drawing with Apple Pencil, Wacom, or a mouse",
+    "Calligraphy tool: a broad-nib pen with fixed size/oval/angle, width from stroke direction rather than pressure",
     "Grid View with per-character guides (ascender, x-height, baseline, descender) and adjustable side bearings, with a Lock Bearings toggle so drawing over a bearing draws instead of dragging it",
     "Illustrator-style vector pen family: Pen, Add Anchor, Delete Anchor, and Convert Anchor tools on familiar shortcuts (P, +, -, C)",
     "Smooth anchor points with tangent-continuity handles — dragging one handle keeps the opposite one aligned at its own length, Alt breaks the pair, double-click toggles smooth/corner",
@@ -89,6 +90,11 @@ const SECTIONS: Section[] = [
         name: "Swappable brushes",
         description:
           "One skeleton, many typefaces: the drawn path stays the source, and the brush applied to it — pressure envelope, swept calligraphy nib, or stipple stamps at your own spacing, rotation and jitter — is swapped at any time and restyles every letter at once.",
+      },
+      {
+        name: "Calligraphy",
+        description:
+          "A dedicated broad-nib pen: an oval held at a fixed size, roundness, and angle, dragged along your stroke — width comes from the direction you move, not how hard you press, the classic broad-pen hand (Italic, Gothic) rather than pressure-based contrast.",
       },
     ],
   },
