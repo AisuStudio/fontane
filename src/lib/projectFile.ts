@@ -2,7 +2,7 @@ import { saveFile } from "./saveFile";
 import { saveGlyphs, type Glyph } from "./glyphs";
 import { saveStrokes, type Stroke } from "./strokes";
 import { saveMetrics, type Metrics } from "./metrics";
-import { saveSettings, type StrokeSettings } from "./settings";
+import { saveSettings, mergeSettings, type StrokeSettings } from "./settings";
 import { saveVectorShapes, type VectorShape } from "./vectorShapes";
 
 // "FFF" (Fontane Font File) — a raw dump of exactly the state the app keeps
@@ -71,5 +71,8 @@ export function applyProjectFile(project: ProjectFile) {
   saveStrokes(project.strokes);
   saveVectorShapes(project.vectorShapes ?? []);
   saveMetrics(project.metrics);
-  saveSettings(project.settings);
+  // Through mergeSettings, not straight through: an .fff saved before the
+  // brush settings existed has no `brush` key at all, and every renderer
+  // reads settings.brush.kind unconditionally.
+  saveSettings(mergeSettings(project.settings));
 }

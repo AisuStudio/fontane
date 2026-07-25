@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getStroke } from "perfect-freehand";
 import { layoutText } from "@/lib/layoutText";
-import { outlineToPath, type PathCommand } from "@/lib/contour";
+import { outlineToPath, outlineToSharpPath, type PathCommand } from "@/lib/contour";
+import { applyBrush, type BrushOptions, type BrushOutput } from "@/lib/brush";
 import { loadGlyphs, type Glyph } from "@/lib/glyphs";
 import { loadStrokes, type Stroke, type StrokePoint } from "@/lib/strokes";
 import { loadMetrics, type Metrics } from "@/lib/metrics";
@@ -29,12 +29,13 @@ function wghtFactor(wght: number): number {
 
 // Local duplicates of the app's canvas helpers — same convention as
 // EditorPanel.tsx/GridCell.tsx (each canvas owner keeps its own copies).
-function optionsFor(settings: StrokeSettings) {
+function optionsFor(settings: StrokeSettings): BrushOptions {
   return {
     size: settings.size,
     thinning: settings.mode === "mono" ? 0 : settings.thinning,
     smoothing: settings.smoothing,
     streamline: settings.streamline,
+    brush: settings.brush,
   };
 }
 
@@ -51,11 +52,13 @@ function applyPath(ctx: CanvasRenderingContext2D, commands: PathCommand[]) {
   }
 }
 
-function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][]) {
-  const commands = outlineToPath(outline);
-  if (commands.length === 0) return;
+function fillOutline(ctx: CanvasRenderingContext2D, out: BrushOutput) {
+  if (out.polygons.length === 0) return;
   ctx.beginPath();
-  applyPath(ctx, commands);
+  for (const polygon of out.polygons) {
+    if (polygon.length < 3) continue;
+    applyPath(ctx, out.smooth ? outlineToPath(polygon) : outlineToSharpPath(polygon));
+  }
   ctx.fill();
 }
 
@@ -87,20 +90,29 @@ export default function VfLab() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      type Line = { y: number; height: number; glyphSets: StrokePoint[][] };
+      // Each set carries the id of the stroke it came from, so the wght/wdth
+      // axes reshape a scatter-brushed glyph without also rerolling its
+      // stamp pattern (see applyBrush's seedKey).
+      type GlyphSet = { points: StrokePoint[]; seed: string };
+      type Line = { y: number; height: number; glyphSets: GlyphSet[] };
       const lines: Line[] = [];
       let lineY = TOP_PADDING;
       let maxLineWidth = 0;
       for (const paragraph of text.split("\n")) {
         const layout = layoutText(paragraph, glyphs, strokes, metrics, false);
-        const glyphSets: StrokePoint[][] = [];
+        const glyphSets: GlyphSet[] = [];
         for (const entry of layout.entries) {
           if (entry.kind !== "glyph") continue;
-          for (const strokePoints of entry.strokePointSets) {
-            glyphSets.push(
-              strokePoints.map((p) => [p[0] * entry.scale + entry.offsetX, p[1] * entry.scale + entry.offsetY, p[2]])
-            );
-          }
+          entry.strokePointSets.forEach((strokePoints, i) => {
+            glyphSets.push({
+              seed: entry.strokeIds[i] ?? `${entry.glyph.name}:${i}`,
+              points: strokePoints.map((p) => [
+                p[0] * entry.scale + entry.offsetX,
+                p[1] * entry.scale + entry.offsetY,
+                p[2],
+              ]),
+            });
+          });
         }
         lines.push({ y: lineY, height: layout.height, glyphSets });
         maxLineWidth = Math.max(maxLineWidth, layout.width);
@@ -140,13 +152,13 @@ export default function VfLab() {
         ctx.translate(LEFT_MARGIN, baseY);
         ctx.transform(wdthF, 0, -shear, 1, 0, 0);
         ctx.translate(-LEFT_MARGIN, -baseY);
-        for (const strokePoints of line.glyphSets) {
-          const transformed: StrokePoint[] = strokePoints.map((p) => [
+        for (const { points, seed } of line.glyphSets) {
+          const transformed: StrokePoint[] = points.map((p) => [
             (p[0] + LEFT_MARGIN) * SIZE_FACTOR,
             (p[1] + line.y) * SIZE_FACTOR,
             p[2],
           ]);
-          fillOutline(ctx, getStroke(transformed, optionsFor(penSettings)) as [number, number][]);
+          fillOutline(ctx, applyBrush(transformed, optionsFor(penSettings), seed));
         }
         ctx.restore();
       }
