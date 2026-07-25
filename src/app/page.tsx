@@ -835,6 +835,27 @@ export default function Home() {
     window.localStorage.setItem("fontane.keepProportions.v1", String(value));
   }
 
+  // Grid bearings locked: the bearing lines and the per-cell width handle stop
+  // answering the pointer (see GridCell's lockBearings), so a stroke drawn over
+  // one is just a stroke instead of a dragged sidebearing. Named for the
+  // bearings specifically, not the guides in general: the metric lines
+  // (baseline/x-height/ascender/descender) aren't draggable in a cell at all —
+  // they come from the sliders — so bearings and the width handle are the only
+  // things a lock has anything to say about. Drawing across a full Grid means
+  // crossing those lines constantly — this is the switch for "I'm shaping
+  // letters now, not spacing them". Read on first render rather
+  // than defaulted-then-synced so a reload doesn't hand back an unlocked Grid
+  // for a frame, which is exactly one frame of the accident it prevents.
+  const [lockBearings, setLockBearings] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("fontane.lockBearings.v1") === "true";
+  });
+
+  function updateLockBearings(value: boolean) {
+    setLockBearings(value);
+    window.localStorage.setItem("fontane.lockBearings.v1", String(value));
+  }
+
   // Each GridCell's own actual rendered size, keyed by letter — the label
   // bar under the canvas eats some of the grid row's nominal height (see
   // GridCell's onResize), so cellWidth/cellHeightPx alone don't match what a
@@ -4072,6 +4093,7 @@ export default function Home() {
                   leftBearing={glyph?.leftBearing}
                   rightBearing={glyph?.rightBearing}
                   onBearingsChange={(left, right) => handleBearingsChange(slot, left, right)}
+                  lockBearings={lockBearings}
                   onResize={(width, height) => handleCellResize(cellKey, width, height)}
                   widthPx={effectiveWidthPx}
                   heightPx={cellHeightPx}
@@ -4246,6 +4268,30 @@ export default function Home() {
           )}
           {topMode === "draw" && drawStyle === "grid" && (
             <div className={styles.sliders}>
+              {/* The label stays the same string in both states on purpose:
+                  lockBearings is read from localStorage during the first render
+                  (so the Grid is already locked on the very first frame, not a
+                  frame later), which means the server rendered this button
+                  from the default. Swapping the TEXT on it made that a
+                  hydration mismatch React can't patch up quietly — a real
+                  #418 in the console on every locked reload. The on state
+                  rides on the class and aria-pressed instead, attributes React
+                  reconciles without complaint, and the filled treatment is the
+                  same one the Base/Ligature/Alt toggle already uses for
+                  "this one is active". */}
+              <button
+                type="button"
+                aria-pressed={lockBearings}
+                className={`${styles.clearBtn} ${lockBearings ? styles.toggleBtnOn : ""}`}
+                onClick={() => updateLockBearings(!lockBearings)}
+                title={
+                  lockBearings
+                    ? "Bearings are locked — the bearing lines and the cell width handle ignore the pointer, so you can draw straight over them"
+                    : "Lock the bearing lines and the cell width handle so drawing over them doesn't drag them"
+                }
+              >
+                Lock Bearings
+              </button>
               <label className={styles.sliderRow}>
                 <span>Cell size</span>
                 <input
