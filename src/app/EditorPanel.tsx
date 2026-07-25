@@ -7,7 +7,8 @@ import { layoutText, type LaidOutEntry } from "@/lib/layoutText";
 import { outlineToPath, flattenVectorShape, type PathCommand } from "@/lib/contour";
 import type { VectorShape } from "@/lib/vectorShapes";
 import type { Glyph } from "@/lib/glyphs";
-import type { Stroke, StrokePoint } from "@/lib/strokes";
+import type { Stroke, StrokeKind, StrokePoint } from "@/lib/strokes";
+import { calligraphyOutline, type Nib } from "@/lib/calligraphy";
 import type { Metrics } from "@/lib/metrics";
 import type { StrokeSettings } from "@/lib/settings";
 
@@ -59,7 +60,15 @@ function optionsFor(settings: StrokeSettings) {
   };
 }
 
-function outlineFor(points: StrokePoint[], settings: StrokeSettings): [number, number][] {
+function nibFor(settings: StrokeSettings): Nib {
+  return { size: settings.nibSize, ratio: settings.nibRatio, angle: settings.nibAngle };
+}
+
+// Dispatches on the tool that drew the stroke, exactly like page.tsx's own
+// outlineFor — a calligraphy stroke previews with the broad nib it was drawn
+// with, not with the pen.
+function outlineFor(points: StrokePoint[], settings: StrokeSettings, kind?: StrokeKind): [number, number][] {
+  if (kind === "calligraphy") return calligraphyOutline(points, nibFor(settings));
   return getStroke(points, optionsFor(settings)) as [number, number][];
 }
 
@@ -67,8 +76,9 @@ function outlineFor(points: StrokePoint[], settings: StrokeSettings): [number, n
 // the transformed-points map in draw()) — without this, stroke thickness
 // stays pinned to the global settings.size regardless of the chosen point
 // size, so text looks razor-thin at large sizes and blobby at small ones.
+// The calligraphy nib rides along on the same factor for the same reason.
 function effectiveSettingsFor(settings: StrokeSettings, scale: number): StrokeSettings {
-  return scale === 1 ? settings : { ...settings, size: settings.size * scale };
+  return scale === 1 ? settings : { ...settings, size: settings.size * scale, nibSize: settings.nibSize * scale };
 }
 
 function applyPath(ctx: CanvasRenderingContext2D, commands: PathCommand[]) {
@@ -235,7 +245,10 @@ export default function EditorPanel({
         y: number;
         height: number;
         minX: number;
-        glyphInk: { strokeSets: StrokePoint[][]; shapeRings: [number, number][][] }[];
+        glyphInk: {
+          strokeSets: { points: StrokePoint[]; kind?: StrokeKind }[];
+          shapeRings: [number, number][][];
+        }[];
       };
       const lines: LineGeometry[] = [];
 
@@ -274,7 +287,10 @@ export default function EditorPanel({
           // a glyph carrying Vector-tool shapes has to be composited on its
           // own (its shapes punch holes in ITS strokes, not in a neighbor's),
           // which needs the boundary kept intact.
-          const glyphInk: { strokeSets: StrokePoint[][]; shapeRings: [number, number][][] }[] = [];
+          const glyphInk: {
+            strokeSets: { points: StrokePoint[]; kind?: StrokeKind }[];
+            shapeRings: [number, number][][];
+          }[] = [];
 
           for (const entry of lineEntries) {
             if (entry.kind !== "glyph") continue;
@@ -283,10 +299,12 @@ export default function EditorPanel({
               if (rx < minX) minX = rx;
               return rx;
             };
-            const strokeSets = entry.strokePointSets.map(
-              (strokePoints): StrokePoint[] =>
-                strokePoints.map((p) => [rebaseX(p[0]), p[1] * entry.scale + entry.offsetY, p[2]])
-            );
+            const strokeSets = entry.strokeSets.map((set) => ({
+              points: set.points.map(
+                (p): StrokePoint => [rebaseX(p[0]), p[1] * entry.scale + entry.offsetY, p[2]]
+              ),
+              kind: set.kind,
+            }));
             const shapeRings = entry.vectorShapes.map(
               (shape): [number, number][] =>
                 flattenVectorShape(shape).map(([x, y]) => [rebaseX(x), y * entry.scale + entry.offsetY])
@@ -344,12 +362,12 @@ export default function EditorPanel({
           (y + line.y) * sizeFactor,
         ];
         for (const { strokeSets, shapeRings } of line.glyphInk) {
-          for (const strokePoints of strokeSets) {
-            const transformed: StrokePoint[] = strokePoints.map((p) => {
+          for (const set of strokeSets) {
+            const transformed: StrokePoint[] = set.points.map((p) => {
               const [x, y] = place(p[0], p[1]);
               return [x, y, p[2]];
             });
-            fillOutline(ctx!, outlineFor(transformed, penSettings));
+            fillOutline(ctx!, outlineFor(transformed, penSettings, set.kind));
           }
 
           if (shapeRings.length === 0) continue;

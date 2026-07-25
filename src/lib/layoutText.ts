@@ -1,5 +1,5 @@
 import type { Glyph } from "./glyphs";
-import type { Stroke, StrokePoint } from "./strokes";
+import type { Stroke, StrokeKind, StrokePoint } from "./strokes";
 import type { Metrics } from "./metrics";
 import type { VectorShape } from "./vectorShapes";
 import { flattenVectorShape } from "./contour";
@@ -19,11 +19,13 @@ export type LaidOutEntry =
       // Raw, untransformed points — pressure kept (unlike everything else in
       // this file, which only ever needed x/y) so a pressure-sensitive
       // canvas renderer (Editor mode) can feed these straight into
-      // perfect-freehand. Callers that only need x/y (skeleton/SVG export)
-      // just map it away.
-      strokePointSets: StrokePoint[][];
+      // perfect-freehand. Each set rides along with the kind of tool that drew
+      // it, since that decides which outline generator it belongs in (a
+      // broad-nib calligraphy stroke is not a perfect-freehand one). Callers
+      // that only need x/y (skeleton/SVG export) map both away.
+      strokeSets: { points: StrokePoint[]; kind?: StrokeKind }[];
       // Closed Vector-tool shapes tagged into this glyph, untransformed like
-      // strokePointSets above. Renderers apply the same compile-time rule as
+      // strokeSets above. Renderers apply the same compile-time rule as
       // compileDocument(): with strokes present they punch holes, alone they
       // fill. Empty for every glyph drawn only with the pen.
       vectorShapes: VectorShape[];
@@ -142,10 +144,10 @@ export function layoutText(
       continue;
     }
 
-    const strokePointSets = glyph.strokeIds
+    const strokeSets = glyph.strokeIds
       .map((id) => byId.get(id))
       .filter((s): s is Stroke => Boolean(s))
-      .map((s) => s.points);
+      .map((s) => ({ points: s.points, kind: s.kind }));
     // Only closed shapes are real geometry — an unfinished path has no fill,
     // same rule compileDocument() applies at export time.
     const glyphVectorShapes = (glyph.vectorShapeIds ?? [])
@@ -177,7 +179,7 @@ export function layoutText(
       // but a tagged glyph could in principle have lost its strokes), treat
       // the character as missing rather than crash on a null bbox.
       const bbox = bounds([
-        ...strokePointSets.flat().map((p) => [p[0], p[1]] as [number, number]),
+        ...strokeSets.flatMap((s) => s.points).map((p) => [p[0], p[1]] as [number, number]),
         // Vector shapes count as ink too — without them a glyph drawn ONLY
         // with the Vector tool has an empty bbox and gets treated as missing.
         ...glyphVectorShapes.flatMap((s) => flattenVectorShape(s)),
@@ -199,7 +201,7 @@ export function layoutText(
     entries.push({
       kind: "glyph",
       glyph,
-      strokePointSets,
+      strokeSets,
       vectorShapes: glyphVectorShapes,
       scale,
       offsetX,

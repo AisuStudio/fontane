@@ -7,6 +7,7 @@ import { outlineToPath, skeletonToPath, cubicPoint, splitVectorSegment, type Pat
 import { pointInPolygon, anyPointInPolygon, fitPointsToBox } from "@/lib/geometry";
 import { simplifyStrokeIndices } from "@/lib/simplify";
 import type { StrokeKind, StrokePoint } from "@/lib/strokes";
+import { calligraphyOutline, type Nib } from "@/lib/calligraphy";
 import type { Metrics } from "@/lib/metrics";
 import { unicodeFor } from "@/lib/glyphs";
 import { setClipboard, getClipboard, type ClipboardStroke } from "@/lib/clipboard";
@@ -16,6 +17,7 @@ export type StrokeOptions = { size: number; thinning: number; smoothing: number;
 export type CellTool =
   | "pen"
   | "brush"
+  | "calligraphy"
   | "eraser"
   | "select"
   | "nudge"
@@ -104,16 +106,41 @@ function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][],
   ctx.fill();
 }
 
-function outlineFor(points: StrokePoint[], options: StrokeOptions): [number, number][] {
+// Mirrors page.tsx's own outlineFor: the tool that DREW a stroke decides how
+// its outline is built, so a calligraphy stroke keeps its broad-nib shape no
+// matter which tool is in hand now. `kind` is optional for the live
+// in-progress path, which has no CellStroke to read it off yet.
+function outlineFor(points: StrokePoint[], options: StrokeOptions, nib: Nib, kind?: StrokeKind): [number, number][] {
+  if (kind === "calligraphy") return calligraphyOutline(points, nib);
   return getStroke(points, options) as [number, number][];
 }
 
 // Mirrors page.tsx's effectiveSettingsFor — bakes a stroke's own widthScale
-// into the size passed to outlineFor, so rendering/hit-testing reflect its
-// actual (possibly scaled) thickness instead of the shared global size.
+// into the width passed to outlineFor, so rendering/hit-testing reflect its
+// actual (possibly scaled) thickness instead of the shared global size. A
+// stroke only ever uses one of the two widths, so both scale together.
 function effectiveOptionsFor(stroke: CellStroke, options: StrokeOptions): StrokeOptions {
   const ws = stroke.widthScale ?? 1;
   return ws === 1 ? options : { ...options, size: options.size * ws };
+}
+
+function effectiveNibFor(stroke: CellStroke, nib: Nib): Nib {
+  const ws = stroke.widthScale ?? 1;
+  return ws === 1 ? nib : { ...nib, size: nib.size * ws };
+}
+
+// The one call every stored stroke's outline goes through — mirrors page.tsx's
+// strokeOutline.
+function strokeOutline(stroke: CellStroke, options: StrokeOptions, nib: Nib): [number, number][] {
+  return outlineFor(stroke.points, effectiveOptionsFor(stroke, options), effectiveNibFor(stroke, nib), stroke.kind);
+}
+
+// Local copy of page.tsx's strokeKindFor, over this component's own tool
+// union — same split as the rest of the Free/Grid canvas logic.
+function strokeKindFor(tool: CellTool): StrokeKind {
+  if (tool === "brush") return "brush";
+  if (tool === "calligraphy") return "calligraphy";
+  return "pen";
 }
 
 // Pivot for Move/Rotate/Scale: bbox center across every currently-selected
@@ -391,6 +418,10 @@ type Props = {
   onErase: (ids: Set<string>) => void;
   onStrokesChange: (updates: { id: string; points: StrokePoint[]; widthScale?: number }[]) => void;
   strokeOptions: StrokeOptions;
+  // The Calligraphy tool's broad nib (src/lib/calligraphy.ts). Separate from
+  // strokeOptions because it isn't a perfect-freehand option set — the two
+  // never apply to the same stroke.
+  nib: Nib;
   onStrokeComplete: (
     stroke: { id: string; points: StrokePoint[]; createdAt: number; kind?: StrokeKind },
     cellWidth: number,
@@ -451,6 +482,7 @@ export default function GridCell({
   onErase,
   onStrokesChange,
   strokeOptions,
+  nib,
   onStrokeComplete,
   vectorShapes,
   onVectorShapesChange,
@@ -474,6 +506,7 @@ export default function GridCell({
   const onEraseRef = useRef(onErase);
   const onStrokesChangeRef = useRef(onStrokesChange);
   const strokeOptionsRef = useRef(strokeOptions);
+  const nibRef = useRef(nib);
   const onStrokeCompleteRef = useRef(onStrokeComplete);
   const metricsRef = useRef(metrics);
   const bearingsRef = useRef({ leftBearing, rightBearing });
@@ -545,6 +578,7 @@ export default function GridCell({
   onEraseRef.current = onErase;
   onStrokesChangeRef.current = onStrokesChange;
   strokeOptionsRef.current = strokeOptions;
+  nibRef.current = nib;
   onStrokeCompleteRef.current = onStrokeComplete;
   metricsRef.current = metrics;
   // Skip while a drag is in progress: a stray parent re-render mid-drag
@@ -595,11 +629,14 @@ export default function GridCell({
       for (const s of strokesRef.current) {
         const color =
           s.id === editingStrokeIdRef.current || selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
-        fillOutline(ctx, outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current)), color);
+        fillOutline(ctx, strokeOutline(s, strokeOptionsRef.current, nibRef.current), color);
       }
       renderVectorShapes(ctx, vectorShapesRef.current, strokesRef.current.length > 0);
       if (pointsRef.current.length > 0) {
-        fillOutline(ctx, outlineFor(pointsRef.current, strokeOptionsRef.current));
+        fillOutline(
+          ctx,
+          outlineFor(pointsRef.current, strokeOptionsRef.current, nibRef.current, strokeKindFor(toolRef.current))
+        );
       }
       if (lassoRef.current.length > 1) {
         ctx.save();
@@ -724,7 +761,7 @@ export default function GridCell({
         // A brush stroke's points trace its own edge, not a true centerline
         // — skip it, same as page.tsx's own Nudge/Anchor gating.
         if ((s.kind ?? "pen") === "brush") continue;
-        if (pointInPolygon([x, y], outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current)))) {
+        if (pointInPolygon([x, y], strokeOutline(s, strokeOptionsRef.current, nibRef.current))) {
           editingStrokeIdRef.current = s.id;
           anchorIndicesRef.current = simplifyStrokeIndices(s.points.map((p) => [p[0], p[1]]));
           resampledRef.current = false;
@@ -1063,7 +1100,7 @@ export default function GridCell({
         const s = strokesRef.current[i];
         if (
           selectedIdsRef.current.has(s.id) &&
-          pointInPolygon([x, y], outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current)))
+          pointInPolygon([x, y], strokeOutline(s, strokeOptionsRef.current, nibRef.current))
         ) {
           hit = true;
           break;
@@ -1150,7 +1187,7 @@ export default function GridCell({
         // Topmost (last-drawn) stroke wins when strokes overlap.
         for (let i = strokesRef.current.length - 1; i >= 0; i--) {
           const s = strokesRef.current[i];
-          if (pointInPolygon([x, y], outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current)))) {
+          if (pointInPolygon([x, y], strokeOutline(s, strokeOptionsRef.current, nibRef.current))) {
             onEraseRef.current(new Set([s.id]));
             break;
           }
@@ -1315,7 +1352,7 @@ export default function GridCell({
               id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
               points: pointsRef.current,
               createdAt: Date.now(),
-              kind: toolRef.current === "brush" ? "brush" : "pen",
+              kind: strokeKindFor(toolRef.current),
             },
             canvas!.clientWidth,
             canvas!.clientHeight,
@@ -1460,13 +1497,13 @@ export default function GridCell({
     drawGuides(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing);
     for (const s of strokes) {
       const color = selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
-      fillOutline(ctx, outlineFor(s.points, effectiveOptionsFor(s, strokeOptions)), color);
+      fillOutline(ctx, strokeOutline(s, strokeOptions, nib), color);
     }
     renderVectorShapes(ctx, vectorShapes, strokes.length > 0);
     // editingShapeIdRef is guaranteed null by the guard above, so this only
     // ever draws the resting state (every shape's outline, no handles).
     if (tool === "vector") drawVectorAffordances(ctx, vectorShapes, null);
-  }, [strokes, vectorShapes, tool, metrics, leftBearing, rightBearing, strokeOptions]);
+  }, [strokes, vectorShapes, tool, metrics, leftBearing, rightBearing, strokeOptions, nib]);
 
   const unicode = unicodeFor(label);
 

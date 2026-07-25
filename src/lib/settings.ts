@@ -1,3 +1,5 @@
+import { DEFAULT_NIB } from "./calligraphy";
+
 export type StrokeMode = "mono" | "dynamic";
 
 export type StrokeSettings = {
@@ -6,6 +8,15 @@ export type StrokeSettings = {
   thinning: number;
   smoothing: number;
   streamline: number;
+  // The Calligraphy tool's broad nib (see src/lib/calligraphy.ts). Kept
+  // alongside the pen/brush settings rather than in a store of its own so one
+  // load/save covers every drawing tool — the four fields above simply don't
+  // apply to a nib, and these three don't apply to the pen. loadSettings's
+  // spread over DEFAULT_SETTINGS is what migrates projects saved before the
+  // nib existed.
+  nibSize: number;
+  nibRatio: number;
+  nibAngle: number;
 };
 
 export const DEFAULT_SETTINGS: StrokeSettings = {
@@ -14,6 +25,9 @@ export const DEFAULT_SETTINGS: StrokeSettings = {
   thinning: 0.7,
   smoothing: 0.5,
   streamline: 0.5,
+  nibSize: DEFAULT_NIB.size,
+  nibRatio: DEFAULT_NIB.ratio,
+  nibAngle: DEFAULT_NIB.angle,
 };
 
 const STORAGE_KEY = "fontane.settings.v1";

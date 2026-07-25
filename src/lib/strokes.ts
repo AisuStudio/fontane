@@ -1,6 +1,9 @@
 export type StrokePoint = [x: number, y: number, pressure: number];
 
-export type StrokeKind = "pen" | "brush";
+// "calligraphy" is the broad-nib pen (src/lib/calligraphy.ts): its points are
+// a true centerline like "pen"'s — Nudge, Anchor and the skeleton export all
+// work on it unchanged — only the outline built around them differs.
+export type StrokeKind = "pen" | "brush" | "calligraphy";
 
 export type Stroke = {
   id: string;

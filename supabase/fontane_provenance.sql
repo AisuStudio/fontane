@@ -21,7 +21,7 @@ create table if not exists fontane_provenance_events (
   -- deduped without needing a unique constraint (best-effort, not enforced).
   client_stroke_id text,
   context text, -- "free" | "grid" | "editor"
-  tool text, -- "pen" | "brush"
+  tool text, -- "pen" | "brush" | "calligraphy" | "vector"
   point_count integer,
   -- Client-reported wall-clock span of the stroke gesture itself
   -- (pointerdown→pointerup) — informational, NOT itself a trust signal

@@ -5,7 +5,8 @@ import { getStroke } from "perfect-freehand";
 import { layoutText } from "@/lib/layoutText";
 import { outlineToPath, type PathCommand } from "@/lib/contour";
 import { loadGlyphs, type Glyph } from "@/lib/glyphs";
-import { loadStrokes, type Stroke, type StrokePoint } from "@/lib/strokes";
+import { loadStrokes, type Stroke, type StrokeKind, type StrokePoint } from "@/lib/strokes";
+import { calligraphyOutline, type Nib } from "@/lib/calligraphy";
 import { loadMetrics, type Metrics } from "@/lib/metrics";
 import { loadSettings, type StrokeSettings } from "@/lib/settings";
 
@@ -38,8 +39,19 @@ function optionsFor(settings: StrokeSettings) {
   };
 }
 
+function nibFor(settings: StrokeSettings): Nib {
+  return { size: settings.nibSize, ratio: settings.nibRatio, angle: settings.nibAngle };
+}
+
+// Both widths scale on the same factor, so the wght axis reads as weight for
+// nib-drawn glyphs too — a stroke only ever uses one of the two.
 function effectiveSettingsFor(settings: StrokeSettings, scale: number): StrokeSettings {
-  return scale === 1 ? settings : { ...settings, size: settings.size * scale };
+  return scale === 1 ? settings : { ...settings, size: settings.size * scale, nibSize: settings.nibSize * scale };
+}
+
+function outlineFor(points: StrokePoint[], settings: StrokeSettings, kind?: StrokeKind): [number, number][] {
+  if (kind === "calligraphy") return calligraphyOutline(points, nibFor(settings));
+  return getStroke(points, optionsFor(settings)) as [number, number][];
 }
 
 function applyPath(ctx: CanvasRenderingContext2D, commands: PathCommand[]) {
@@ -87,19 +99,24 @@ export default function VfLab() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      type Line = { y: number; height: number; glyphSets: StrokePoint[][] };
+      type Line = { y: number; height: number; glyphSets: { points: StrokePoint[]; kind?: StrokeKind }[] };
       const lines: Line[] = [];
       let lineY = TOP_PADDING;
       let maxLineWidth = 0;
       for (const paragraph of text.split("\n")) {
         const layout = layoutText(paragraph, glyphs, strokes, metrics, false);
-        const glyphSets: StrokePoint[][] = [];
+        const glyphSets: { points: StrokePoint[]; kind?: StrokeKind }[] = [];
         for (const entry of layout.entries) {
           if (entry.kind !== "glyph") continue;
-          for (const strokePoints of entry.strokePointSets) {
-            glyphSets.push(
-              strokePoints.map((p) => [p[0] * entry.scale + entry.offsetX, p[1] * entry.scale + entry.offsetY, p[2]])
-            );
+          for (const set of entry.strokeSets) {
+            glyphSets.push({
+              points: set.points.map((p) => [
+                p[0] * entry.scale + entry.offsetX,
+                p[1] * entry.scale + entry.offsetY,
+                p[2],
+              ]),
+              kind: set.kind,
+            });
           }
         }
         lines.push({ y: lineY, height: layout.height, glyphSets });
@@ -140,13 +157,13 @@ export default function VfLab() {
         ctx.translate(LEFT_MARGIN, baseY);
         ctx.transform(wdthF, 0, -shear, 1, 0, 0);
         ctx.translate(-LEFT_MARGIN, -baseY);
-        for (const strokePoints of line.glyphSets) {
-          const transformed: StrokePoint[] = strokePoints.map((p) => [
+        for (const set of line.glyphSets) {
+          const transformed: StrokePoint[] = set.points.map((p) => [
             (p[0] + LEFT_MARGIN) * SIZE_FACTOR,
             (p[1] + line.y) * SIZE_FACTOR,
             p[2],
           ]);
-          fillOutline(ctx, getStroke(transformed, optionsFor(penSettings)) as [number, number][]);
+          fillOutline(ctx, outlineFor(transformed, penSettings, set.kind));
         }
         ctx.restore();
       }

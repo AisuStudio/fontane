@@ -41,8 +41,9 @@ export function buildSkeletonSvg(glyphs: Glyph[], strokes: Stroke[]): string {
       .filter((s): s is Stroke => Boolean(s))
       // A brush stroke's points trace its own edge, not a centerline —
       // running it through the Offset Curve workflow this sheet is for
-      // would produce nonsense, so it's silently left out here.
-      .filter((s) => (s.kind ?? "pen") === "pen")
+      // would produce nonsense, so it's silently left out here. Pen and
+      // calligraphy strokes both record a true centerline, so both belong.
+      .filter((s) => (s.kind ?? "pen") !== "brush")
       .map((s) => s.points.map((p) => [p[0], p[1]] as [number, number]));
 
     const allPoints = strokePoints.flat();
