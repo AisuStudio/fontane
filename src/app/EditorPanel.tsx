@@ -99,7 +99,13 @@ function fillRings(ctx: CanvasRenderingContext2D, rings: [number, number][][]) {
   ctx.beginPath();
   for (const ring of usable) applyPath(ctx, outlineToPath(ring));
   ctx.fillStyle = INK_COLOR;
-  ctx.fill();
+  // Even-odd, so a Vector shape drawn inside another reads as a counter — the
+  // B/O/A case. The drawing canvases and compileDocument() apply the same rule
+  // (see contour.ts's xorOutlines); this preview would otherwise show a solid
+  // blob where the exported font has a hole. Unlike the canvases the fill
+  // stays ink here: the Editor previews the finished letter, not the
+  // work-in-progress affordances.
+  ctx.fill("evenodd");
 }
 
 // Most entries (space/missing, and any glyph without ligature substitution)

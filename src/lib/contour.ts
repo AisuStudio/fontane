@@ -79,6 +79,20 @@ export function unionOutlines(outlines: [number, number][][]): [number, number][
   return merged.flat().filter((ring) => ringArea(ring) > MIN_RING_AREA);
 }
 
+// Combines a glyph's own Vector-tool shapes with an even-odd (XOR) rule
+// instead of a union: a shape drawn INSIDE another cuts a counter out of it,
+// which is how you draw a "B" or an "O" as pure vector outlines. Union would
+// swallow the inner shape and compile the letter as a solid blob. Winding
+// direction is irrelevant here, so nested shapes work whichever way round
+// they were drawn.
+export function xorOutlines(outlines: [number, number][][]): [number, number][][] {
+  const polygons: Polygon[] = outlines.filter((o) => o.length >= 3).map((o) => [o]);
+  if (polygons.length === 0) return [];
+  if (polygons.length === 1) return polygons[0].filter((ring) => ringArea(ring) > MIN_RING_AREA);
+  const merged: MultiPolygon = polygonClipping.xor(polygons[0], ...polygons.slice(1));
+  return merged.flat().filter((ring) => ringArea(ring) > MIN_RING_AREA);
+}
+
 // Cuts `negative` out of `positive` — used for the Vector tool's default
 // "shapes punch a hole" behavior (see compileDocument() in page.tsx). Both
 // arguments are expected to already be unionOutlines()'d among themselves;

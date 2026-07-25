@@ -29,6 +29,16 @@ const BEARING_COLOR = "#5100ff"; // grape — matches the draggable-affordance c
 const BEARING_HIT_PX = 8;
 const ANCHOR_HIT_PX = 8;
 const ANCHOR_COLOR = "#5100ff";
+// Vector-shape rendering: blueberry for a resting outline, grape once it's the
+// one being edited (ANCHOR_COLOR above, same as its own anchors/handles), and
+// hazelnut for the filled body — three states you can tell apart at a glance
+// while drawing.
+const VECTOR_OUTLINE_COLOR = "#1f1934"; // blueberry — ink, matches drawn strokes
+const VECTOR_FILL_COLOR = "#9e9c95"; // hazelnut — muted body under the outlines
+// Hairline, same 0.5px every other guide in this cell already uses (metric
+// lines, bearing lines, the anchor rings) — a 1px vector outline read as a
+// heavier, different class of line than the guides around it.
+const VECTOR_LINE_WIDTH = 0.5;
 const ANCHOR_RING_COLOR = "#eae8e0"; // vanilla
 
 // Tools whose pointerdown-through-pointerup gesture is "drag a lasso and
@@ -243,36 +253,51 @@ function vectorInsertionIndex(shape: VectorShape, x: number, y: number): number 
 // contour.ts's subtractOutlines). An open, still-being-drawn path has no fill
 // yet, same as any other pen tool. Runs whatever the current tool is: a
 // glyph's holes are part of the letterform, not a Vector-mode affordance.
-function punchVectorShapes(ctx: CanvasRenderingContext2D, shapes: VectorShape[]) {
-  for (const shape of shapes) {
-    if (!shape.closed) continue;
+// Closed Vector shapes either ARE the letter or cut into it, mirroring what
+// compileDocument() compiles (page.tsx): with no strokes in the cell they fill
+// as the glyph itself — every shape in ONE path filled "evenodd", so a counter
+// drawn inside an outline reads as a hole (the only way to draw a B/O/A in
+// pure vector) — and with strokes present they punch out of them instead.
+// The fill is hazelnut rather than ink: while you're drawing, the muted body
+// stays readable underneath the blueberry outlines and grape handles that sit
+// on top of it. The exported font is monochrome either way.
+function renderVectorShapes(ctx: CanvasRenderingContext2D, shapes: VectorShape[], hasStrokes: boolean) {
+  const closed = shapes.filter((s) => s.closed && s.anchors.length >= 2);
+  if (closed.length === 0) return;
+  if (!hasStrokes) {
     ctx.save();
     ctx.beginPath();
-    applyVectorShapePath(ctx, shape);
-    ctx.globalCompositeOperation = "destination-out";
-    ctx.fillStyle = "black";
-    ctx.fill();
+    for (const shape of closed) applyVectorShapePath(ctx, shape);
+    ctx.fillStyle = VECTOR_FILL_COLOR;
+    ctx.fill("evenodd");
     ctx.restore();
+    return;
   }
+  ctx.save();
+  ctx.beginPath();
+  for (const shape of closed) applyVectorShapePath(ctx, shape);
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.fillStyle = "black";
+  ctx.fill("evenodd");
+  ctx.restore();
 }
 
 // The Vector tool's editing affordances, mirroring page.tsx's own redraw().
 // Every shape here belongs to this cell's glyph by definition (the parent only
-// hands down the ones it tagged), so the non-editing outlines are always drawn
-// in the tagged color — Free's hazelnut/grape split for untagged-vs-tagged has
-// nothing to distinguish inside a cell.
+// hands down the ones it tagged), so the split that matters inside a cell is
+// resting-vs-editing, not tagged-vs-untagged: blueberry outlines for the
+// former, grape for the one under the cursor.
 function drawVectorAffordances(ctx: CanvasRenderingContext2D, shapes: VectorShape[], editingShapeId: string | null) {
   const editingShape = shapes.find((s) => s.id === editingShapeId);
   // A closed shape not currently being edited still gets its outline stroked
-  // (not just the destination-out fill above) so it reads as a distinct,
-  // clickable object rather than only a hole.
+  // (not just the fill above) so it reads as a distinct, clickable object.
   for (const shape of shapes) {
     if (shape.id === editingShapeId) continue;
     ctx.save();
     ctx.beginPath();
     applyVectorShapePath(ctx, shape);
-    ctx.strokeStyle = ANCHOR_COLOR;
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = VECTOR_OUTLINE_COLOR;
+    ctx.lineWidth = VECTOR_LINE_WIDTH;
     ctx.stroke();
     ctx.restore();
   }
@@ -281,11 +306,12 @@ function drawVectorAffordances(ctx: CanvasRenderingContext2D, shapes: VectorShap
   ctx.save();
   ctx.beginPath();
   applyVectorShapePath(ctx, editingShape);
-  // Grape while still an open draft (lemon-on-cream is hard to read for the
-  // line you're actively watching take shape); once closed, the usual
-  // selected-color treatment applies.
-  ctx.strokeStyle = editingShape.closed ? SELECTED_COLOR : ANCHOR_COLOR;
-  ctx.lineWidth = 1;
+  // Always grape, open draft or closed-and-reopened alike — see the same
+  // decision on the Free canvas (page.tsx): lemon on cream is hard to read
+  // for the line you're actively editing, and its own anchors/handles are
+  // grape anyway.
+  ctx.strokeStyle = ANCHOR_COLOR;
+  ctx.lineWidth = VECTOR_LINE_WIDTH;
   ctx.stroke();
   ctx.restore();
 
@@ -536,7 +562,7 @@ export default function GridCell({
           s.id === editingStrokeIdRef.current || selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
         fillOutline(ctx, outlineFor(s.points, effectiveOptionsFor(s, strokeOptionsRef.current)), color);
       }
-      punchVectorShapes(ctx, vectorShapesRef.current);
+      renderVectorShapes(ctx, vectorShapesRef.current, strokesRef.current.length > 0);
       if (pointsRef.current.length > 0) {
         fillOutline(ctx, outlineFor(pointsRef.current, strokeOptionsRef.current));
       }
@@ -1309,7 +1335,7 @@ export default function GridCell({
       const color = selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
       fillOutline(ctx, outlineFor(s.points, effectiveOptionsFor(s, strokeOptions)), color);
     }
-    punchVectorShapes(ctx, vectorShapes);
+    renderVectorShapes(ctx, vectorShapes, strokes.length > 0);
     // editingShapeIdRef is guaranteed null by the guard above, so this only
     // ever draws the resting state (every shape's outline, no handles).
     if (tool === "vector") drawVectorAffordances(ctx, vectorShapes, null);

@@ -13,6 +13,7 @@ import {
   skeletonToPath,
   unionOutlines,
   subtractOutlines,
+  xorOutlines,
   flattenVectorShape,
   cubicPoint,
   type PathCommand,
@@ -159,6 +160,14 @@ const COLOR_TAGGED = "#5100ff"; // grape — assigned to a glyph
 const ANCHOR_COLOR = "#5100ff"; // grape — matches the draggable-affordance color used elsewhere (GridCell's bearing handles)
 const ANCHOR_RING_COLOR = "#eae8e0"; // vanilla — ring for contrast against the stroke color
 const SKELETON_GUIDE_COLOR = "#9e9c95"; // hazelnut
+// Vector-shape rendering, one meaning per color: blueberry outlines a resting
+// shape, grape (ANCHOR_COLOR) marks the one being edited — matching its own
+// anchors and handles — and hazelnut fills the body underneath both. This
+// replaces the older tagged-vs-untagged outline split, whose grape/hazelnut
+// pair now means something else entirely.
+const VECTOR_OUTLINE_COLOR = "#1f1934"; // blueberry — ink, matches drawn strokes
+const VECTOR_FILL_COLOR = "#9e9c95"; // hazelnut — muted body under the outlines
+const VECTOR_LINE_WIDTH = 0.5; // hairline, matching the guides/bearings everywhere else (see GridCell)
 const FREE_RASTER_COLOR = "#FFABAB"; // Free mode's ruled-line background only — not shared with the Nudge skeleton preview or transform pivot line, which stay hazelnut
 const ANCHOR_HIT_PX = 8;
 
@@ -448,8 +457,11 @@ function compileDocument(
       // Vector-tool shapes (only closed ones are real geometry) default to
       // punching a hole in the glyph's strokes — see contour.ts's
       // subtractOutlines. A glyph with vector shapes but no strokes has
-      // nothing to subtract FROM, so those union together as normal fill
-      // instead of silently compiling to nothing.
+      // nothing to subtract FROM, so those become the letter itself.
+      // Either way the shapes are first combined with each other by the
+      // even-odd rule (xorOutlines), so a counter drawn inside an outline —
+      // the B/O/A case, and the only way to draw a closed letter in pure
+      // vector — stays a counter instead of being swallowed by a union.
       const vectorOutlines = (g.vectorShapeIds ?? [])
         .map((id) => shapesById.get(id))
         .filter((s): s is VectorShape => Boolean(s && s.closed))
@@ -458,9 +470,9 @@ function compileDocument(
       if (vectorOutlines.length === 0) {
         rings = strokesUnion;
       } else if (g.strokeIds.length === 0) {
-        rings = unionOutlines(vectorOutlines);
+        rings = xorOutlines(vectorOutlines);
       } else {
-        rings = subtractOutlines(strokesUnion, unionOutlines(vectorOutlines));
+        rings = subtractOutlines(strokesUnion, xorOutlines(vectorOutlines));
       }
       return {
         name: g.name,
@@ -990,6 +1002,10 @@ export default function Home() {
   ];
   const taggedIdsRef = useRef<Set<string>>(new Set());
   const taggedIdsVectorRef = useRef<Set<string>>(new Set());
+  // Shapes whose owning glyph has no strokes at all — those ARE the letter and
+  // get filled, everything else punches (see redraw()). Precomputed alongside
+  // the tagged-id sets rather than derived per frame, same as taggedIdsRef.
+  const vectorFillIdsRef = useRef<Set<string>>(new Set());
   // Strokes belonging to a Grid-native glyph (cellWidth/cellHeight set) live in
   // Grid-cell-local coordinate space, not Free-canvas space — Free's redraw()
   // must skip them or they paint as a stray blob near the Free canvas origin.
@@ -1116,20 +1132,35 @@ export default function Home() {
                 : COLOR_DEFAULT;
         fillOutline(ctx, outlines[i], color);
       }
-      // Finished (closed) Vector-tool shapes — punched out of whatever's
-      // already on the canvas via destination-out, a cheap live approximation
-      // of the real polygon-difference compileDocument() runs at compile
-      // time (see contour.ts's subtractOutlines). An open, still-being-drawn
-      // path has no fill yet, same as any other pen tool.
-      for (const shape of vectorShapesRef.current) {
-        if (!shape.closed) continue;
-        ctx.save();
-        ctx.beginPath();
-        applyVectorShapePath(ctx, shape);
-        ctx.globalCompositeOperation = "destination-out";
-        ctx.fillStyle = "black";
-        ctx.fill();
-        ctx.restore();
+      // Finished (closed) Vector-tool shapes, grouped by the glyph they're
+      // tagged into so each group can follow the same rule compileDocument()
+      // compiles: a group whose glyph has no strokes IS the letter and fills
+      // (hazelnut, so the blueberry outlines and grape handles stay legible on
+      // top of it); every other group — including shapes not tagged to
+      // anything yet — punches out of whatever's already on the canvas, the
+      // cheap live approximation of the real polygon difference. Each group is
+      // one path filled "evenodd", so a counter drawn inside an outline stays
+      // a counter instead of filling solid (the B/O/A case). An open,
+      // still-being-drawn path has no fill yet, same as any other pen tool.
+      const closedShapes = vectorShapesRef.current.filter((s) => s.closed && s.anchors.length >= 2);
+      if (closedShapes.length > 0) {
+        const fills: VectorShape[] = [];
+        const punches: VectorShape[] = [];
+        for (const shape of closedShapes) {
+          (vectorFillIdsRef.current.has(shape.id) ? fills : punches).push(shape);
+        }
+        const paint = (group: VectorShape[], punch: boolean) => {
+          if (group.length === 0) return;
+          ctx.save();
+          ctx.beginPath();
+          for (const shape of group) applyVectorShapePath(ctx, shape);
+          if (punch) ctx.globalCompositeOperation = "destination-out";
+          ctx.fillStyle = punch ? "black" : VECTOR_FILL_COLOR;
+          ctx.fill("evenodd");
+          ctx.restore();
+        };
+        paint(fills, false);
+        paint(punches, true);
       }
       if (!LASSO_TOOLS.has(drawToolRef.current) && currentPointsRef.current.length > 0) {
         fillOutline(ctx, outlineFor(currentPointsRef.current, settingsRef.current), COLOR_DEFAULT);
@@ -1205,8 +1236,8 @@ export default function Home() {
           ctx.save();
           ctx.beginPath();
           applyVectorShapePath(ctx, shape);
-          ctx.strokeStyle = taggedIdsVectorRef.current.has(shape.id) ? COLOR_TAGGED : SKELETON_GUIDE_COLOR;
-          ctx.lineWidth = 1;
+          ctx.strokeStyle = VECTOR_OUTLINE_COLOR;
+          ctx.lineWidth = VECTOR_LINE_WIDTH;
           ctx.stroke();
           ctx.restore();
         }
@@ -1214,11 +1245,13 @@ export default function Home() {
           ctx.save();
           ctx.beginPath();
           applyVectorShapePath(ctx, editingShape);
-          // Grape while still an open draft (lemon-on-cream is hard to read
-          // for the line you're actively watching take shape); once closed,
-          // the usual selected-color treatment applies.
-          ctx.strokeStyle = editingShape.closed ? COLOR_SELECTED : ANCHOR_COLOR;
-          ctx.lineWidth = 1;
+          // Always grape, open draft or closed-and-reopened alike: lemon on
+          // cream is hard to read for the one line you're actively working
+          // on, and the anchors/handles around it are grape too — a shape
+          // that switched to lemon the moment it closed just read as a
+          // different object.
+          ctx.strokeStyle = ANCHOR_COLOR;
+          ctx.lineWidth = VECTOR_LINE_WIDTH;
           ctx.stroke();
           ctx.restore();
 
@@ -1283,6 +1316,9 @@ export default function Home() {
     vectorShapesRef.current = loadVectorShapes();
     taggedIdsRef.current = new Set(glyphs.flatMap((g) => g.strokeIds));
     taggedIdsVectorRef.current = new Set(glyphs.flatMap((g) => g.vectorShapeIds ?? []));
+    vectorFillIdsRef.current = new Set(
+      glyphs.filter((g) => g.strokeIds.length === 0).flatMap((g) => g.vectorShapeIds ?? [])
+    );
     gridNativeStrokeIdsRef.current = new Set(
       glyphs.filter((g) => g.cellWidth && g.cellHeight).flatMap((g) => g.strokeIds)
     );
@@ -1683,6 +1719,9 @@ export default function Home() {
   useEffect(() => {
     taggedIdsRef.current = new Set(glyphs.flatMap((g) => g.strokeIds));
     taggedIdsVectorRef.current = new Set(glyphs.flatMap((g) => g.vectorShapeIds ?? []));
+    vectorFillIdsRef.current = new Set(
+      glyphs.filter((g) => g.strokeIds.length === 0).flatMap((g) => g.vectorShapeIds ?? [])
+    );
     gridNativeStrokeIdsRef.current = new Set(
       glyphs.filter((g) => g.cellWidth && g.cellHeight).flatMap((g) => g.strokeIds)
     );
