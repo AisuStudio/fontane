@@ -1,4 +1,5 @@
 import { getStroke } from "perfect-freehand";
+import { calligraphyOutline, type Nib } from "./calligraphy";
 import { buildPathSpace } from "./pathSpace";
 import { seededRandom } from "./random";
 import type { StrokePoint } from "./strokes";
@@ -368,6 +369,24 @@ export function applyBrush(points: StrokePoint[], options: BrushOptions, seedKey
     default:
       return { polygons: envelope.length >= 3 ? [envelope] : [], smooth: true, envelope };
   }
+}
+
+// The Calligraphy tool's counterpart to applyBrush. A calligraphy stroke
+// carries its applicator in its own kind (see Stroke.kind) and bypasses the
+// active brush entirely — the broad nib it was drawn with IS its ink, no
+// matter which brush is selected now — but it hands back the same
+// BrushOutput shape so every canvas and the export treat both pipelines
+// alike. smooth stays true: the nib outline counts on contour.ts's
+// midpoint-quadratic smoothing to round its sampled end caps (see
+// CAP_SEGMENTS in calligraphy.ts). The envelope is the outline itself
+// rather than the freehand envelope: calligraphy ink is one solid region
+// (no scatter holes to bridge), and the freehand envelope would be sized by
+// the pen's Size setting, not the nib's own width — hit-testing the true
+// outline is both cheaper and correct here.
+export function applyCalligraphy(points: StrokePoint[], nib: Nib): BrushOutput {
+  if (points.length === 0) return EMPTY_OUTPUT;
+  const outline = calligraphyOutline(points, nib);
+  return { polygons: outline.length >= 3 ? [outline] : [], smooth: true, envelope: outline };
 }
 
 // Total point count across a brush output — the number that actually matters

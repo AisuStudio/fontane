@@ -54,7 +54,7 @@ export type ProvenanceContext = "free" | "grid" | "editor";
 // event via summarizeStroke([[x,y,1]], Date.now()) (pointCount 1, pressure
 // fields are meaningless for a click so pinned to 1/0) rather than a new
 // summarizer, since anchors don't carry pressure the way Stroke points do.
-export type ProvenanceTool = "pen" | "brush" | "vector";
+export type ProvenanceTool = "pen" | "brush" | "calligraphy" | "vector";
 
 export type ProvenanceEvent = {
   draftId: string;

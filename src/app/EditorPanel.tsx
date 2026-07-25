@@ -4,10 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import styles from "./page.module.css";
 import { layoutText, type LaidOutEntry } from "@/lib/layoutText";
 import { outlineToPath, outlineToSharpPath, flattenVectorShape, type PathCommand } from "@/lib/contour";
-import { applyBrush, type BrushOptions, type BrushOutput } from "@/lib/brush";
+import { applyBrush, applyCalligraphy, type BrushOptions, type BrushOutput } from "@/lib/brush";
 import type { VectorShape } from "@/lib/vectorShapes";
 import type { Glyph } from "@/lib/glyphs";
-import type { Stroke, StrokePoint } from "@/lib/strokes";
+import type { Stroke, StrokeKind, StrokePoint } from "@/lib/strokes";
+import { type Nib } from "@/lib/calligraphy";
 import type { Metrics } from "@/lib/metrics";
 import type { StrokeSettings } from "@/lib/settings";
 
@@ -60,10 +61,18 @@ function optionsFor(settings: StrokeSettings): BrushOptions {
   };
 }
 
-// Seeded by the originating stroke id (layoutText carries them through for
-// exactly this) so the preview's scatter pattern is the one the export will
-// produce, not a second roll of the same dice.
-function outlineFor(points: StrokePoint[], settings: StrokeSettings, seedKey: string): BrushOutput {
+function nibFor(settings: StrokeSettings): Nib {
+  return { size: settings.nibSize, ratio: settings.nibRatio, angle: settings.nibAngle };
+}
+
+// Dispatches on the tool that drew the stroke, exactly like page.tsx's own
+// outlineFor — a calligraphy stroke previews with the broad nib it was drawn
+// with, not with the pen. Everything else is seeded by the originating
+// stroke id (layoutText carries them through for exactly this) so the
+// preview's scatter pattern is the one the export will produce, not a
+// second roll of the same dice.
+function outlineFor(points: StrokePoint[], settings: StrokeSettings, kind: StrokeKind | undefined, seedKey: string): BrushOutput {
+  if (kind === "calligraphy") return applyCalligraphy(points, nibFor(settings));
   return applyBrush(points, optionsFor(settings), seedKey);
 }
 
@@ -71,8 +80,9 @@ function outlineFor(points: StrokePoint[], settings: StrokeSettings, seedKey: st
 // the transformed-points map in draw()) — without this, stroke thickness
 // stays pinned to the global settings.size regardless of the chosen point
 // size, so text looks razor-thin at large sizes and blobby at small ones.
+// The calligraphy nib rides along on the same factor for the same reason.
 function effectiveSettingsFor(settings: StrokeSettings, scale: number): StrokeSettings {
-  return scale === 1 ? settings : { ...settings, size: settings.size * scale };
+  return scale === 1 ? settings : { ...settings, size: settings.size * scale, nibSize: settings.nibSize * scale };
 }
 
 function applyPath(ctx: CanvasRenderingContext2D, commands: PathCommand[]) {
@@ -87,7 +97,7 @@ function applyPath(ctx: CanvasRenderingContext2D, commands: PathCommand[]) {
 // A glyph's stroke paired with the id of the stroke it came from — the
 // brush's deterministic seed (see applyBrush), carried this far so the
 // preview and the export scatter identically.
-type BrushedStrokeSet = { points: StrokePoint[]; seed: string };
+type BrushedStrokeSet = { points: StrokePoint[]; kind?: StrokeKind; seed: string };
 
 function fillOutline(ctx: CanvasRenderingContext2D, out: BrushOutput) {
   if (out.polygons.length === 0) return;
@@ -295,11 +305,12 @@ export default function EditorPanel({
               if (rx < minX) minX = rx;
               return rx;
             };
-            const strokeSets = entry.strokePointSets.map((strokePoints, i) => ({
+            const strokeSets = entry.strokeSets.map((set) => ({
               // The stroke's own id rides along as the brush seed — see
-              // LaidOutEntry.strokeIds.
-              seed: entry.strokeIds[i] ?? `${entry.glyph.name}:${i}`,
-              points: strokePoints.map(
+              // LaidOutEntry.strokeSets.
+              seed: set.id,
+              kind: set.kind,
+              points: set.points.map(
                 (p): StrokePoint => [rebaseX(p[0]), p[1] * entry.scale + entry.offsetY, p[2]]
               ),
             }));
@@ -360,12 +371,12 @@ export default function EditorPanel({
           (y + line.y) * sizeFactor,
         ];
         for (const { strokeSets, shapeRings } of line.glyphInk) {
-          for (const { points, seed } of strokeSets) {
+          for (const { points, kind, seed } of strokeSets) {
             const transformed: StrokePoint[] = points.map((p) => {
               const [x, y] = place(p[0], p[1]);
               return [x, y, p[2]];
             });
-            fillOutline(ctx!, outlineFor(transformed, penSettings, seed));
+            fillOutline(ctx!, outlineFor(transformed, penSettings, kind, seed));
           }
 
           if (shapeRings.length === 0) continue;
