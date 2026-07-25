@@ -43,10 +43,16 @@ type CompiledDocument = {
 
 type RawCommand =
   | { type: "M"; x: number; y: number }
+  | { type: "L"; x: number; y: number }
   | { type: "Q"; cx: number; cy: number; x: number; y: number }
   | { type: "Z" };
 
-const TOKEN_RE = /[MQZ]|-?\d+(?:\.\d+)?/g;
+// L belongs here because a glyph drawn with a nib or stipple brush emits
+// straight-edged contours (contour.ts's outlineToSharpPath) rather than the
+// midpoint quadratics a freehand outline produces. Without it the tokenizer
+// below fell through to its Z branch on every L and on each of its two
+// coordinates, compiling those glyphs to nothing.
+const TOKEN_RE = /[MLQZ]|-?\d+(?:\.\d+)?/g;
 
 // Parses one "M x y Q cx cy x y Q ... Z" path string (src/lib/contour.ts
 // output) into structured commands — same token shape as build_ttf.py's regex
@@ -60,6 +66,9 @@ function parseContour(d: string): RawCommand[] {
     const tok = tokens[i];
     if (tok === "M") {
       commands.push({ type: "M", x: Number(tokens[i + 1]), y: Number(tokens[i + 2]) });
+      i += 3;
+    } else if (tok === "L") {
+      commands.push({ type: "L", x: Number(tokens[i + 1]), y: Number(tokens[i + 2]) });
       i += 3;
     } else if (tok === "Q") {
       commands.push({
@@ -107,6 +116,8 @@ function addContourToPath(path: Path, commands: RawCommand[], tx: (x: number) =>
     if (c.type === "M") {
       path.moveTo(tx(c.x), ty(c.y));
       started = true;
+    } else if (c.type === "L") {
+      path.lineTo(tx(c.x), ty(c.y));
     } else if (c.type === "Q") {
       path.quadraticCurveTo(tx(c.cx), ty(c.cy), tx(c.x), ty(c.y));
     } else if (started) {

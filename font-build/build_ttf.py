@@ -30,7 +30,12 @@ SIDE_BEARING = 40
 # 1000-unit em - a reasonable cap-height-ish target, not a real calibration.
 TARGET_GLYPH_HEIGHT = 700
 
-TOKEN_RE = re.compile(r"[MQZ]|-?\d+(?:\.\d+)?")
+# L is in here because a glyph drawn with a nib or stipple brush emits
+# straight-edged contours (src/lib/contour.ts's outlineToSharpPath) instead of
+# the midpoint quadratics a freehand outline produces. Without it every L and
+# each of its two coordinates fell through to the Z branch below, and those
+# glyphs compiled to nothing.
+TOKEN_RE = re.compile(r"[MLQZ]|-?\d+(?:\.\d+)?")
 
 
 def parse_path_commands(d):
@@ -44,6 +49,9 @@ def parse_path_commands(d):
         tok = tokens[i]
         if tok == "M":
             commands.append(("M", float(tokens[i + 1]), float(tokens[i + 2])))
+            i += 3
+        elif tok == "L":
+            commands.append(("L", float(tokens[i + 1]), float(tokens[i + 2])))
             i += 3
         elif tok == "Q":
             commands.append(
@@ -75,6 +83,8 @@ def feed_pen(commands, pen, tx, ty):
         if c[0] == "M":
             pen.moveTo((tx(c[1]), ty(c[2])))
             started = True
+        elif c[0] == "L":
+            pen.lineTo((tx(c[1]), ty(c[2])))
         elif c[0] == "Q":
             pen.qCurveTo((tx(c[1]), ty(c[2])), (tx(c[3]), ty(c[4])))
         elif started:

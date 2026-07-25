@@ -21,9 +21,11 @@ export type LaidOutEntry =
       // canvas renderer (Editor mode) can feed these straight into
       // perfect-freehand. Each set rides along with the kind of tool that drew
       // it, since that decides which outline generator it belongs in (a
-      // broad-nib calligraphy stroke is not a perfect-freehand one). Callers
-      // that only need x/y (skeleton/SVG export) map both away.
-      strokeSets: { points: StrokePoint[]; kind?: StrokeKind }[];
+      // broad-nib calligraphy stroke is not a perfect-freehand one), and with
+      // the originating stroke's id — a brush's deterministic seed (see
+      // applyBrush). Callers that only need x/y (skeleton/SVG export) map
+      // them away.
+      strokeSets: { points: StrokePoint[]; kind?: StrokeKind; id: string }[];
       // Closed Vector-tool shapes tagged into this glyph, untransformed like
       // strokeSets above. Renderers apply the same compile-time rule as
       // compileDocument(): with strokes present they punch holes, alone they
@@ -144,10 +146,15 @@ export function layoutText(
       continue;
     }
 
+    // Each set keeps its stroke's real id. Only a brush needs it (as its
+    // jitter seed, see applyBrush in src/lib/brush.ts) — but it needs
+    // exactly this one: seeding off the array index instead would give the
+    // preview a different scatter pattern than the compiled font, for the
+    // same letter.
     const strokeSets = glyph.strokeIds
       .map((id) => byId.get(id))
       .filter((s): s is Stroke => Boolean(s))
-      .map((s) => ({ points: s.points, kind: s.kind }));
+      .map((s) => ({ points: s.points, kind: s.kind, id: s.id }));
     // Only closed shapes are real geometry — an unfinished path has no fill,
     // same rule compileDocument() applies at export time.
     const glyphVectorShapes = (glyph.vectorShapeIds ?? [])

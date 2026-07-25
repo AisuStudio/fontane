@@ -2,14 +2,28 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
 import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokeKind, type StrokePoint } from "@/lib/strokes";
-import { calligraphyOutline, nibPolygon, type Nib } from "@/lib/calligraphy";
+import { nibPolygon, type Nib } from "@/lib/calligraphy";
 import { loadGlyphs, saveGlyphs, unicodeFor, type Glyph, type GlyphKind } from "@/lib/glyphs";
 import { anyPointInPolygon, pointInPolygon } from "@/lib/geometry";
 import {
+  applyBrush,
+  applyCalligraphy,
+  inkPointCount,
+  DEFAULT_NIB,
+  DEFAULT_SCATTER,
+  type BrushKind,
+  type BrushOptions,
+  type BrushOutput,
+  type NibParams,
+  type RotationMode,
+  type ScatterParams,
+  type StampShape,
+} from "@/lib/brush";
+import {
   outlineToPath,
+  outlineToSharpPath,
   pathToSvgD,
   skeletonToPath,
   unionOutlines,
@@ -193,6 +207,28 @@ const VIEW_DEFS: ViewDef[] = [
   { key: "editor", label: "Editor View", topMode: "draw", drawStyle: "editor" },
 ];
 
+// The sidebar's Brush section, in the order they generalize: the envelope
+// that was always here, then the two that need the arc-length path space
+// (src/lib/pathSpace.ts). Same flat-list convention as TOOL_DEFS/VIEW_DEFS.
+const BRUSH_DEFS: { kind: BrushKind; label: string; hint: string }[] = [
+  { kind: "freehand", label: "Free", hint: "Pressure envelope — the original pen" },
+  { kind: "nib", label: "Nib", hint: "Swept calligraphy nib: contrast from direction of travel" },
+  { kind: "scatter", label: "Stipple", hint: "Stamps repeated along the path at a set spacing" },
+];
+
+const STAMP_DEFS: { shape: StampShape; label: string }[] = [
+  { shape: "dot", label: "Dot" },
+  { shape: "square", label: "Sq" },
+  { shape: "triangle", label: "Tri" },
+  { shape: "dash", label: "Dash" },
+];
+
+const ROTATION_DEFS: { mode: RotationMode; label: string; hint: string }[] = [
+  { mode: "follow", label: "Follow", hint: "Each stamp turns with the path's tangent" },
+  { mode: "fixed", label: "Fixed", hint: "One page angle for every stamp — engraving/hatching" },
+  { mode: "random", label: "Rand", hint: "A new angle per stamp, seeded per stroke" },
+];
+
 const COLOR_DEFAULT = "#1f1934"; // blueberry — untagged
 const COLOR_SELECTED = "#d8ff01"; // lemon — pending selection
 const COLOR_TAGGED = "#5100ff"; // grape — assigned to a glyph
@@ -210,12 +246,13 @@ const VECTOR_LINE_WIDTH = 0.5; // hairline, matching the guides/bearings everywh
 const FREE_RASTER_COLOR = "#FFABAB"; // Free mode's ruled-line background only — not shared with the Nudge skeleton preview or transform pivot line, which stay hazelnut
 const ANCHOR_HIT_PX = 8;
 
-function optionsFor(settings: StrokeSettings) {
+function optionsFor(settings: StrokeSettings): BrushOptions {
   return {
     size: settings.size,
     thinning: settings.mode === "mono" ? 0 : settings.thinning,
     smoothing: settings.smoothing,
     streamline: settings.streamline,
+    brush: settings.brush,
   };
 }
 
@@ -226,13 +263,18 @@ function nibFor(settings: StrokeSettings): Nib {
 }
 
 // Which outline generator a stroke gets is decided by the tool that DREW it,
-// not by whatever tool is selected now — a calligraphy stroke keeps its nib
-// outline forever, the same way a pen stroke keeps its pressure-thinned one.
+// not by whatever tool or brush is selected now — a calligraphy stroke keeps
+// its nib outline forever, the same way a pen stroke keeps its
+// pressure-thinned one; every other stroke goes through the active brush.
 // `kind` is optional so the live in-progress path can pass the active tool's
-// kind before there's a Stroke object to read it off.
-function outlineFor(points: StrokePoint[], settings: StrokeSettings, kind?: StrokeKind): [number, number][] {
-  if (kind === "calligraphy") return calligraphyOutline(points, nibFor(settings));
-  return getStroke(points, optionsFor(settings)) as [number, number][];
+// kind before there's a Stroke object to read it off. `seedKey` should be
+// the stroke's own id wherever there is one — it's what makes a scatter
+// brush deterministic (see src/lib/brush.ts). The default only covers the
+// in-progress stroke, which has no id until it's committed and is
+// re-rendered from scratch every frame anyway.
+function outlineFor(points: StrokePoint[], settings: StrokeSettings, kind?: StrokeKind, seedKey = "live"): BrushOutput {
+  if (kind === "calligraphy") return applyCalligraphy(points, nibFor(settings));
+  return applyBrush(points, optionsFor(settings), seedKey);
 }
 
 // A Scale-tool gesture bakes its magnitude into the stroke's own widthScale
@@ -246,9 +288,10 @@ function effectiveSettingsFor(stroke: Stroke, settings: StrokeSettings): StrokeS
 }
 
 // The single call every already-completed stroke's outline goes through: its
-// own kind and its own baked-in widthScale, against the current settings.
-function strokeOutline(stroke: Stroke, settings: StrokeSettings): [number, number][] {
-  return outlineFor(stroke.points, effectiveSettingsFor(stroke, settings), stroke.kind);
+// own kind, its own id as the brush seed, and its own baked-in widthScale,
+// against the current settings.
+function strokeOutline(stroke: Stroke, settings: StrokeSettings): BrushOutput {
+  return outlineFor(stroke.points, effectiveSettingsFor(stroke, settings), stroke.kind, stroke.id);
 }
 
 // What the tool currently in hand records on the strokes it lays down (and
@@ -516,12 +559,19 @@ function applyVectorShapePath(ctx: CanvasRenderingContext2D, shape: VectorShape)
   if (shape.closed) ctx.closePath();
 }
 
-function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][], color: string) {
-  if (outline.length < 3) return;
+// One path for every polygon a brush produced, filled once. Nonzero winding
+// does the same job here that unionOutlines does at export time — hundreds of
+// overlapping scatter stamps read as one connected mark without the cost of a
+// real boolean union on every frame.
+function fillOutline(ctx: CanvasRenderingContext2D, out: BrushOutput, color: string) {
+  if (out.polygons.length === 0) return;
   // Shares outlineToPath with the SVG export (src/lib/contour.ts) so the canvas
   // rendering and the exported document always describe the same curve.
   ctx.beginPath();
-  applyPath(ctx, outlineToPath(outline));
+  for (const polygon of out.polygons) {
+    if (polygon.length < 3) continue;
+    applyPath(ctx, out.smooth ? outlineToPath(polygon) : outlineToSharpPath(polygon));
+  }
   ctx.fillStyle = color;
   ctx.fill();
 }
@@ -548,12 +598,11 @@ function compileDocument(
       // and stem of a "t") — union their outlines into clean, non-
       // overlapping contours before exporting, so overlapping/self-
       // intersecting paths don't glitch in font rasterizers downstream.
-      const strokesUnion = unionOutlines(
-        g.strokeIds
-          .map((id) => byId.get(id))
-          .filter((s): s is Stroke => Boolean(s))
-          .map((s) => strokeOutline(s, settings))
-      );
+      const glyphStrokes = g.strokeIds.map((id) => byId.get(id)).filter((s): s is Stroke => Boolean(s));
+      // A brush can emit many polygons per stroke (one per stamp, for the
+      // scatter brush) — they union in exactly like separately drawn strokes
+      // already did, so the overlap handling below is unchanged.
+      const strokesUnion = unionOutlines(glyphStrokes.flatMap((s) => strokeOutline(s, settings).polygons));
       // Vector-tool shapes (only closed ones are real geometry) default to
       // punching a hole in the glyph's strokes — see contour.ts's
       // subtractOutlines. A glyph with vector shapes but no strokes has
@@ -584,7 +633,21 @@ function compileDocument(
         rightBearing: g.rightBearing,
         cellWidth: g.cellWidth,
         cellHeight: g.cellHeight,
-        contours: rings.map((ring) => pathToSvgD(outlineToPath(ring))),
+        // Midpoint-quadratic smoothing is right for freehand ink (dense
+        // point clouds, where it reproduces the drawn curve) and wrong for
+        // nib hulls and stamps (sparse exact polygons, where it rounds off
+        // corners that were deliberate). The union can mix rings from both,
+        // so the decision is per glyph: any non-freehand ink in it and the
+        // whole glyph emits straight edges. A glyph made only of Vector-tool
+        // shapes has no brushed ink at all and keeps the smoothing, which is
+        // what its dense curve flattening expects.
+        contours: rings.map((ring) =>
+          pathToSvgD(
+            glyphStrokes.length > 0 && settings.brush.kind !== "freehand"
+              ? outlineToSharpPath(ring)
+              : outlineToPath(ring)
+          )
+        ),
       };
     }),
   };
@@ -654,7 +717,7 @@ export default function Home() {
   // Completed strokes + their cached outlines (recomputed only when a stroke is added
   // or settings change — not on every pointer move).
   const completedRef = useRef<Stroke[]>([]);
-  const outlinesRef = useRef<[number, number][][]>([]);
+  const outlinesRef = useRef<BrushOutput[]>([]);
   const currentPointsRef = useRef<StrokePoint[]>([]);
   const lassoRef = useRef<[number, number][]>([]);
   const redrawRef = useRef<() => void>(() => {});
@@ -894,6 +957,27 @@ export default function Home() {
   function updateKeepProportions(value: boolean) {
     setKeepProportions(value);
     window.localStorage.setItem("fontane.keepProportions.v1", String(value));
+  }
+
+  // Grid bearings locked: the bearing lines and the per-cell width handle stop
+  // answering the pointer (see GridCell's lockBearings), so a stroke drawn over
+  // one is just a stroke instead of a dragged sidebearing. Named for the
+  // bearings specifically, not the guides in general: the metric lines
+  // (baseline/x-height/ascender/descender) aren't draggable in a cell at all —
+  // they come from the sliders — so bearings and the width handle are the only
+  // things a lock has anything to say about. Drawing across a full Grid means
+  // crossing those lines constantly — this is the switch for "I'm shaping
+  // letters now, not spacing them". Read on first render rather
+  // than defaulted-then-synced so a reload doesn't hand back an unlocked Grid
+  // for a frame, which is exactly one frame of the accident it prevents.
+  const [lockBearings, setLockBearings] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("fontane.lockBearings.v1") === "true";
+  });
+
+  function updateLockBearings(value: boolean) {
+    setLockBearings(value);
+    window.localStorage.setItem("fontane.lockBearings.v1", String(value));
   }
 
   // Each GridCell's own actual rendered size, keyed by letter — the label
@@ -1203,6 +1287,30 @@ export default function Home() {
 
   const [hud, setHud] = useState({ pointerType: "—", pressure: 0, x: 0, y: 0 });
   const [strokeCount, setStrokeCount] = useState(0);
+
+  // What the current brush costs the exported font, in the two units that
+  // actually constrain it — every point here becomes a point in the glyf
+  // table. Derived at render rather than pushed into state from the settings
+  // effect below: both inputs already re-render this component when they
+  // change, and a stipple brush's cost is exactly the thing that shouldn't
+  // arrive one render late. Skipped entirely for the freehand brush, which
+  // can't run the count up and doesn't display it.
+  const inkStats = useMemo(() => {
+    if (settings.brush.kind === "freehand") return { contours: 0, points: 0 };
+    let contours = 0;
+    let points = 0;
+    for (const stroke of completedRef.current) {
+      const out = strokeOutline(stroke, settings);
+      contours += out.polygons.length;
+      points += inkPointCount(out);
+    }
+    return { contours, points };
+    // strokeCount isn't read here — it stands in for completedRef's contents,
+    // which a ref can't announce. It's the state that moves whenever a stroke
+    // is added or deleted, so keying on it re-derives the count exactly when
+    // the underlying set of strokes changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings, strokeCount]);
   const [undoCount, setUndoCount] = useState(0);
   const [redoCount, setRedoCount] = useState(0);
   const [exportJson, setExportJson] = useState("");
@@ -2085,6 +2193,27 @@ export default function Home() {
     setSettings((s) => ({ ...s, [key]: value }));
   }
 
+  // Switching brush keeps BOTH parameter sets (see BrushSettings) — a tuned
+  // nib survives a detour through the scatter brush and back.
+  function updateBrushKind(kind: BrushKind) {
+    setSettings((s) => ({ ...s, brush: { ...s.brush, kind } }));
+  }
+
+  function updateNib<K extends keyof NibParams>(key: K, value: NibParams[K]) {
+    setSettings((s) => ({ ...s, brush: { ...s.brush, nib: { ...s.brush.nib, [key]: value } } }));
+  }
+
+  function updateScatter<K extends keyof ScatterParams>(key: K, value: ScatterParams[K]) {
+    setSettings((s) => ({ ...s, brush: { ...s.brush, scatter: { ...s.brush.scatter, [key]: value } } }));
+  }
+
+  function resetBrushParams() {
+    setSettings((s) => ({
+      ...s,
+      brush: s.brush.kind === "nib" ? { ...s.brush, nib: DEFAULT_NIB } : { ...s.brush, scatter: DEFAULT_SCATTER },
+    }));
+  }
+
   // Shears the selection around its bbox center, always recomputed from the
   // ONE pre-skew snapshot captured when the selection was made (see the
   // [selectedIds] effect above) — a proper combined shear matrix using each
@@ -2220,7 +2349,7 @@ export default function Home() {
   // wins when strokes overlap — same convention as GridCell's select mode.
   function eraseAt(x: number, y: number): boolean {
     for (let i = completedRef.current.length - 1; i >= 0; i--) {
-      if (pointInPolygon([x, y], outlinesRef.current[i])) {
+      if (pointInPolygon([x, y], outlinesRef.current[i].envelope)) {
         deleteStrokes(new Set([completedRef.current[i].id]));
         return true;
       }
@@ -2284,7 +2413,7 @@ export default function Home() {
       // editing them as if they were one wouldn't reshape the visible ink
       // sensibly. Skip silently, same as clicking empty space would.
       if ((stroke.kind ?? "pen") === "brush") continue;
-      if (pointInPolygon([x, y], outlinesRef.current[i])) {
+      if (pointInPolygon([x, y], outlinesRef.current[i].envelope)) {
         editingStrokeIdRef.current = stroke.id;
         anchorIndicesRef.current = simplifyStrokeIndices(stroke.points.map((p) => [p[0], p[1]]));
         resampledRef.current = false;
@@ -2318,7 +2447,7 @@ export default function Home() {
     for (let i = completedRef.current.length - 1; i >= 0; i--) {
       const stroke = completedRef.current[i];
       if ((stroke.kind ?? "pen") === "brush") continue;
-      if (pointInPolygon([x, y], outlinesRef.current[i])) {
+      if (pointInPolygon([x, y], outlinesRef.current[i].envelope)) {
         editingStrokeIdRef.current = stroke.id;
         anchorIndicesRef.current = simplifyStrokeIndices(stroke.points.map((p) => [p[0], p[1]]));
         resampledRef.current = false;
@@ -2875,7 +3004,7 @@ export default function Home() {
   ) {
     let hit = false;
     for (let i = completedRef.current.length - 1; i >= 0; i--) {
-      if (selectedIdsRef.current.has(completedRef.current[i].id) && pointInPolygon([x, y], outlinesRef.current[i])) {
+      if (selectedIdsRef.current.has(completedRef.current[i].id) && pointInPolygon([x, y], outlinesRef.current[i].envelope)) {
         hit = true;
         break;
       }
@@ -4144,6 +4273,7 @@ export default function Home() {
                   leftBearing={glyph?.leftBearing}
                   rightBearing={glyph?.rightBearing}
                   onBearingsChange={(left, right) => handleBearingsChange(slot, left, right)}
+                  lockBearings={lockBearings}
                   onResize={(width, height) => handleCellResize(cellKey, width, height)}
                   widthPx={effectiveWidthPx}
                   heightPx={cellHeightPx}
@@ -4318,6 +4448,30 @@ export default function Home() {
           )}
           {topMode === "draw" && drawStyle === "grid" && (
             <div className={styles.sliders}>
+              {/* The label stays the same string in both states on purpose:
+                  lockBearings is read from localStorage during the first render
+                  (so the Grid is already locked on the very first frame, not a
+                  frame later), which means the server rendered this button
+                  from the default. Swapping the TEXT on it made that a
+                  hydration mismatch React can't patch up quietly — a real
+                  #418 in the console on every locked reload. The on state
+                  rides on the class and aria-pressed instead, attributes React
+                  reconciles without complaint, and the filled treatment is the
+                  same one the Base/Ligature/Alt toggle already uses for
+                  "this one is active". */}
+              <button
+                type="button"
+                aria-pressed={lockBearings}
+                className={`${styles.clearBtn} ${lockBearings ? styles.toggleBtnOn : ""}`}
+                onClick={() => updateLockBearings(!lockBearings)}
+                title={
+                  lockBearings
+                    ? "Bearings are locked — the bearing lines and the cell width handle ignore the pointer, so you can draw straight over them"
+                    : "Lock the bearing lines and the cell width handle so drawing over them doesn't drag them"
+                }
+              >
+                Lock Bearings
+              </button>
               <label className={styles.sliderRow}>
                 <span>Cell size</span>
                 <input
@@ -4538,26 +4692,58 @@ export default function Home() {
 
           {showStrokeControls && drawTool !== "calligraphy" && (
             <div className={styles.sliders}>
-              <div className={styles.modeToggle} role="radiogroup" aria-label="Stroke mode">
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={settings.mode === "mono"}
-                  className={`${styles.modeBtn} ${settings.mode === "mono" ? styles.modeBtnActive : ""}`}
-                  onClick={() => updateSetting("mode", "mono")}
-                >
-                  Mono line
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={settings.mode === "dynamic"}
-                  className={`${styles.modeBtn} ${settings.mode === "dynamic" ? styles.modeBtnActive : ""}`}
-                  onClick={() => updateSetting("mode", "dynamic")}
-                >
-                  Dynamic
-                </button>
+              {/* Which applicator turns the skeleton into ink. Everything
+                  below this toggle is that brush's own parameter set — the
+                  three have almost nothing in common beyond Size, so showing
+                  all of them at once would be mostly disabled controls. */}
+              <div className={styles.settingsSubLabel}>Brush</div>
+              <div className={styles.modeToggle} role="radiogroup" aria-label="Brush">
+                {BRUSH_DEFS.map((b) => (
+                  <button
+                    key={b.kind}
+                    type="button"
+                    role="radio"
+                    aria-checked={settings.brush.kind === b.kind}
+                    title={b.hint}
+                    className={`${styles.modeBtn} ${settings.brush.kind === b.kind ? styles.modeBtnActive : ""}`}
+                    onClick={() => updateBrushKind(b.kind)}
+                  >
+                    {b.label}
+                  </button>
+                ))}
               </div>
+
+              {/* Mono/Dynamic is a freehand-only distinction: it zeroes
+                  perfect-freehand's thinning, which the other two brushes
+                  never consult (they have their own Pressure amount). */}
+              {settings.brush.kind === "freehand" && (
+                <div className={styles.modeToggle} role="radiogroup" aria-label="Stroke mode">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={settings.mode === "mono"}
+                    className={`${styles.modeBtn} ${settings.mode === "mono" ? styles.modeBtnActive : ""}`}
+                    onClick={() => updateSetting("mode", "mono")}
+                  >
+                    Mono line
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={settings.mode === "dynamic"}
+                    className={`${styles.modeBtn} ${settings.mode === "dynamic" ? styles.modeBtnActive : ""}`}
+                    onClick={() => updateSetting("mode", "dynamic")}
+                  >
+                    Dynamic
+                  </button>
+                </div>
+              )}
+
+              {/* Size is the one setting every brush shares — pen width for
+                  freehand, nib length for the nib, and the unit every
+                  scatter length is a multiple of. It stays put across brush
+                  switches so the toggle doesn't move the controls under the
+                  pointer. */}
               <label className={styles.sliderRow}>
                 <span>Size</span>
                 <input
@@ -4570,7 +4756,8 @@ export default function Home() {
                 />
                 <span className={styles.val}>{settings.size}</span>
               </label>
-              {settings.mode === "dynamic" && (
+
+              {settings.brush.kind === "freehand" && settings.mode === "dynamic" && (
                 <>
                   <label className={styles.sliderRow}>
                     <span>Thinning</span>
@@ -4596,18 +4783,239 @@ export default function Home() {
                     />
                     <span className={styles.val}>{settings.smoothing.toFixed(2)}</span>
                   </label>
+                </>
+              )}
+
+              {settings.brush.kind === "nib" && (
+                <>
                   <label className={styles.sliderRow}>
-                    <span>Streamline</span>
+                    <span>Nib angle</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={180}
+                      step={1}
+                      value={settings.brush.nib.angle}
+                      onChange={(e) => updateNib("angle", Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{settings.brush.nib.angle}°</span>
+                  </label>
+                  <label className={styles.sliderRow}>
+                    <span>Flatness</span>
+                    <input
+                      type="range"
+                      min={0.02}
+                      max={1}
+                      step={0.02}
+                      value={settings.brush.nib.ratio}
+                      onChange={(e) => updateNib("ratio", Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{settings.brush.nib.ratio.toFixed(2)}</span>
+                  </label>
+                  <div className={styles.modeToggle} role="radiogroup" aria-label="Nib shape">
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={settings.brush.nib.shape === "ellipse"}
+                      className={`${styles.modeBtn} ${settings.brush.nib.shape === "ellipse" ? styles.modeBtnActive : ""}`}
+                      onClick={() => updateNib("shape", "ellipse")}
+                    >
+                      Round
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={settings.brush.nib.shape === "rect"}
+                      className={`${styles.modeBtn} ${settings.brush.nib.shape === "rect" ? styles.modeBtnActive : ""}`}
+                      onClick={() => updateNib("shape", "rect")}
+                    >
+                      Cut
+                    </button>
+                  </div>
+                  <label className={styles.sliderRow}>
+                    <span>Pressure</span>
                     <input
                       type="range"
                       min={0}
                       max={1}
                       step={0.05}
-                      value={settings.streamline}
-                      onChange={(e) => updateSetting("streamline", Number(e.target.value))}
+                      value={settings.brush.nib.pressure}
+                      onChange={(e) => updateNib("pressure", Number(e.target.value))}
                     />
-                    <span className={styles.val}>{settings.streamline.toFixed(2)}</span>
+                    <span className={styles.val}>{settings.brush.nib.pressure.toFixed(2)}</span>
                   </label>
+                </>
+              )}
+
+              {settings.brush.kind === "scatter" && (
+                <>
+                  <div className={styles.modeToggle} role="radiogroup" aria-label="Stamp">
+                    {STAMP_DEFS.map((s) => (
+                      <button
+                        key={s.shape}
+                        type="button"
+                        role="radio"
+                        aria-checked={settings.brush.scatter.stamp === s.shape}
+                        title={s.label}
+                        className={`${styles.modeBtn} ${settings.brush.scatter.stamp === s.shape ? styles.modeBtnActive : ""}`}
+                        onClick={() => updateScatter("stamp", s.shape)}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                  <label className={styles.sliderRow}>
+                    <span>Spacing</span>
+                    <input
+                      type="range"
+                      min={0.1}
+                      max={4}
+                      step={0.05}
+                      value={settings.brush.scatter.spacing}
+                      onChange={(e) => updateScatter("spacing", Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{settings.brush.scatter.spacing.toFixed(2)}</span>
+                  </label>
+                  <label className={styles.sliderRow}>
+                    <span>Stamp size</span>
+                    <input
+                      type="range"
+                      min={0.05}
+                      max={2}
+                      step={0.05}
+                      value={settings.brush.scatter.size}
+                      onChange={(e) => updateScatter("size", Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{settings.brush.scatter.size.toFixed(2)}</span>
+                  </label>
+                  <div className={styles.modeToggle} role="radiogroup" aria-label="Stamp rotation">
+                    {ROTATION_DEFS.map((r) => (
+                      <button
+                        key={r.mode}
+                        type="button"
+                        role="radio"
+                        aria-checked={settings.brush.scatter.rotationMode === r.mode}
+                        title={r.hint}
+                        className={`${styles.modeBtn} ${settings.brush.scatter.rotationMode === r.mode ? styles.modeBtnActive : ""}`}
+                        onClick={() => updateScatter("rotationMode", r.mode)}
+                      >
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* A fixed offset on top of a random angle is a no-op —
+                      hide it there rather than leave a slider that does
+                      nothing. */}
+                  {settings.brush.scatter.rotationMode !== "random" && (
+                    <label className={styles.sliderRow}>
+                      <span>Rotation</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={180}
+                        step={1}
+                        value={settings.brush.scatter.rotation}
+                        onChange={(e) => updateScatter("rotation", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.brush.scatter.rotation}°</span>
+                    </label>
+                  )}
+                  <label className={styles.sliderRow}>
+                    <span>Pressure</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={settings.brush.scatter.pressure}
+                      onChange={(e) => updateScatter("pressure", Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{settings.brush.scatter.pressure.toFixed(2)}</span>
+                  </label>
+                  <div className={styles.settingsSubLabel}>Jitter</div>
+                  <label className={styles.sliderRow}>
+                    <span>Size</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={settings.brush.scatter.sizeJitter}
+                      onChange={(e) => updateScatter("sizeJitter", Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{settings.brush.scatter.sizeJitter.toFixed(2)}</span>
+                  </label>
+                  <label className={styles.sliderRow}>
+                    <span>Offset</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={settings.brush.scatter.offsetJitter}
+                      onChange={(e) => updateScatter("offsetJitter", Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{settings.brush.scatter.offsetJitter.toFixed(2)}</span>
+                  </label>
+                  <label className={styles.sliderRow}>
+                    <span>Spacing</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={settings.brush.scatter.spacingJitter}
+                      onChange={(e) => updateScatter("spacingJitter", Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{settings.brush.scatter.spacingJitter.toFixed(2)}</span>
+                  </label>
+                  {settings.brush.scatter.rotationMode !== "random" && (
+                    <label className={styles.sliderRow}>
+                      <span>Rotation</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={180}
+                        step={1}
+                        value={settings.brush.scatter.rotationJitter}
+                        onChange={(e) => updateScatter("rotationJitter", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.brush.scatter.rotationJitter}°</span>
+                    </label>
+                  )}
+                </>
+              )}
+
+              {/* Streamline smooths the SKELETON, so it applies to every
+                  brush — for freehand it's a perfect-freehand option, for the
+                  other two it's what buildPathSpace samples. */}
+              {(settings.brush.kind !== "freehand" || settings.mode === "dynamic") && (
+                <label className={styles.sliderRow}>
+                  <span>Streamline</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={settings.streamline}
+                    onChange={(e) => updateSetting("streamline", Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{settings.streamline.toFixed(2)}</span>
+                </label>
+              )}
+
+              {settings.brush.kind !== "freehand" && (
+                <>
+                  {/* Every one of these points ends up in the exported glyf
+                      table. A stipple brush can reach five figures without
+                      looking any different on screen, so the number is shown
+                      rather than discovered at export time. */}
+                  <div className={styles.brushBudget}>
+                    {inkStats.contours.toLocaleString("de-DE")} contours · {inkStats.points.toLocaleString("de-DE")} points
+                  </div>
+                  <button type="button" className={styles.clearBtn} onClick={resetBrushParams}>
+                    Reset brush
+                  </button>
                 </>
               )}
             </div>

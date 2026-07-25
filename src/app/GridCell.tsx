@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
-import { outlineToPath, skeletonToPath, cubicPoint, splitVectorSegment, type PathCommand } from "@/lib/contour";
+import { outlineToPath, outlineToSharpPath, skeletonToPath, cubicPoint, splitVectorSegment, type PathCommand } from "@/lib/contour";
+import { applyBrush, applyCalligraphy, brushEnvelope, type BrushOptions, type BrushOutput } from "@/lib/brush";
 import { pointInPolygon, anyPointInPolygon, fitPointsToBox } from "@/lib/geometry";
 import { simplifyStrokeIndices } from "@/lib/simplify";
 import type { StrokeKind, StrokePoint } from "@/lib/strokes";
@@ -13,7 +13,10 @@ import { unicodeFor } from "@/lib/glyphs";
 import { setClipboard, getClipboard, type ClipboardStroke } from "@/lib/clipboard";
 import { isSmoothAnchor, alignOppositeHandle, type BezierAnchor, type VectorShape } from "@/lib/vectorShapes";
 
-export type StrokeOptions = { size: number; thinning: number; smoothing: number; streamline: number };
+// The pen settings a cell renders with, brush included — page.tsx's
+// optionsFor() builds it, so a cell always paints with exactly the same
+// applicator the export will use.
+export type StrokeOptions = BrushOptions;
 export type CellTool =
   | "pen"
   | "brush"
@@ -98,21 +101,29 @@ function applyVectorShapePath(ctx: CanvasRenderingContext2D, shape: VectorShape)
   if (shape.closed) ctx.closePath();
 }
 
-function fillOutline(ctx: CanvasRenderingContext2D, outline: [number, number][], color: string = CELL_COLOR) {
-  if (outline.length < 3) return;
+// One path across every polygon the brush produced, filled once — see
+// page.tsx's twin for why nonzero winding stands in for a real union here.
+function fillOutline(ctx: CanvasRenderingContext2D, out: BrushOutput, color: string = CELL_COLOR) {
+  if (out.polygons.length === 0) return;
   ctx.beginPath();
-  applyPath(ctx, outlineToPath(outline));
+  for (const polygon of out.polygons) {
+    if (polygon.length < 3) continue;
+    applyPath(ctx, out.smooth ? outlineToPath(polygon) : outlineToSharpPath(polygon));
+  }
   ctx.fillStyle = color;
   ctx.fill();
 }
 
 // Mirrors page.tsx's own outlineFor: the tool that DREW a stroke decides how
 // its outline is built, so a calligraphy stroke keeps its broad-nib shape no
-// matter which tool is in hand now. `kind` is optional for the live
-// in-progress path, which has no CellStroke to read it off yet.
-function outlineFor(points: StrokePoint[], options: StrokeOptions, nib: Nib, kind?: StrokeKind): [number, number][] {
-  if (kind === "calligraphy") return calligraphyOutline(points, nib);
-  return getStroke(points, options) as [number, number][];
+// matter which tool or brush is in hand now; every other stroke goes through
+// the active brush, seeded per stroke id (same as everywhere else) so a
+// scatter-brushed glyph looks identical in its cell, in the Editor preview
+// and in the export. `kind` is optional for the live in-progress path, which
+// has no CellStroke to read it off yet.
+function outlineFor(points: StrokePoint[], options: StrokeOptions, nib: Nib, kind?: StrokeKind, seedKey = "live"): BrushOutput {
+  if (kind === "calligraphy") return applyCalligraphy(points, nib);
+  return applyBrush(points, options, seedKey);
 }
 
 // Mirrors page.tsx's effectiveSettingsFor — bakes a stroke's own widthScale
@@ -129,10 +140,21 @@ function effectiveNibFor(stroke: CellStroke, nib: Nib): Nib {
   return ws === 1 ? nib : { ...nib, size: nib.size * ws };
 }
 
-// The one call every stored stroke's outline goes through — mirrors page.tsx's
-// strokeOutline.
-function strokeOutline(stroke: CellStroke, options: StrokeOptions, nib: Nib): [number, number][] {
-  return outlineFor(stroke.points, effectiveOptionsFor(stroke, options), effectiveNibFor(stroke, nib), stroke.kind);
+// The one call every stored stroke's rendered outline goes through — mirrors
+// page.tsx's strokeOutline.
+function strokeOutline(stroke: CellStroke, options: StrokeOptions, nib: Nib): BrushOutput {
+  return outlineFor(stroke.points, effectiveOptionsFor(stroke, options), effectiveNibFor(stroke, nib), stroke.kind, stroke.id);
+}
+
+// Hit-test region for eraser/transform/nudge clicks. A calligraphy stroke
+// tests against its true nib outline — the freehand envelope is sized by the
+// pen's Size setting, not the nib's own width, so a wide nib would be
+// unclickable along its edges. Everything else uses the plain freehand
+// envelope, so a stipple brush stays selectable between its stamps (see
+// brushEnvelope).
+function strokeEnvelope(stroke: CellStroke, options: StrokeOptions, nib: Nib): [number, number][] {
+  if (stroke.kind === "calligraphy") return calligraphyOutline(stroke.points, effectiveNibFor(stroke, nib));
+  return brushEnvelope(stroke.points, effectiveOptionsFor(stroke, options));
 }
 
 // Local copy of page.tsx's strokeKindFor, over this component's own tool
@@ -173,7 +195,11 @@ function drawGuides(
   height: number,
   metrics: Metrics,
   leftBearing: number,
-  rightBearing: number
+  rightBearing: number,
+  // Bearings locked: the bearing lines still draw (they're the whole point of
+  // the sidebearing display), but their grip handles don't — the handles are
+  // purely the "you can drag this" affordance, and while locked you can't.
+  locked: boolean
 ) {
   ctx.save();
   ctx.lineWidth = 0.5;
@@ -216,7 +242,7 @@ function drawGuides(
   ctx.setLineDash([]);
   ctx.globalAlpha = 1;
   const handleY = height / 2;
-  for (const hx of [lx, rx]) {
+  for (const hx of locked ? [] : [lx, rx]) {
     ctx.beginPath();
     ctx.arc(hx, handleY, 4, 0, Math.PI * 2);
     ctx.fillStyle = BEARING_COLOR;
@@ -449,6 +475,13 @@ type Props = {
   leftBearing?: number;
   rightBearing?: number;
   onBearingsChange: (left: number, right: number) => void;
+  // When on, none of this cell's draggable chrome answers the pointer: the
+  // bearing lines and the width handle stop hit-testing entirely, so a stroke
+  // that starts on top of one is just a stroke. They stay VISIBLE — locking is
+  // about not reacting, not about hiding. Global across the Grid (the parent
+  // owns the toggle), since the whole point is drawing across many cells
+  // without having to think about where the bearings sit in each one.
+  lockBearings?: boolean;
   // Reports the canvas's own actual CSS pixel size (not the grid row's
   // nominal height) — the label bar underneath the letter takes some of
   // that row's height for itself, so the canvas is always a bit shorter
@@ -490,6 +523,7 @@ export default function GridCell({
   leftBearing = DEFAULT_LEFT_BEARING,
   rightBearing = DEFAULT_RIGHT_BEARING,
   onBearingsChange,
+  lockBearings = false,
   onResize,
   widthPx,
   heightPx,
@@ -511,6 +545,7 @@ export default function GridCell({
   const metricsRef = useRef(metrics);
   const bearingsRef = useRef({ leftBearing, rightBearing });
   const onBearingsChangeRef = useRef(onBearingsChange);
+  const lockBearingsRef = useRef(lockBearings);
   const onResizeRef = useRef(onResize);
   const draggingRef = useRef<"left" | "right" | null>(null);
   const redrawRef = useRef<() => void>(() => {});
@@ -590,6 +625,7 @@ export default function GridCell({
     bearingsRef.current = { leftBearing, rightBearing };
   }
   onBearingsChangeRef.current = onBearingsChange;
+  lockBearingsRef.current = lockBearings;
   onResizeRef.current = onResize;
   cellDimsRef.current = { width: widthPx, height: heightPx };
   // Same clobber-guard, generalized: don't resync the working stroke data
@@ -624,7 +660,8 @@ export default function GridCell({
         canvas.clientHeight,
         metricsRef.current,
         bearingsRef.current.leftBearing,
-        bearingsRef.current.rightBearing
+        bearingsRef.current.rightBearing,
+        lockBearingsRef.current
       );
       for (const s of strokesRef.current) {
         const color =
@@ -721,6 +758,11 @@ export default function GridCell({
     }
 
     function bearingNear(x: number, width: number): "left" | "right" | null {
+      // The single choke point for every bearing interaction — pointerdown's
+      // drag start and both cursor-hint branches all go through here, so
+      // returning null while locked takes the bearings out of the picture
+      // completely and the click falls through to whatever tool is active.
+      if (lockBearingsRef.current) return null;
       const lx = bearingsRef.current.leftBearing * width;
       const rx = bearingsRef.current.rightBearing * width;
       if (Math.abs(x - lx) <= BEARING_HIT_PX) return "left";
@@ -761,7 +803,7 @@ export default function GridCell({
         // A brush stroke's points trace its own edge, not a true centerline
         // — skip it, same as page.tsx's own Nudge/Anchor gating.
         if ((s.kind ?? "pen") === "brush") continue;
-        if (pointInPolygon([x, y], strokeOutline(s, strokeOptionsRef.current, nibRef.current))) {
+        if (pointInPolygon([x, y], strokeEnvelope(s, strokeOptionsRef.current, nibRef.current))) {
           editingStrokeIdRef.current = s.id;
           anchorIndicesRef.current = simplifyStrokeIndices(s.points.map((p) => [p[0], p[1]]));
           resampledRef.current = false;
@@ -1100,7 +1142,7 @@ export default function GridCell({
         const s = strokesRef.current[i];
         if (
           selectedIdsRef.current.has(s.id) &&
-          pointInPolygon([x, y], strokeOutline(s, strokeOptionsRef.current, nibRef.current))
+          pointInPolygon([x, y], strokeEnvelope(s, strokeOptionsRef.current, nibRef.current))
         ) {
           hit = true;
           break;
@@ -1187,7 +1229,7 @@ export default function GridCell({
         // Topmost (last-drawn) stroke wins when strokes overlap.
         for (let i = strokesRef.current.length - 1; i >= 0; i--) {
           const s = strokesRef.current[i];
-          if (pointInPolygon([x, y], strokeOutline(s, strokeOptionsRef.current, nibRef.current))) {
+          if (pointInPolygon([x, y], strokeEnvelope(s, strokeOptionsRef.current, nibRef.current))) {
             onEraseRef.current(new Set([s.id]));
             break;
           }
@@ -1494,7 +1536,7 @@ export default function GridCell({
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawGuides(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing);
+    drawGuides(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing, lockBearings);
     for (const s of strokes) {
       const color = selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
       fillOutline(ctx, strokeOutline(s, strokeOptions, nib), color);
@@ -1503,7 +1545,7 @@ export default function GridCell({
     // editingShapeIdRef is guaranteed null by the guard above, so this only
     // ever draws the resting state (every shape's outline, no handles).
     if (tool === "vector") drawVectorAffordances(ctx, vectorShapes, null);
-  }, [strokes, vectorShapes, tool, metrics, leftBearing, rightBearing, strokeOptions, nib]);
+  }, [strokes, vectorShapes, tool, metrics, leftBearing, rightBearing, lockBearings, strokeOptions, nib]);
 
   const unicode = unicodeFor(label);
 
@@ -1523,14 +1565,20 @@ export default function GridCell({
   // mismatch between server and client markup; setting it imperatively here
   // (client-only, post-hydration) sidesteps that entirely — the JSX below
   // never renders a style attribute for this element at all.
+  // Locking hides this handle for the same reason it hides the bearing grips:
+  // it sits right on the cell's edge, which is exactly where a stroke that
+  // runs to the edge of the letter ends up, and it is the other bit of chrome
+  // that grabs a drag meant for the canvas.
   useEffect(() => {
     const el = widthHandleRef.current;
     if (!el) return;
-    el.style.pointerEvents = onWidthCommit ? "auto" : "none";
-    el.style.opacity = onWidthCommit ? "1" : "0";
-  }, [onWidthCommit]);
+    const active = Boolean(onWidthCommit) && !lockBearings;
+    el.style.pointerEvents = active ? "auto" : "none";
+    el.style.opacity = active ? "1" : "0";
+  }, [onWidthCommit, lockBearings]);
 
   function handleWidthPointerDown(e: React.PointerEvent) {
+    if (lockBearings) return;
     e.stopPropagation();
     (e.target as Element).setPointerCapture(e.pointerId);
     widthDragRef.current = {

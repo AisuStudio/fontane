@@ -17,7 +17,10 @@ from GlyphsApp import Glyphs, GSGlyph, GSPath, GSNode, Message, GetOpenFile, LIN
 SCALE = 1.0
 FLIP_Y = True  # canvas y grows downward, font design space grows upward
 
-TOKEN_RE = re.compile(r"[MQZ]|-?\d+(?:\.\d+)?")
+# L covers the straight-edged contours a nib/stipple-brushed glyph exports
+# (see src/lib/contour.ts's outlineToSharpPath) - without it those glyphs
+# imported as empty layers.
+TOKEN_RE = re.compile(r"[MLQZ]|-?\d+(?:\.\d+)?")
 
 
 def transform(x, y):
@@ -35,6 +38,10 @@ def parse_contour(d):
     while i < len(tokens):
         tok = tokens[i]
         if tok == "M":
+            x, y = transform(float(tokens[i + 1]), float(tokens[i + 2]))
+            nodes.append(GSNode((x, y), LINE))
+            i += 3
+        elif tok == "L":
             x, y = transform(float(tokens[i + 1]), float(tokens[i + 2]))
             nodes.append(GSNode((x, y), LINE))
             i += 3
