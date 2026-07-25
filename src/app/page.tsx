@@ -77,7 +77,7 @@ import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
 import AnimatePanel from "./AnimatePanel";
 import EditorPanel, { DEFAULT_EDITOR_FONT_SIZE_PT, EDITOR_SAMPLE_TEXT } from "./EditorPanel";
 import { DEFAULT_PRESET_ID, type AnimationPresetId } from "@/lib/animationPresets";
-import { trackExport, trackToolUse } from "@/lib/analytics";
+import { trackCharset, trackError, trackExport, trackGate, trackToolUse, trackUndo, notePointer } from "@/lib/analytics";
 import { useVisitTracking } from "@/lib/visitDuration";
 import {
   getAuthorId,
@@ -980,6 +980,12 @@ export default function Home() {
   }
 
   function toggleCharacterSet(id: string) {
+    // Which sets get switched on beyond the default is the most direct
+    // evidence of which glyph coverage is wanted, rather than which we
+    // guessed — the set id only, never which glyphs were then drawn. Sent
+    // from here rather than inside the updater below, which React may run
+    // more than once per call.
+    trackCharset(id, !activeSetIds.has(id));
     setActiveSetIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -998,6 +1004,13 @@ export default function Home() {
 
   const topModeRef = useRef(topMode);
   const drawStyleRef = useRef(drawStyle);
+  // The view label every analytics event is tagged with — the same string
+  // useVisitTracking() reports below, so per-view time and per-view tool use
+  // are always talking about the same thing. Assigned during render (like
+  // undoRef further down) rather than in an effect: a tool used in the same
+  // tick as a view switch must land in the view it actually happened in.
+  const viewLabelRef = useRef("studio:grid");
+  viewLabelRef.current = topMode === "draw" ? `studio:${drawStyle}` : `studio:${topMode}`;
   // Editor has no stroke settings/tools of its own yet (Phase 1 is
   // read-only composition) — Free and Grid still get the full Pen/Eraser/
   // Nudge + stroke-appearance controls.
@@ -1497,9 +1510,10 @@ export default function Home() {
     function onPointerDown(e: PointerEvent) {
       canvas!.setPointerCapture(e.pointerId);
       const p = pointFromEvent(e);
+      notePointer(e.pointerType); // rides along on the next tool_use — see lib/analytics.ts
       setHud({ pointerType: e.pointerType, pressure: e.pressure, x: Math.round(p[0]), y: Math.round(p[1]) });
       if (topModeRef.current === "draw" && drawToolRef.current === "eraser") {
-        if (eraseAt(p[0], p[1])) trackToolUse("eraser");
+        if (eraseAt(p[0], p[1])) trackToolUse("eraser", viewLabelRef.current);
         redraw();
         return;
       }
@@ -1567,6 +1581,7 @@ export default function Home() {
 
     function onPointerMove(e: PointerEvent) {
       const p = pointFromEvent(e);
+      notePointer(e.pointerType);
       setHud({ pointerType: e.pointerType, pressure: e.pressure, x: Math.round(p[0]), y: Math.round(p[1]) });
       if (topModeRef.current === "draw" && drawToolRef.current === "eraser") {
         canvas!.style.cursor = "crosshair";
@@ -1633,7 +1648,7 @@ export default function Home() {
         if (draggingAnchorRef.current !== null) {
           draggingAnchorRef.current = null;
           saveStrokes(completedRef.current);
-          trackToolUse("nudge");
+          trackToolUse("nudge", viewLabelRef.current);
         }
         canvas!.releasePointerCapture(e.pointerId);
         redraw();
@@ -1666,7 +1681,7 @@ export default function Home() {
           }
           transformStartRef.current = null;
           saveStrokes(completedRef.current);
-          trackToolUse(t.mode);
+          trackToolUse(t.mode, viewLabelRef.current);
         }
         canvas!.releasePointerCapture(e.pointerId);
         redraw();
@@ -1713,7 +1728,7 @@ export default function Home() {
             tool: stroke.kind === "brush" ? "brush" : "pen",
             ...summarizeStroke(stroke.points, strokeStartTimeRef.current),
           });
-          trackToolUse(stroke.kind === "brush" ? "brush" : "pen");
+          trackToolUse(stroke.kind === "brush" ? "brush" : "pen", viewLabelRef.current);
         }
         currentPointsRef.current = [];
       }
@@ -1859,7 +1874,7 @@ export default function Home() {
   // "editor" surface (the marketplace browse→download ratio counts those
   // values); duration rows carry the finer view below, so switching between
   // Free/Grid/Editor/Animate splits the visit into per-view segments.
-  useVisitTracking("editor", topMode === "draw" ? `studio:${drawStyle}` : `studio:${topMode}`);
+  useVisitTracking("editor", viewLabelRef.current);
 
   // Provenance queue: periodic flush so a long drawing session doesn't sit
   // on an ever-growing localStorage-backed queue, plus a pagehide flush so
@@ -1986,7 +2001,7 @@ export default function Home() {
         saveVectorShapes(vectorShapesRef.current);
 
         setSelectedIds([...newStrokes.map((s) => s.id), ...newShapes.map((s) => s.id)]);
-        trackToolUse("paste");
+        trackToolUse("paste", viewLabelRef.current);
         redrawRef.current();
         return;
       }
@@ -2084,6 +2099,7 @@ export default function Home() {
 
   function handleUndo() {
     if (undoStackRef.current.length === 0) return;
+    trackUndo(); // tagged with the last tool that reported a use — see lib/analytics.ts
     const current = snapshotNow();
     const prev = undoStackRef.current[undoStackRef.current.length - 1];
     undoStackRef.current = undoStackRef.current.slice(0, -1);
@@ -2216,7 +2232,7 @@ export default function Home() {
     setNameInput("");
     setComponentsInput("");
     setAlternateOfInput("");
-    trackToolUse("assign");
+    trackToolUse("assign", viewLabelRef.current);
   }
 
   function handleAssignKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -2628,7 +2644,7 @@ export default function Home() {
       tool: "vector",
       ...summarizeStroke([[0, 0, 1]], Date.now()),
     });
-    trackToolUse("vector");
+    trackToolUse("vector", viewLabelRef.current);
   }
 
   // Illustrator's tangent continuity, entered from every gesture that starts a
@@ -3144,7 +3160,7 @@ export default function Home() {
         // recordVectorProvenance takes on the Free canvas.
         ...summarizeStroke([[0, 0, 1]], Date.now()),
       });
-      trackToolUse("vector");
+      trackToolUse("vector", viewLabelRef.current);
     }
 
     const shapeIds = anchored.map((s) => s.id);
@@ -3258,8 +3274,15 @@ export default function Home() {
     );
   }
 
+  // How many glyphs the document actually has something in — strokes or
+  // vector shapes, either counts. Sent with every export as one of five
+  // buckets (never the number itself, see lib/analytics.ts): the difference
+  // between "tried three letters" and "built a typeface" is the whole
+  // question of what this tool is for, and no other event answers it.
+  const drawnGlyphCount = glyphs.filter((g) => g.strokeIds.length > 0 || (g.vectorShapeIds?.length ?? 0) > 0).length;
+
   function handleDownloadJson() {
-    trackExport("json");
+    trackExport("json", drawnGlyphCount);
     const blob = new Blob([exportJson], { type: "application/json" });
     saveFile(blob, {
       suggestedName: "fontane-document.json",
@@ -3271,17 +3294,25 @@ export default function Home() {
 
   function handleExportOtf() {
     if (!exportDoc) return;
-    trackExport("otf");
-    downloadFont(exportDoc, "fontane.otf");
+    trackExport("otf", drawnGlyphCount);
+    // The export event above fires on the click, so a build that throws
+    // would otherwise be indistinguishable from a finished download — the
+    // one place where "used" and "worked" quietly diverge.
+    try {
+      downloadFont(exportDoc, "fontane.otf");
+    } catch (err) {
+      trackError("export:otf");
+      throw err; // reporting it must not also swallow it
+    }
   }
 
   function handleExportSkeleton() {
-    trackExport("skeleton-svg");
+    trackExport("skeleton-svg", drawnGlyphCount);
     downloadSkeletonSvg(glyphs, completedRef.current);
   }
 
   function handleDownloadFff() {
-    trackExport("fff");
+    trackExport("fff", drawnGlyphCount);
     downloadProjectFile(glyphs, completedRef.current, vectorShapesRef.current, metrics, settings, "untitled.fff");
   }
 
@@ -3348,6 +3379,9 @@ export default function Home() {
     try {
       const res = await fetch("/api/projects", { headers: { "x-fontane-code": code } });
       if (!res.ok) {
+        // Not an error to log — a person asking for the thing behind the
+        // wall. Which wall, nothing about the code they tried.
+        trackGate("cloud-code");
         setCloudError("Wrong code.");
         return;
       }

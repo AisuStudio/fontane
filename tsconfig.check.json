@@ -1,0 +1,18 @@
+{
+  // Compiles the analytics arithmetic and its checks to plain JS so `npm run
+  // check:analytics` can run them on node — no test framework, no new
+  // dependency, just the tsc that's already here. aggregate.ts is
+  // deliberately free of React and Supabase so this stays possible.
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["esnext"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": ".analytics-check"
+  },
+  "include": ["src/app/anneliese/aggregate.ts", "src/app/anneliese/aggregate.check.ts", "src/app/anneliese/filters.ts"]
+}

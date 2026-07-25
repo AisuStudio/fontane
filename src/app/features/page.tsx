@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import MarketplaceNav from "../marketplace/MarketplaceNav";
+import PageviewTracker from "../PageviewTracker";
 
 const description =
   "Every feature of Fontane.Studio: pressure-sensitive hand-lettering capture, a Bezier vector pen tool, Grid and Free drawing, ligatures and alternates, copy/paste across views, and instant OTF export — all running in the browser, free.";
@@ -204,6 +205,8 @@ const SECTIONS: Section[] = [
 
 export default function FeaturesPage() {
   return (
+    <>
+      <PageviewTracker page="features" />
     <div
       style={{
         minHeight: "100vh",
@@ -250,5 +253,6 @@ export default function FeaturesPage() {
         ))}
       </div>
     </div>
+    </>
   );
 }
