@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import PageviewTracker from "../../PageviewTracker";
+import LanguageSwitcher from "../../LanguageSwitcher";
+import { hreflangPaths, localizedPath } from "@/lib/i18n";
 
 export const metadata: Metadata = {
   title: "Impressum & Datenschutz — Fontane.Studio",
   alternates: {
-    canonical: "/de/legal",
-    languages: { en: "/legal", de: "/de/legal" },
+    canonical: localizedPath("legal", "de"),
+    languages: hreflangPaths("legal"),
   },
 };
 
@@ -28,9 +30,7 @@ export default function LegalPageDE() {
       <div style={{ maxWidth: 720, width: "100%" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <h1 style={{ fontSize: 28, marginBottom: 8 }}>Impressum &amp; Datenschutz</h1>
-          <Link href="/legal" style={{ color: "#1f1934", opacity: 0.6, fontSize: 13, textDecoration: "none" }}>
-            EN
-          </Link>
+          <LanguageSwitcher slug="legal" current="de" />
         </div>
         <p style={{ marginBottom: 32, fontSize: 13, lineHeight: 1.6, opacity: 0.7, fontStyle: "italic" }}>
           Vorläufige Übersetzung, noch nicht rechtlich geprüft. Im Zweifel oder bei Abweichungen gilt die{" "}

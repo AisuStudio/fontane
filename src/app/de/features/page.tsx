@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import MarketplaceNav from "../../marketplace/MarketplaceNav";
 import PageviewTracker from "../../PageviewTracker";
+import LanguageSwitcher from "../../LanguageSwitcher";
+import { hreflangPaths, localizedPath } from "@/lib/i18n";
 
 const description =
   "Alle Funktionen von Fontane.Studio: druckempfindliche Handschrift-Erfassung, ein Illustrator-Bezierstift mit weichen Ankerpunkten und gehaltenen Tastenkürzeln, Grid- und Free-Zeichnen, Ligaturen und Alternates, Kopieren/Einfügen über Ansichten hinweg, und sofortiger OTF-Export — alles im Browser, kostenlos.";
@@ -10,8 +11,8 @@ export const metadata: Metadata = {
   title: "Funktionen — Fontane.Studio",
   description,
   alternates: {
-    canonical: "/de/features",
-    languages: { en: "/features", de: "/de/features" },
+    canonical: localizedPath("features", "de"),
+    languages: hreflangPaths("features"),
   },
   openGraph: {
     title: "Funktionen — Fontane.Studio",
@@ -254,9 +255,7 @@ export default function FeaturesPageDE() {
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <h1 style={{ fontSize: 28, marginBottom: 8 }}>Funktionen</h1>
-          <Link href="/features" style={{ color: "#1f1934", opacity: 0.6, fontSize: 13, textDecoration: "none" }}>
-            EN
-          </Link>
+          <LanguageSwitcher slug="features" current="de" />
         </div>
         <p style={{ marginBottom: 40, fontSize: 14, lineHeight: 1.7, opacity: 0.75 }}>
           Alles, was Fontane.Studio heute kann, komplett im Browser — von der ersten druckempfindlichen Skizze bis
