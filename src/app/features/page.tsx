@@ -52,7 +52,7 @@ const jsonLd = {
     "Letter counters two ways: a vector shape nested inside another becomes the counter (draw a 'B' or 'O' in pure vector), and closed shapes punch holes through overlapping strokes",
     "Anchor and Nudge tools to reshape already-drawn strokes point by point",
     "Compact, context-aware workspace: Illustrator-style tool-group flyouts and a Glyphs-style settings palette that shows only what the active tool uses",
-    "Character set library: Latin Basic, Central European accents, punctuation, and currency/math symbols",
+    "Character set library: Latin Basic, Central European and Western European accents, Cyrillic, Greek, punctuation, and currency/math symbols",
     "Ligatures and stylistic alternates, tagged and exported as real OpenType substitution glyphs",
     "Copy and paste strokes and vector shapes within Free Draw, within Grid, and between the two",
     "Move, rotate, and scale tools for reshaping and repositioning drawn letters",
@@ -133,7 +133,7 @@ const SECTIONS: Section[] = [
       {
         name: "Character sets",
         description:
-          "New fonts start focused on Latin Basic (a–z, A–Z); toggle Central European accents, Western European, numbers, punctuation, and symbols on whenever you're ready — glyphs you've already drawn always keep their cell.",
+          "New fonts start focused on Latin Basic (a–z, A–Z); toggle Central European accents, Western European, Cyrillic, Greek, numbers, punctuation, and symbols on whenever you're ready — glyphs you've already drawn always keep their cell.",
       },
       {
         name: "Ligatures & alternates",

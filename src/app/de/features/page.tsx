@@ -52,7 +52,7 @@ const jsonLd = {
     "Buchstaben-Punzen auf zwei Arten: eine Vektorform innerhalb einer anderen wird zur Punze (ein 'B' oder 'O' rein vektoriell zeichnen), und geschlossene Formen stanzen Löcher durch überlappende Striche",
     "Anker- und Nudge-Werkzeuge, um bereits gezeichnete Striche Punkt für Punkt umzuformen",
     "Kompakter, kontextbezogener Arbeitsbereich: Illustrator-artige Werkzeuggruppen-Flyouts und eine Glyphs-artige Einstellungs-Palette, die nur zeigt, was das aktive Werkzeug nutzt",
-    "Zeichensatz-Bibliothek: Latin Basic, mitteleuropäische Akzente, Interpunktion sowie Währungs- und Mathe-Symbole",
+    "Zeichensatz-Bibliothek: Latin Basic, mittel- und westeuropäische Akzente, Kyrillisch, Griechisch, Interpunktion sowie Währungs- und Mathe-Symbole",
     "Ligaturen und stilistische Alternates, getaggt und als echte OpenType-Substitutionsglyphen exportiert",
     "Striche und Vektorformen kopieren und einfügen innerhalb von Free Draw, innerhalb von Grid, und zwischen beiden",
     "Verschieben-, Drehen- und Skalieren-Werkzeuge zum Umformen und Neupositionieren gezeichneter Buchstaben",
@@ -133,7 +133,7 @@ const SECTIONS: Section[] = [
       {
         name: "Zeichensätze",
         description:
-          "Neue Fonts starten fokussiert auf Latin Basic (a–z, A–Z); mitteleuropäische Akzente, westeuropäische Zeichen, Zahlen, Interpunktion und Symbole lassen sich jederzeit dazuschalten — bereits gezeichnete Glyphen behalten immer ihre Zelle.",
+          "Neue Fonts starten fokussiert auf Latin Basic (a–z, A–Z); mitteleuropäische Akzente, westeuropäische Zeichen, Kyrillisch, Griechisch, Zahlen, Interpunktion und Symbole lassen sich jederzeit dazuschalten — bereits gezeichnete Glyphen behalten immer ihre Zelle.",
       },
       {
         name: "Ligaturen & Alternates",

@@ -44,6 +44,29 @@ const WESTERN_EUROPEAN_EXTRA: string[] = [
   "å", "Å", "ø", "Ø", "æ", "Æ",
 ];
 
+// Modern Russian Cyrillic alphabet (33 letters, upper + lower). Other
+// Cyrillic-using languages (Ukrainian, Serbian, Bulgarian, ...) add their own
+// extra letters beyond this — out of scope for now, add as its own set if
+// that ever comes up rather than folding it in here.
+const CYRILLIC: string[] = [
+  ..."абвгдежзийклмнопрстуфхцчшщъыьэюя".split(""),
+  ..."АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ".split(""),
+  "ё", "Ё",
+];
+
+// Modern (monotonic) Greek: the 24-letter alphabet plus final sigma (ς, used
+// only word-finally — a distinct glyph from medial σ) and the tonos/dialytika
+// accents monotonic Greek actually uses day to day. Polytonic accents
+// (varia, perispomeni, breathing marks) are historical/liturgical use only —
+// out of scope, same call as not chasing every historical Latin diacritic.
+const GREEK: string[] = [
+  ..."αβγδεζηθικλμνξοπρστυφχψω".split(""),
+  "ς",
+  ..."ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ".split(""),
+  "ά", "Ά", "έ", "Έ", "ή", "Ή", "ί", "Ί", "ό", "Ό", "ύ", "Ύ", "ώ", "Ώ",
+  "ϊ", "Ϊ", "ϋ", "Ϋ", "ΐ", "ΰ",
+];
+
 const NUMBERS: string[] = "0123456789".split("");
 
 // Common punctuation actually needed for handwritten text — not an
@@ -74,6 +97,8 @@ export const CHARACTER_SETS: CharacterSet[] = [
   { id: "latin-basic", label: "Latin Basic", chars: LATIN_BASIC },
   { id: "central-european", label: "Central European", chars: CENTRAL_EUROPEAN_EXTRA },
   { id: "western-european", label: "Western European", chars: WESTERN_EUROPEAN_EXTRA },
+  { id: "cyrillic", label: "Cyrillic", chars: CYRILLIC },
+  { id: "greek", label: "Greek", chars: GREEK },
   { id: "numbers", label: "Numbers", chars: NUMBERS },
   { id: "punctuation", label: "Punctuation", chars: PUNCTUATION },
   { id: "symbols", label: "Symbols", chars: SYMBOLS },
