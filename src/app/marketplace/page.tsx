@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getSupabase } from "@/lib/supabase";
 import { publicFontUrl, SAMPLE_TEXT } from "@/lib/marketplace";
-import PageviewTracker from "./PageviewTracker";
+import PageviewTracker from "../PageviewTracker";
 import MarketplaceNav from "./MarketplaceNav";
 
 export const dynamic = "force-dynamic";

@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { getSupabase } from "@/lib/supabase";
 import { publicFontUrl, getFontGlyphSheet, SAMPLE_TEXT } from "@/lib/marketplace";
 import ShareButton from "./ShareButton";
-import PageviewTracker from "../PageviewTracker";
+import PageviewTracker from "../../PageviewTracker";
 import MarketplaceNav from "../MarketplaceNav";
 
 export const dynamic = "force-dynamic";
