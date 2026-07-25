@@ -108,11 +108,16 @@ function getReferrerHost(): string | null {
 // — lets the dashboard compute a marketplace browse→download ratio. Only
 // ever a fixed category string, not a path/URL.
 export function trackPageview(page: string = "editor") {
-  // navigator.language is e.g. "de-DE" — only the 2-letter language part is
-  // sent, same "coarse aggregate category, not the full raw value" rule
-  // country/device follow server-side in api/track/route.ts.
-  const language = typeof navigator !== "undefined" ? navigator.language?.slice(0, 2) || null : null;
-  send({ type: "pageview", referrer: getReferrerHost(), page, language });
+  // Language is deliberately NOT read here. navigator.language would mean
+  // actively querying the visitor's device through a JS API and shipping the
+  // answer out — which the EDPB's guidance on the technical scope of
+  // ePrivacy Art. 5(3) treats as "gaining access to information stored in
+  // terminal equipment", i.e. the consent-requiring kind, regardless of how
+  // harmless the value is. The Accept-Language header the browser sends on
+  // its own anyway carries the same two letters without anyone asking the
+  // device for anything, so the language is derived server-side from that
+  // instead (see api/track/route.ts). Same number, no access.
+  send({ type: "pageview", referrer: getReferrerHost(), page });
 }
 
 // `page` here is the finer view label (e.g. "editor:grid", "marketplace")

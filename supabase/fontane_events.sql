@@ -29,9 +29,14 @@ alter table fontane_events add column if not exists referrer text;
 --   IP for one hash operation before discarding it).
 -- - device: "mobile" | "tablet" | "desktop", parsed from User-Agent
 --   server-side — the full UA string itself is never stored.
--- - language: 2-letter code from the browser's own navigator.language,
---   client-supplied (nothing else on this table is) since only the browser
---   knows it — same "aggregate category only" reasoning applies.
+-- - language: 2-letter code taken from the Accept-Language header the
+--   browser sends with the request anyway. It was originally read from
+--   navigator.language in the browser and sent along; that was changed on
+--   2026-07-25 because actively querying the device through a JS API is the
+--   consent-requiring kind of access under ePrivacy Art. 5(3), while a
+--   header that arrives on its own is not. Same two letters, nothing asked
+--   of the device. Only the primary tag is kept — the full header's
+--   quality-value ordering is a real fingerprinting surface.
 -- - page: which surface the pageview happened on ("editor" | "marketplace" |
 --   "marketplace-listing") — lets the marketplace browse→download ratio be
 --   computed without adding any new identifying data. Since 2026-07-24
@@ -91,6 +96,46 @@ alter table fontane_events add column if not exists bucket text;
 alter table fontane_events drop constraint if exists fontane_events_type_check;
 alter table fontane_events add constraint fontane_events_type_check
   check (type in ('pageview', 'duration', 'export', 'tool_use', 'undo', 'charset', 'gate', 'error'));
+
+-- Retention (2026-07-25). Storage limitation (GDPR Art. 5(1)(e)) is not
+-- satisfied by "we only keep harmless things" — a period has to exist and be
+-- stated, and until now this table had none and grew forever. Two stages,
+-- because the two things on a row age differently:
+--
+-- 1. visitor_id, after 90 days. It is the only value here derived from the
+--    visitor's IP. It is already a salted daily hash that nothing can
+--    reverse, but it is the one column with even a theoretical path back to
+--    a person, so it is the one with the short clock. Nulling it costs the
+--    dashboard nothing: no view reads it (unique-visitor approximation was
+--    never built on it), and it stays intact for the 90 days it might.
+--
+-- 2. the whole row, after 14 months. Long enough for a year-over-year look
+--    at a seasonal month, short enough not to be an archive.
+--
+-- session_id is deliberately NOT on the 90-day clock: it is a random number
+-- generated in the visitor's page and never associated with any identifier,
+-- by them or by us — there is nothing it could be re-identified through, and
+-- keeping it is what lets the funnel on /anneliese still work for older
+-- ranges.
+create or replace function fontane_events_retention() returns void
+language sql security definer set search_path = public as $$
+  update fontane_events set visitor_id = null
+   where visitor_id is not null and created_at < now() - interval '90 days';
+  delete from fontane_events where created_at < now() - interval '14 months';
+$$;
+
+-- Run it on a schedule. pg_cron is available on Supabase but has to be
+-- enabled per project (Dashboard → Database → Extensions), so this is left
+-- commented rather than failing the whole script on a project without it.
+-- Enable the extension, then run these two lines once:
+--
+--   create extension if not exists pg_cron;
+--   select cron.schedule('fontane-events-retention', '17 3 * * *',
+--                        $$select fontane_events_retention()$$);
+--
+-- Until that is scheduled, calling select fontane_events_retention(); by
+-- hand does the same thing — but an unscheduled retention policy is a
+-- promise, not a practice, so schedule it.
 
 -- RLS enabled with NO policies = deny-all for the anon/authenticated roles.
 -- The app only ever reads/writes via the service_role key (server-side

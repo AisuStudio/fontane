@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 // lib/analytics.ts, stored as-is (see fontane_events.sql for why that stays
 // within the same privacy position as everything else here).
 type TrackBody = { session?: string } & (
-  | { type: "pageview"; referrer?: string | null; page?: string; language?: string | null }
+  | { type: "pageview"; referrer?: string | null; page?: string }
   | { type: "duration"; seconds: number; page?: string }
   | { type: "export"; format: string; bucket?: string | null }
   | { type: "tool_use"; tool: string; view?: string; pointer?: string | null }
@@ -35,6 +35,31 @@ function deviceCategory(userAgent: string): "mobile" | "tablet" | "desktop" {
   if (/ipad/.test(ua) || (/android/.test(ua) && !/mobile/.test(ua))) return "tablet";
   if (/mobi|iphone|android/.test(ua)) return "mobile";
   return "desktop";
+}
+
+// The primary language tag from the Accept-Language header the browser
+// sends with every request on its own — "de-DE,de;q=0.9,en;q=0.8" becomes
+// "de". Read here rather than from navigator.language in the browser on
+// purpose: this header arrives as part of the request the visitor is
+// already making, so nothing queries their device for it. Only the two
+// letters are kept, never the full header (its quality-value ordering is a
+// meaningful fingerprinting surface, the bare language code is not).
+function primaryLanguage(header: string | null): string | null {
+  const tag = header?.split(",")[0]?.trim().slice(0, 2).toLowerCase();
+  return tag && /^[a-z]{2}$/.test(tag) ? tag : null;
+}
+
+// Global Privacy Control, and the older Do Not Track. GPC is an explicit,
+// machine-readable objection to processing — the kind Art. 21(1) gives every
+// visitor the right to raise, and honouring it in code is the only way to
+// actually give effect to that right on a site with no account and no
+// settings screen to store a preference in. DNT means the same thing from an
+// older generation of browsers and costs nothing to respect too. Neither
+// requires reading anything from the device: both arrive as request headers.
+// This sits alongside ?notrack (which stops the beacon before it is even
+// sent) rather than replacing it.
+function hasOptedOut(request: Request): boolean {
+  return request.headers.get("sec-gpc") === "1" || request.headers.get("dnt") === "1";
 }
 
 // Comma-separated raw IPs (ANALYTICS_EXCLUDED_IPS in Vercel/.env.local) —
@@ -88,6 +113,12 @@ export async function POST(request: Request) {
     return new Response(null, { status: 204 });
   }
 
+  // Checked before anything is read, derived or written — an objection that
+  // only takes effect after the row exists is not an objection.
+  if (hasOptedOut(request)) {
+    return new Response(null, { status: 204 });
+  }
+
   const ip = ipAddress(request) ?? "unknown";
   if (EXCLUDED_IPS.has(ip)) {
     return new Response(null, { status: 204 });
@@ -107,7 +138,7 @@ export async function POST(request: Request) {
           visitor_id: dailyVisitorFingerprint(ip, userAgent),
           referrer: body.referrer ?? null,
           page: label(body.page) ?? "editor",
-          language: label(body.language, 2),
+          language: primaryLanguage(request.headers.get("accept-language")),
           country: geolocation(request).country ?? null,
           device: deviceCategory(userAgent),
         });

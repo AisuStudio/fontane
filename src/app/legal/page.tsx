@@ -95,11 +95,45 @@ export default function LegalPage() {
           </li>
         </ul>
         <p style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7 }}>
-          None of this fires from local development or preview deployments — only the real production site. You
-          can opt out for a given visit by adding <code>?notrack</code> to the URL (e.g.{" "}
-          <code>fontane.studio/?notrack</code>) — every beacon is skipped client-side, nothing is even sent. This
-          is processed under legitimate interest (GDPR Art. 6(1)(f)) — understanding rough usage without
-          identifying anyone.
+          Your language is taken from the <code>Accept-Language</code> header your browser sends with the request
+          anyway, and your country from our host&apos;s edge network — we don&apos;t ask your device for either.
+          None of this fires from local development or preview deployments, only the real production site. It is
+          processed under legitimate interest (GDPR Art. 6(1)(f)): understanding rough usage without identifying
+          anyone.
+        </p>
+
+        <h3 style={{ fontSize: 15, margin: "24px 0 8px" }}>Opting out</h3>
+        <p style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7 }}>
+          Three ways, all of which work without you telling us anything:
+        </p>
+        <ul style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7, paddingLeft: 20 }}>
+          <li>
+            If your browser or extension sends <strong>Global Privacy Control</strong> (or the older Do Not
+            Track), we drop the request before anything is read, derived or written. Nothing needs configuring
+            here.
+          </li>
+          <li>
+            Add <code>?notrack</code> to the URL (e.g. <code>fontane.studio/?notrack</code>) and nothing is even
+            sent for that page load. Because we store nothing on your device, this has to be part of the address
+            each time — bookmark it and it happens by itself.
+          </li>
+          <li>Block requests to <code>/api/track</code>. Nothing else on the site depends on them.</li>
+        </ul>
+
+        <h3 style={{ fontSize: 15, margin: "24px 0 8px" }}>How long we keep it, and your rights</h3>
+        <p style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7 }}>
+          The daily visitor hash is erased after <strong>90 days</strong>. The remaining event rows — counts and
+          category labels — are deleted after <strong>14 months</strong>.
+        </p>
+        <p style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7 }}>
+          You have the right to access, rectification, erasure, restriction, portability, and to object
+          (GDPR Art. 15–21). We have to be straight with you about one of them: for the analytics data we
+          genuinely cannot identify you, and we won&apos;t ask you for extra information in order to be able to
+          — so we can&apos;t look up &quot;your&quot; rows to show or delete them, and Art. 11(2) is exactly the
+          case this describes. Objecting is the right that does work in practice, and any of the three methods
+          above exercises it immediately. For anything concerning a font you published to the Marketplace,
+          write to us and we can act on it. You can also complain to a supervisory authority — for us that is
+          the Berlin Commissioner for Data Protection and Freedom of Information.
         </p>
 
         <h3 style={{ fontSize: 15, margin: "24px 0 8px" }}>Your drawings and fonts</h3>
