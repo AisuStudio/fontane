@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import MarketplaceNav from "../marketplace/MarketplaceNav";
 import PageviewTracker from "../PageviewTracker";
 
@@ -8,7 +9,10 @@ const description =
 export const metadata: Metadata = {
   title: "Features — Fontane.Studio",
   description,
-  alternates: { canonical: "/features" },
+  alternates: {
+    canonical: "/features",
+    languages: { en: "/features", de: "/de/features" },
+  },
   openGraph: {
     title: "Features — Fontane.Studio",
     description,
@@ -248,7 +252,12 @@ export default function FeaturesPage() {
       <div style={{ maxWidth: 720, width: "100%" }}>
         <MarketplaceNav />
 
-        <h1 style={{ fontSize: 28, marginBottom: 8 }}>Features</h1>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <h1 style={{ fontSize: 28, marginBottom: 8 }}>Features</h1>
+          <Link href="/de/features" style={{ color: "#1f1934", opacity: 0.6, fontSize: 13, textDecoration: "none" }}>
+            DE
+          </Link>
+        </div>
         <p style={{ marginBottom: 40, fontSize: 14, lineHeight: 1.7, opacity: 0.75 }}>
           Everything Fontane.Studio can do today, running entirely in your browser — from a first pressure-sensitive
           sketch to a finished, exportable font.

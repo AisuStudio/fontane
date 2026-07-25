@@ -1,6 +1,14 @@
+import type { Metadata } from "next";
+import Link from "next/link";
 import PageviewTracker from "../PageviewTracker";
 
-export const metadata = { title: "Imprint & Privacy — Fontane.Studio" };
+export const metadata: Metadata = {
+  title: "Imprint & Privacy — Fontane.Studio",
+  alternates: {
+    canonical: "/legal",
+    languages: { en: "/legal", de: "/de/legal" },
+  },
+};
 
 export default function LegalPage() {
   return (
@@ -18,7 +26,12 @@ export default function LegalPage() {
       }}
     >
       <div style={{ maxWidth: 720, width: "100%" }}>
-        <h1 style={{ fontSize: 28, marginBottom: 32 }}>Imprint &amp; Privacy</h1>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 32 }}>
+          <h1 style={{ fontSize: 28 }}>Imprint &amp; Privacy</h1>
+          <Link href="/de/legal" style={{ color: "#1f1934", opacity: 0.6, fontSize: 13, textDecoration: "none" }}>
+            DE
+          </Link>
+        </div>
 
         <h2 style={{ fontSize: 18, marginBottom: 12 }}>Imprint</h2>
         <p style={{ marginBottom: 40, fontSize: 14, lineHeight: 1.7 }}>

@@ -23,3 +23,7 @@ Fontane.Studio runs entirely client-side in the browser (no account, no upload o
 ## Source
 
 - [GitHub repository](https://github.com/AisuStudio/fontane): full source code, READMEs for the local TTF build script and the Glyphs.app import script.
+
+## German
+
+- The features and legal pages also exist in German: [fontane.studio/de/features](https://fontane.studio/de/features), [fontane.studio/de/legal](https://fontane.studio/de/legal). The tool itself (drawing, export, marketplace) is not yet localized.

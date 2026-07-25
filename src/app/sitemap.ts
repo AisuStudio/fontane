@@ -19,12 +19,28 @@ export default function sitemap(): MetadataRoute.Sitemap {
       lastModified: "2026-07-25",
       changeFrequency: "monthly",
       priority: 0.8,
+      alternates: { languages: { en: "https://fontane.studio/features", de: "https://fontane.studio/de/features" } },
+    },
+    {
+      url: "https://fontane.studio/de/features",
+      lastModified: "2026-07-25",
+      changeFrequency: "monthly",
+      priority: 0.8,
+      alternates: { languages: { en: "https://fontane.studio/features", de: "https://fontane.studio/de/features" } },
     },
     {
       url: "https://fontane.studio/legal",
       lastModified: "2026-07-25",
       changeFrequency: "yearly",
       priority: 0.3,
+      alternates: { languages: { en: "https://fontane.studio/legal", de: "https://fontane.studio/de/legal" } },
+    },
+    {
+      url: "https://fontane.studio/de/legal",
+      lastModified: "2026-07-25",
+      changeFrequency: "yearly",
+      priority: 0.3,
+      alternates: { languages: { en: "https://fontane.studio/legal", de: "https://fontane.studio/de/legal" } },
     },
   ];
 }
