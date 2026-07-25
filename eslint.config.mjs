@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Compiled output of `npm run check:analytics` — generated JS, not source.
+    ".analytics-check/**",
   ]),
 ]);
 

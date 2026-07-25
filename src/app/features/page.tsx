@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import MarketplaceNav from "../marketplace/MarketplaceNav";
+import PageviewTracker from "../PageviewTracker";
 
 const description =
-  "Every feature of Fontane.Studio: pressure-sensitive hand-lettering capture, a Bezier vector pen tool, Grid and Free drawing, ligatures and alternates, copy/paste across views, and instant OTF export — all running in the browser, free.";
+  "Every feature of Fontane.Studio: pressure-sensitive hand-lettering capture, an Illustrator-grade Bezier pen with smooth anchors and held-key modifiers, Grid and Free drawing, ligatures and alternates, copy/paste across views, and instant OTF export — all running in the browser, free.";
 
 export const metadata: Metadata = {
   title: "Features — Fontane.Studio",
@@ -38,9 +39,13 @@ const jsonLd = {
   featureList: [
     "Pressure-sensitive freehand drawing with Apple Pencil, Wacom, or a mouse",
     "Grid View with per-character guides (ascender, x-height, baseline, descender) and adjustable side bearings",
-    "Vector pen tool with true Bezier anchor points and handles, for precise shapes and letter counters",
-    "Boolean hole/counter cutting — vector shapes punch through overlapping strokes to form counters like in 'o' or 'e'",
+    "Illustrator-style vector pen family: Pen, Add Anchor, Delete Anchor, and Convert Anchor tools on familiar shortcuts (P, +, -, C)",
+    "Smooth anchor points with tangent-continuity handles — dragging one handle keeps the opposite one aligned at its own length, Alt breaks the pair, double-click toggles smooth/corner",
+    "Held-key modifiers like a desktop pen tool: Cmd for momentary direct selection, Shift for 45-degree constraints, Space to pan, Esc/Enter to end a path — with context-aware pen cursors for add, close, and continue",
+    "The vector pen works inside Grid cells too, with shapes auto-tagged to the cell's character",
+    "Letter counters two ways: a vector shape nested inside another becomes the counter (draw a 'B' or 'O' in pure vector), and closed shapes punch holes through overlapping strokes",
     "Anchor and Nudge tools to reshape already-drawn strokes point by point",
+    "Compact, context-aware workspace: Illustrator-style tool-group flyouts and a Glyphs-style settings palette that shows only what the active tool uses",
     "Character set library: Latin Basic, Central European accents, punctuation, and currency/math symbols",
     "Ligatures and stylistic alternates, tagged and exported as real OpenType substitution glyphs",
     "Copy and paste strokes and vector shapes within Free Draw, within Grid, and between the two",
@@ -90,14 +95,19 @@ const SECTIONS: Section[] = [
     title: "Precision vector tools",
     features: [
       {
-        name: "Vector pen tool",
+        name: "Vector pen family",
         description:
-          "A true Bezier pen tool — click for corner points, click-drag for smooth curve points, click an anchor to delete it, click a curve segment to insert one.",
+          "A true Bezier pen with the full Illustrator toolset — Pen (P), Add Anchor (+, inserts without changing the curve), Delete Anchor (-), and Convert Anchor (C) — working in Free Draw and directly inside Grid cells, where shapes auto-tag to the cell's character.",
       },
       {
-        name: "Punch-out counters",
+        name: "Smooth anchors & held-key modifiers",
         description:
-          "A closed vector shape defaults to cutting a hole through whatever it overlaps in the same glyph — the standard way to draw the counter of an 'o', 'e', or 'a'.",
+          "Smooth points keep their handles in tangent continuity; Alt breaks the pair, double-click toggles smooth/corner. Hold Cmd for momentary direct selection, Shift for 45° constraints, Space to pan, Esc to end a path — and the pen cursor tells you what a click will do before you do it.",
+      },
+      {
+        name: "Counters",
+        description:
+          "Draw a shape inside another and it becomes the counter — a 'B' or 'O' works in pure vector. Where strokes are involved, closed shapes punch holes through them instead, the classic way to cut an 'o' or 'e'.",
       },
       {
         name: "Anchor & Nudge",
@@ -110,7 +120,8 @@ const SECTIONS: Section[] = [
     features: [
       {
         name: "Character sets",
-        description: "Latin Basic, Central European accents, punctuation, and currency/math symbols — toggle whole sets on or off in Grid View.",
+        description:
+          "New fonts start focused on Latin Basic (a–z, A–Z); toggle Central European accents, Western European, numbers, punctuation, and symbols on whenever you're ready — glyphs you've already drawn always keep their cell.",
       },
       {
         name: "Ligatures & alternates",
@@ -137,6 +148,11 @@ const SECTIONS: Section[] = [
       {
         name: "Undo/redo",
         description: "A full history stack covering drawing, tagging, and transform actions.",
+      },
+      {
+        name: "Focused workspace",
+        description:
+          "Related tools stack into Illustrator-style flyout slots (long-press to expand), and the settings palette shows only what the active tool actually uses — Glyphs-style collapsible sections, with a live Path info box while you're on the pen.",
       },
     ],
   },
@@ -204,6 +220,8 @@ const SECTIONS: Section[] = [
 
 export default function FeaturesPage() {
   return (
+    <>
+      <PageviewTracker page="features" />
     <div
       style={{
         minHeight: "100vh",
@@ -250,5 +268,6 @@ export default function FeaturesPage() {
         ))}
       </div>
     </div>
+    </>
   );
 }

@@ -1,309 +1,76 @@
 import { getSupabase } from "@/lib/supabase";
+import { previousRange, type DateRange, type Filters } from "./filters";
+import { computeDetail, computeOverview, type EventRow } from "./aggregate";
 
-// Categorical order is fixed per-slot, not re-derived per render: Direct is
-// always the first slot/color, "Other" is always the last — only the middle
-// three (the actual top referrer hosts for the selected range) vary. Colors
-// are the dataviz skill's validated default categorical palette, checked
-// against this page's cream surface (#eae8e0): all 5 pass lightness/chroma/
-// CVD; aqua and yellow fall under the 3:1 contrast floor against this
-// surface, which is why every segment also gets a direct label rather than
-// relying on color alone (the skill's "relief rule").
-const DIRECT_COLOR = "#2a78d6"; // blue
-const OTHER_COLOR = "#4a3aa7"; // violet
-const REFERRER_COLORS = ["#1baf7a", "#eda100", "#008300"]; // aqua, yellow, green
-const MAX_NAMED_REFERRERS = REFERRER_COLORS.length;
+// Loading only. Every number is computed in aggregate.ts from the rows this
+// file hands it — which is what lets the arithmetic be checked without a
+// database, and what keeps "which rows" and "what they mean" from tangling.
 
-export type SourceSlice = { label: string; count: number; color: string };
-export type Bucket = { label: string; total: number; sources: SourceSlice[] };
+export type { Bucket, SourceSlice, Ranked, ToolRow } from "./aggregate";
 
-export type DateRange = { from: string; to: string }; // ISO "YYYY-MM-DD", inclusive
+const COLUMNS = "type, session_id, seconds, format, referrer, country, device, language, page, pointer, bucket, created_at";
 
-export const PRESETS = [
-  { id: "7d", label: "Last 7 days", days: 7 },
-  { id: "30d", label: "Last 30 days", days: 30 },
-  { id: "90d", label: "Last 90 days", days: 90 },
-] as const;
+// PostgREST caps a plain select at 1000 rows (Supabase's default max-rows) —
+// silently. Every number on this page would have started quietly
+// understating itself the moment a range held more than 1000 events, which
+// is exactly what beta traffic is for. Page through instead of trusting one
+// request to have returned everything.
+const PAGE_SIZE = 1000;
+const MAX_ROWS = 200_000; // a backstop against an accidental unbounded loop, not an expectation
 
-function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-export function resolveRange(searchParams: { from?: string; to?: string }): DateRange {
-  const today = isoDate(new Date());
-  if (searchParams.from && searchParams.to) {
-    return { from: searchParams.from, to: searchParams.to };
-  }
-  const from = new Date();
-  from.setUTCDate(from.getUTCDate() - 29); // "Last 30 days" is the default, inclusive of today
-  return { from: isoDate(from), to: today };
-}
-
-function daysBetween(from: string, to: string): number {
-  const ms = new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime();
-  return Math.round(ms / 86_400_000) + 1;
-}
-
-// One legend entry per actual source: Facebook alone otherwise shows up as
-// www.facebook.com / m.facebook.com / lm.facebook.com depending on app and
-// link shim — collapse the common host prefixes so one source aggregates
-// into one slice instead of occupying several "top referrer" slots.
-function normalizeReferrer(host: string): string {
-  return host.replace(/^(www|m|mobile|l|lm|web)\./, "");
-}
-
-// Traffic scoped to [from, to] (both inclusive, UTC calendar days) — every
-// stat on the page reads from this one query so the numbers always agree
-// with each other and with the chart, per the "filters scope everything
-// below them" rule.
-export async function getAnnelieseData(range: DateRange) {
-  const empty = {
-    totalVisits: 0,
-    avgVisitsPerDay: 0,
-    medianSeconds: 0,
-    timeByView: [] as { view: string; medianSeconds: number; totalSeconds: number; samples: number }[],
-    exportsByFormat: {} as Record<string, number>,
-    toolsByUsage: [] as [string, number][],
-    directCount: 0,
-    referredCount: 0,
-    buckets: [] as Bucket[],
-    legend: [] as { label: string; color: string }[],
-    topCountries: [] as [string, number][],
-    topDevices: [] as [string, number][],
-    topLanguages: [] as [string, number][],
-    marketplaceViews: 0,
-    marketplaceDownloads: 0,
-    viewsTrackedSince: null as string | null,
-    ok: false as const,
-  };
-
+async function fetchRows(range: DateRange): Promise<EventRow[]> {
   const supabase = getSupabase();
-  if (!supabase) return empty;
-
+  if (!supabase) return [];
   const fromTs = `${range.from}T00:00:00.000Z`;
   const toTs = `${range.to}T23:59:59.999Z`;
+  const rows: EventRow[] = [];
+  for (let offset = 0; offset < MAX_ROWS; offset += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("fontane_events")
+      .select(COLUMNS)
+      .gte("created_at", fromTs)
+      .lte("created_at", toTs)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true }) // stable paging: same-timestamp rows must not shuffle between pages
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = (data ?? []) as unknown as EventRow[];
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) return rows;
+  }
+  return rows;
+}
 
+// Shape-compatible zeros for both pages, used when Supabase isn't configured
+// or a query fails — the page renders its own "not connected" note rather
+// than crashing, exactly as before.
+function emptyRows(filters: Filters) {
+  return { allRows: [] as EventRow[], prevAllRows: [] as EventRow[], allTimeVisits: 0, filters };
+}
+
+export async function getOverviewData(filters: Filters) {
+  const supabase = getSupabase();
+  if (!supabase) return { ...computeOverview(emptyRows(filters)), ok: false as const };
   try {
-    const [
-      { data: pageviews },
-      { data: durations },
-      { data: exports },
-      { data: toolUses },
-      { count: totalVisits },
-      { data: firstPageview },
-    ] = await Promise.all([
-        supabase
-          .from("fontane_events")
-          .select("visitor_id, referrer, created_at, country, device, language, page")
-          .eq("type", "pageview")
-          .gte("created_at", fromTs)
-          .lte("created_at", toTs),
-        supabase
-          .from("fontane_events")
-          .select("seconds, page")
-          .eq("type", "duration")
-          .gte("created_at", fromTs)
-          .lte("created_at", toTs),
-        supabase.from("fontane_events").select("format").eq("type", "export").gte("created_at", fromTs).lte("created_at", toTs),
-        supabase.from("fontane_events").select("format").eq("type", "tool_use").gte("created_at", fromTs).lte("created_at", toTs),
-        // All-time, deliberately NOT scoped to `range` — the one number on the
-        // page that's meant to just keep growing, rather than reset every time
-        // the date filter changes (the bar chart below is already the
-        // range-scoped, per-day breakdown; this headline number complements it
-        // instead of duplicating it).
-        supabase.from("fontane_events").select("*", { count: "exact", head: true }).eq("type", "pageview"),
-        // All-time first pageview — anchors avgVisitsPerDay's divisor to the
-        // site's actual lifetime (see below).
-        supabase
-          .from("fontane_events")
-          .select("created_at")
-          .eq("type", "pageview")
-          .order("created_at", { ascending: true })
-          .limit(1),
-      ]);
-
-    const rows = pageviews ?? [];
-    // Median, not mean: duration events are heavy-tailed — a handful of tabs
-    // left open for hours (the pre-fix beacon recorded wall-clock time since
-    // mount, re-sent per pagehide) dragged the mean to 26m56s while the
-    // median sat at 31s. The median is what a typical visit actually looks
-    // like, and stays robust against both the legacy outliers still in the
-    // table and any future ones.
-    const seconds = (durations ?? [])
-      .map((r) => r.seconds)
-      .filter((s): s is number => s != null)
-      .sort((a, b) => a - b);
-    const medianSeconds = seconds.length ? seconds[Math.floor(seconds.length / 2)] : 0;
-
-    // Same median-not-mean reasoning, per view: one duration row per visible
-    // segment (see lib/visitDuration.ts), so a visit that moves Grid → Free
-    // → Animate contributes to all three. Rows predating per-view labels
-    // have page=NULL and are excluded rather than lumped into a fake
-    // bucket — timeByViewTrackedSince below says when coverage starts.
-    const durationsByView = new Map<string, number[]>();
-    for (const row of durations ?? []) {
-      if (!row.page || row.seconds == null) continue;
-      const list = durationsByView.get(row.page) ?? [];
-      list.push(row.seconds);
-      durationsByView.set(row.page, list);
-    }
-    const timeByView = [...durationsByView.entries()]
-      .map(([view, values]) => {
-        const sorted = [...values].sort((a, b) => a - b);
-        return {
-          view,
-          medianSeconds: sorted[Math.floor(sorted.length / 2)],
-          totalSeconds: sorted.reduce((a, b) => a + b, 0),
-          samples: sorted.length,
-        };
-      })
-      .sort((a, b) => b.totalSeconds - a.totalSeconds);
-    const exportsByFormat: Record<string, number> = {};
-    for (const row of exports ?? []) {
-      if (!row.format) continue;
-      exportsByFormat[row.format] = (exportsByFormat[row.format] ?? 0) + 1;
-    }
-    // Same ranked-count shape as exportsByFormat — tool_use reuses the same
-    // `format` column (see fontane_events.sql), just a different `type`.
-    const toolCounts: Record<string, number> = {};
-    for (const row of toolUses ?? []) {
-      if (!row.format) continue;
-      toolCounts[row.format] = (toolCounts[row.format] ?? 0) + 1;
-    }
-    const toolsByUsage = Object.entries(toolCounts).sort((a, b) => b[1] - a[1]);
-
-    const directCount = rows.filter((r) => !r.referrer).length;
-    const referredCount = rows.length - directCount;
-
-    // Simple ranked-count breakdowns — same shape/rendering as exportsByFormat
-    // above, just three more coarse categorical fields off the same rows.
-    const countBy = (key: "country" | "device" | "language"): [string, number][] => {
-      const counts: Record<string, number> = {};
-      for (const r of rows) {
-        const value = r[key];
-        if (!value) continue;
-        counts[value] = (counts[value] ?? 0) + 1;
-      }
-      return Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    };
-    const topCountries = countBy("country");
-    const topDevices = countBy("device");
-    const topLanguages = countBy("language");
-
-    // Marketplace browse→download — an aggregate ratio, not a real per-
-    // visitor funnel (nothing here ties a specific view to a specific
-    // download, by design — see fontane_events.sql). "views" counts both the
-    // overview and individual listing pages.
-    const marketplaceViews = rows.filter((r) => r.page === "marketplace" || r.page === "marketplace-listing").length;
-    const marketplaceDownloads = (exports ?? []).filter((r) => r.format === "marketplace-download").length;
-    // The `page` dimension is younger than the event stream (added
-    // 2026-07-23): every pageview before then has page=NULL and is invisible
-    // to the views counter, while downloads were logged from day one — which
-    // once produced a nonsensical "0 views, 7 downloads" tile. Surface where
-    // page-coverage actually starts so the tile can say what its views
-    // number covers; null when coverage spans the whole selected range.
-    const firstPagedAt = rows
-      .filter((r) => r.page != null)
-      .map((r) => r.created_at as string)
-      .sort()[0];
-    const viewsTrackedSince = firstPagedAt && firstPagedAt.slice(0, 10) > range.from ? firstPagedAt.slice(0, 10) : null;
-
-    // Range-scoped (unlike totalVisits, which is deliberately all-time) —
-    // this number should move when the date filter changes, same as the
-    // chart below it. One decimal so short ranges (e.g. "last 7 days") don't
-    // round away all the signal. The divisor is clamped to the site's actual
-    // lifetime: dividing by days before the very first pageview existed
-    // (e.g. "Last 30 days" on a site launched 8 days ago) understated the
-    // average nearly 4× (196/30=6.5 instead of 196/8≈24.5).
-    const firstDate = firstPageview?.[0]?.created_at?.slice(0, 10);
-    const activeFrom = firstDate && firstDate > range.from ? firstDate : range.from;
-    const avgVisitsPerDay = Math.round((rows.length / Math.max(daysBetween(activeFrom, range.to), 1)) * 10) / 10;
-
-    // Top N referrer hosts by total volume across the whole range — the
-    // fixed set of "named" slices; everything else folds into "Other".
-    const referrerTotals = new Map<string, number>();
-    for (const r of rows) {
-      if (!r.referrer) continue;
-      const host = normalizeReferrer(r.referrer);
-      referrerTotals.set(host, (referrerTotals.get(host) ?? 0) + 1);
-    }
-    const topReferrers = [...referrerTotals.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, MAX_NAMED_REFERRERS)
-      .map(([host]) => host);
-
-    const monthly = daysBetween(range.from, range.to) > 31;
-    const bucketOf = (createdAt: string) => (monthly ? createdAt.slice(0, 7) : createdAt.slice(0, 10)); // "YYYY-MM" or "YYYY-MM-DD"
-    const bucketLabel = (key: string) =>
-      monthly
-        ? new Date(`${key}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })
-        : new Date(`${key}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-
-    // Pre-seed every bucket in range (not just ones with data) so the chart
-    // has no silent gaps.
-    const bucketKeys: string[] = [];
-    if (monthly) {
-      const cursor = new Date(`${range.from.slice(0, 7)}-01T00:00:00Z`);
-      const end = new Date(`${range.to.slice(0, 7)}-01T00:00:00Z`);
-      while (cursor <= end) {
-        bucketKeys.push(cursor.toISOString().slice(0, 7));
-        cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-      }
-    } else {
-      const cursor = new Date(`${range.from}T00:00:00Z`);
-      const end = new Date(`${range.to}T00:00:00Z`);
-      while (cursor <= end) {
-        bucketKeys.push(isoDate(cursor));
-        cursor.setUTCDate(cursor.getUTCDate() + 1);
-      }
-    }
-
-    const countsByBucket = new Map<string, Map<string, number>>(); // bucketKey -> sourceLabel -> count
-    for (const r of rows) {
-      const key = bucketOf(r.created_at);
-      const normalized = r.referrer ? normalizeReferrer(r.referrer) : null;
-      const source = !normalized ? "Direct" : topReferrers.includes(normalized) ? normalized : "Other";
-      const bySource = countsByBucket.get(key) ?? new Map<string, number>();
-      bySource.set(source, (bySource.get(source) ?? 0) + 1);
-      countsByBucket.set(key, bySource);
-    }
-
-    const sourceOrder = ["Direct", ...topReferrers, "Other"];
-    const colorFor = (source: string) =>
-      source === "Direct" ? DIRECT_COLOR : source === "Other" ? OTHER_COLOR : REFERRER_COLORS[topReferrers.indexOf(source)];
-
-    const buckets: Bucket[] = bucketKeys.map((key) => {
-      const bySource = countsByBucket.get(key);
-      const sources: SourceSlice[] = sourceOrder
-        .map((label) => ({ label, count: bySource?.get(label) ?? 0, color: colorFor(label) }))
-        .filter((s) => s.count > 0);
-      return { label: bucketLabel(key), total: sources.reduce((sum, s) => sum + s.count, 0), sources };
-    });
-
-    const legend = sourceOrder
-      .filter((label) => label === "Direct" || label === "Other" || topReferrers.includes(label))
-      .filter((label) => buckets.some((b) => b.sources.some((s) => s.label === label)))
-      .map((label) => ({ label, color: colorFor(label) }));
-
-    return {
-      totalVisits: totalVisits ?? 0,
-      avgVisitsPerDay,
-      medianSeconds,
-      timeByView,
-      exportsByFormat,
-      toolsByUsage,
-      directCount,
-      referredCount,
-      buckets,
-      legend,
-      topCountries,
-      topDevices,
-      topLanguages,
-      marketplaceViews,
-      marketplaceDownloads,
-      viewsTrackedSince,
-      ok: true as const,
-    };
+    const [allRows, prevAllRows, { count }] = await Promise.all([
+      fetchRows(filters),
+      fetchRows(previousRange(filters)),
+      // All-time, deliberately NOT scoped to the range — the one number on
+      // the page that's meant to just keep growing, rather than reset every
+      // time the date filter changes.
+      supabase.from("fontane_events").select("*", { count: "exact", head: true }).eq("type", "pageview"),
+    ]);
+    return computeOverview({ allRows, prevAllRows, allTimeVisits: count ?? 0, filters });
   } catch {
-    return empty;
+    return { ...computeOverview(emptyRows(filters)), ok: false as const };
+  }
+}
+
+export async function getDetailData(filters: Filters) {
+  if (!getSupabase()) return { ...computeDetail({ allRows: [], filters }), ok: false as const };
+  try {
+    return computeDetail({ allRows: await fetchRows(filters), filters });
+  } catch {
+    return { ...computeDetail({ allRows: [], filters }), ok: false as const };
   }
 }

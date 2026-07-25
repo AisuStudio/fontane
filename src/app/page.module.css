@@ -182,6 +182,39 @@
   color: var(--color-vanilla);
 }
 
+/* Illustrator-style tool-group slot: relative anchor for its flyout (the
+   shared .dropdown, absolute at top:100%) so the panel hangs off the slot
+   button rather than off the whole toolbar row. */
+.toolSlot {
+  position: relative;
+  display: flex;
+}
+
+/* The little corner wedge Illustrator stamps on stacked tools — marks the
+   slot as long-pressable without adding width; currentColor keeps it
+   legible on both the resting and the hBarItemActive background. */
+.toolSlotCorner {
+  position: relative;
+}
+
+.toolSlotCorner::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  border-left: 5px solid transparent;
+  border-bottom: 5px solid currentColor;
+  opacity: 0.45;
+}
+
+/* Flyout rows carry the tool's icon inline, unlike the text-only menu-bar
+   dropdown items whose styling they otherwise reuse. */
+.flyoutItem {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-xs);
+}
+
 .contextField {
   font-family: var(--font-sans);
   font-size: 12px;
@@ -252,6 +285,33 @@
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-vanilla);
+}
+
+/* Disclosure header of a collapsible palette section (SettingsSection.tsx,
+   Glyphs' palette-section model) — same typography as .settingsPanelLabel,
+   just clickable, with the chevron riding in front of the title. */
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-vanilla);
+  cursor: pointer;
+}
+
+.sectionBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-sm);
+  margin-top: var(--sp-sm);
 }
 
 /* Section heading INSIDE a .sliders group (Brush, Jitter) — quieter than

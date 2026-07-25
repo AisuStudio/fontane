@@ -1,7 +1,11 @@
+import PageviewTracker from "../PageviewTracker";
+
 export const metadata = { title: "Imprint & Privacy — Fontane.Studio" };
 
 export default function LegalPage() {
   return (
+    <>
+      <PageviewTracker page="legal" />
     <div
       style={{
         minHeight: "100vh",
@@ -34,13 +38,15 @@ export default function LegalPage() {
         <h3 style={{ fontSize: 15, margin: "24px 0 8px" }}>What we don&apos;t do</h3>
         <p style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7 }}>
           No cookies. No third-party trackers, ads, or analytics scripts — no Google Analytics, no Meta Pixel,
-          nothing like that. No persistent identifier is ever written to your device for tracking purposes.
+          nothing like that. Nothing at all is written to your device for tracking purposes: no cookie, no
+          local storage, no identifier of any kind that survives closing the tab. Because of that, we also
+          can&apos;t tell whether you have been here before.
         </p>
 
         <h3 style={{ fontSize: 15, margin: "24px 0 8px" }}>Mini analytics</h3>
         <p style={{ marginBottom: 8, fontSize: 14, lineHeight: 1.7 }}>
-          Visiting the live site (fontane.studio) briefly logs three kinds of event, none of which can identify
-          you personally:
+          Visiting the live site (fontane.studio) briefly logs the events below. Every one of them is either a
+          count or a fixed category from a short list — never free text, never a file, never anything you drew:
         </p>
         <ul style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7, paddingLeft: 20 }}>
           <li>
@@ -48,22 +54,86 @@ export default function LegalPage() {
             user-agent, and the calendar date, combined with a private salt. That hash changes every day and
             can&apos;t be reversed back into your IP — it only lets us approximate how many different people
             visit per day, without storing your actual IP anywhere. We also record the referring site&apos;s
-            hostname only (e.g. &quot;google.com&quot;), never a full URL or query parameters.
+            hostname only (e.g. &quot;google.com&quot;), never a full URL or query parameters, plus which page
+            you landed on (e.g. &quot;editor&quot;, &quot;marketplace&quot;), your country as a two-letter code,
+            your browser language as a two-letter code, and whether the device is a phone, tablet or desktop.
+            The country comes from our host&apos;s edge network and the device category is read from the
+            user-agent string — neither the IP nor the full user-agent is stored.
           </li>
           <li>
-            <strong>Time on site</strong> — how many seconds a visit lasted, with no identifier attached at all.
+            <strong>A visit id</strong> — a random number generated fresh on every page load and kept only in
+            the page&apos;s memory. It is <em>not</em> stored on your device, so reloading, opening a second tab,
+            or coming back tomorrow all produce a completely unrelated id, and there is no way to connect them.
+            It exists so the events in one visit can be counted together — for example &quot;how many visits used
+            a drawing tool at least once&quot; — rather than as unconnected totals.
           </li>
           <li>
-            <strong>Font exports</strong> — which file format you exported (e.g. &quot;otf&quot;), with no
-            identifier attached.
+            <strong>Time on site</strong> — how many seconds a visit was actually visible, and in which part of
+            the app (Grid, Free Draw, Editor, Animate).
+          </li>
+          <li>
+            <strong>Tool actions</strong> — that a tool was used and which one (e.g. &quot;pen&quot;,
+            &quot;eraser&quot;), in which part of the app, and whether the input was a stylus, a finger or a
+            mouse. Not what you drew with it, where on the canvas, or on which letter.
+          </li>
+          <li>
+            <strong>Undo</strong> — that an undo happened, and which tool had been used last.
+          </li>
+          <li>
+            <strong>Font exports</strong> — which file format you exported (e.g. &quot;otf&quot;) and roughly how
+            many letters the document had, as one of five ranges (empty, 1–5, 6–20, 21–60, more than 60). The
+            exact number is never recorded, and neither is the font itself.
+          </li>
+          <li>
+            <strong>Character sets</strong> — which of the built-in character sets (e.g. &quot;Latin
+            Extended&quot;) you switched on or off in the Grid.
+          </li>
+          <li>
+            <strong>Blocked actions and errors</strong> — that an entry code was rejected, or that something like
+            an export failed, with a short label saying where. Never the code you typed, and never the contents
+            of an error.
           </li>
         </ul>
         <p style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7 }}>
-          None of this fires from local development or preview deployments — only the real production site. You
-          can opt out for a given visit by adding <code>?notrack</code> to the URL (e.g.{" "}
-          <code>fontane.studio/?notrack</code>) — every beacon is skipped client-side, nothing is even sent. This
-          is processed under legitimate interest (GDPR Art. 6(1)(f)) — understanding rough usage without
-          identifying anyone.
+          Your language is taken from the <code>Accept-Language</code> header your browser sends with the request
+          anyway, and your country from our host&apos;s edge network — we don&apos;t ask your device for either.
+          None of this fires from local development or preview deployments, only the real production site. It is
+          processed under legitimate interest (GDPR Art. 6(1)(f)): understanding rough usage without identifying
+          anyone.
+        </p>
+
+        <h3 style={{ fontSize: 15, margin: "24px 0 8px" }}>Opting out</h3>
+        <p style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7 }}>
+          Three ways, all of which work without you telling us anything:
+        </p>
+        <ul style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7, paddingLeft: 20 }}>
+          <li>
+            If your browser or extension sends <strong>Global Privacy Control</strong> (or the older Do Not
+            Track), we drop the request before anything is read, derived or written. Nothing needs configuring
+            here.
+          </li>
+          <li>
+            Add <code>?notrack</code> to the URL (e.g. <code>fontane.studio/?notrack</code>) and nothing is even
+            sent for that page load. Because we store nothing on your device, this has to be part of the address
+            each time — bookmark it and it happens by itself.
+          </li>
+          <li>Block requests to <code>/api/track</code>. Nothing else on the site depends on them.</li>
+        </ul>
+
+        <h3 style={{ fontSize: 15, margin: "24px 0 8px" }}>How long we keep it, and your rights</h3>
+        <p style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7 }}>
+          The daily visitor hash is erased after <strong>90 days</strong>. The remaining event rows — counts and
+          category labels — are deleted after <strong>14 months</strong>.
+        </p>
+        <p style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7 }}>
+          You have the right to access, rectification, erasure, restriction, portability, and to object
+          (GDPR Art. 15–21). We have to be straight with you about one of them: for the analytics data we
+          genuinely cannot identify you, and we won&apos;t ask you for extra information in order to be able to
+          — so we can&apos;t look up &quot;your&quot; rows to show or delete them, and Art. 11(2) is exactly the
+          case this describes. Objecting is the right that does work in practice, and any of the three methods
+          above exercises it immediately. For anything concerning a font you published to the Marketplace,
+          write to us and we can act on it. You can also complain to a supervisory authority — for us that is
+          the Berlin Commissioner for Data Protection and Freedom of Information.
         </p>
 
         <h3 style={{ fontSize: 15, margin: "24px 0 8px" }}>Your drawings and fonts</h3>
@@ -102,5 +172,6 @@ export default function LegalPage() {
         </p>
       </div>
     </div>
+    </>
   );
 }

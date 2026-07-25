@@ -4,7 +4,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     {
       url: "https://fontane.studio",
-      lastModified: "2026-07-17",
+      lastModified: "2026-07-25",
       changeFrequency: "monthly",
       priority: 1,
     },
@@ -16,7 +16,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
     {
       url: "https://fontane.studio/features",
-      lastModified: "2026-07-23",
+      lastModified: "2026-07-25",
       changeFrequency: "monthly",
       priority: 0.8,
     },

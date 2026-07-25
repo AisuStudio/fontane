@@ -40,11 +40,15 @@ import {
   clearVectorShapes,
   isSmoothAnchor,
   alignOppositeHandle,
+  constrainTo45,
+  toggleAnchorSmooth,
   type VectorShape,
   type BezierAnchor,
   type BezierPoint,
 } from "@/lib/vectorShapes";
 import { setClipboard, getClipboard, type ClipboardStroke, type ClipboardShape } from "@/lib/clipboard";
+import { initHeldKeys, getHeldKeys } from "@/lib/heldKeys";
+import { PEN, PEN_ADD, PEN_MINUS, PEN_CLOSE, PEN_CONTINUE, CONVERT, PEN_ANCHOR_CLICK } from "@/lib/cursors";
 import { simplifyStrokeIndices } from "@/lib/simplify";
 import { buildFont, downloadFont } from "@/lib/exportFont";
 import { downloadSkeletonSvg } from "@/lib/exportSkeleton";
@@ -75,12 +79,13 @@ import {
   Spline,
 } from "lucide-react";
 import GridCell, { DEFAULT_LEFT_BEARING, DEFAULT_RIGHT_BEARING, type CellTool } from "./GridCell";
+import SettingsSection from "./SettingsSection";
 import BetaBadge from "./BetaBadge";
 import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
 import AnimatePanel from "./AnimatePanel";
 import EditorPanel, { DEFAULT_EDITOR_FONT_SIZE_PT, EDITOR_SAMPLE_TEXT } from "./EditorPanel";
 import { DEFAULT_PRESET_ID, type AnimationPresetId } from "@/lib/animationPresets";
-import { trackExport, trackToolUse } from "@/lib/analytics";
+import { trackCharset, trackError, trackExport, trackGate, trackToolUse, trackUndo, notePointer } from "@/lib/analytics";
 import { useVisitTracking } from "@/lib/visitDuration";
 import {
   getAuthorId,
@@ -124,8 +129,13 @@ type DrawTool =
   | "pan";
 // The 5 menu-bar dropdowns — "charset" (the Grid context bar's Character
 // sets picker) is a separate, click-only dropdown, not part of the hover
-// group below.
-type MenuKey = "glypher" | "file" | "edit" | "view" | "tools" | "marketplace" | "charset" | "cloud";
+// group below. The "flyout-*" keys are the toolbar's Illustrator-style
+// tool-group flyouts (see ToolGroup) — they ride the same openMenu state
+// so outside-click dismissal and only-one-menu-open-at-a-time come for
+// free (the toolbar row is tagged data-chrome-menu just like the menu bar).
+type MenuKey =
+  | "glypher" | "file" | "edit" | "view" | "tools" | "marketplace" | "charset" | "cloud"
+  | "flyout-penFamily" | "flyout-editFamily" | "flyout-transform";
 // One entry per Grid cell — the fixed character sets contribute one slot
 // per character (kind always "base"), and a user can append arbitrary extra
 // slots (ligatures, alternates, or a one-off base symbol outside any set) via
@@ -152,6 +162,14 @@ const TRANSFORM_TOOLS = new Set<DrawTool>(["move", "rotate", "scale"]);
 // mid-shape must not drop the shape you're working on, since those tools have
 // nothing to show without it.
 const VECTOR_TOOLS = new Set<DrawTool>(["vector", "vectorAdd", "vectorDelete", "vectorConvert"]);
+// Tools whose work product is (or reshapes) a perfect-freehand STROKE — the
+// ones the Mono/Dynamic + Size/Thinning/… sliders actually apply to. The
+// stroke sliders are canvas-wide render settings, but showing them while a
+// vector or transform tool is active is pure noise — Glyphs shows only the
+// panels relevant to the active tool, so the Stroke section follows suit.
+// Calligraphy belongs here too, but shows its own nib panel instead of the
+// brush one — see the Stroke section in the sidebar.
+const STROKE_TOOLS = new Set<DrawTool>(["pen", "brush", "calligraphy", "eraser", "nudge", "anchor"]);
 // Every DrawTool whose button only ever appears when drawStyle==="free" —
 // leaving Free resets drawTool back to "pen" if it's one of these, since
 // their UI vanishes and a stale value would silently persist otherwise.
@@ -167,25 +185,32 @@ const FREE_ONLY_TOOLS = new Set<DrawTool>(["assign", "pan", "anchor"]);
 // Tools dropdown, AND the keyboard shortcuts below — one place to add a
 // tool so none of the three can drift out of sync with each other.
 // altShortcut is a second key that selects the same tool without being the one
-// advertised in the UI — only Add Anchor needs it, so "=" works on keyboards
-// where "+" costs a Shift (Illustrator's own convention).
-type ToolDef = { value: DrawTool; label: string; icon: typeof Brush; shortcut: string; altShortcut?: string };
+// advertised in the UI — Add Anchor's "=" works on keyboards where "+" costs
+// a Shift (Illustrator's own convention), and Vector keeps "v" as a muscle-
+// memory alias from before it moved to Illustrator's own P.
+// Tools sharing a group collapse into ONE toolbar slot with a long-press/
+// hover flyout — Illustrator's stacked-tool flyouts (Pen ▸ Add/Delete/
+// Convert Anchor) exactly. Grouping only compacts the toolbar row: the menu
+// bar's Tools dropdown and the keyboard shortcuts keep reading the flat list.
+type ToolGroup = "penFamily" | "editFamily" | "transform";
+type ToolDef = { value: DrawTool; label: string; icon: typeof Brush; shortcut: string; altShortcut?: string; group?: ToolGroup };
 const TOOL_DEFS: ToolDef[] = [
   { value: "pen", label: "Draw", icon: Pencil, shortcut: "b" },
-  { value: "vector", label: "Vector", icon: PenTool, shortcut: "v" },
+  { value: "vector", label: "Vector", icon: PenTool, shortcut: "p", altShortcut: "v", group: "penFamily" },
   // Illustrator's Pen submenu, in its order: add / delete / convert.
-  { value: "vectorAdd", label: "Add Anchor", icon: CirclePlus, shortcut: "+", altShortcut: "=" },
-  { value: "vectorDelete", label: "Delete Anchor", icon: CircleMinus, shortcut: "-" },
-  { value: "vectorConvert", label: "Convert Anchor", icon: Spline, shortcut: "c" },
+  { value: "vectorAdd", label: "Add Anchor", icon: CirclePlus, shortcut: "+", altShortcut: "=", group: "penFamily" },
+  { value: "vectorDelete", label: "Delete Anchor", icon: CircleMinus, shortcut: "-", group: "penFamily" },
+  { value: "vectorConvert", label: "Convert Anchor", icon: Spline, shortcut: "c", group: "penFamily" },
   { value: "brush", label: "Brush", icon: Brush, shortcut: "u" },
   { value: "calligraphy", label: "Calligraphy", icon: PenLine, shortcut: "y" },
   { value: "eraser", label: "Erase", icon: Eraser, shortcut: "e" },
-  { value: "select", label: "Select", icon: Lasso, shortcut: "l" },
-  { value: "nudge", label: "Nudge", icon: SplinePointer, shortcut: "n" },
-  { value: "anchor", label: "Anchor", icon: MousePointer2, shortcut: "p" },
-  { value: "move", label: "Move", icon: Move, shortcut: "m" },
-  { value: "rotate", label: "Rotate", icon: RotateCw, shortcut: "r" },
-  { value: "scale", label: "Scale", icon: Scaling, shortcut: "s" },
+  { value: "select", label: "Select", icon: Lasso, shortcut: "l", group: "editFamily" },
+  { value: "nudge", label: "Nudge", icon: SplinePointer, shortcut: "n", group: "editFamily" },
+  // "d" (Direct-ish) — Anchor gave its old "p" to Vector, Illustrator's Pen key.
+  { value: "anchor", label: "Anchor", icon: MousePointer2, shortcut: "d", group: "editFamily" },
+  { value: "move", label: "Move", icon: Move, shortcut: "m", group: "transform" },
+  { value: "rotate", label: "Rotate", icon: RotateCw, shortcut: "r", group: "transform" },
+  { value: "scale", label: "Scale", icon: Scaling, shortcut: "s", group: "transform" },
   { value: "pan", label: "Pan", icon: Hand, shortcut: "h" },
   { value: "assign", label: "Assign", icon: BookA, shortcut: "a" },
 ];
@@ -768,10 +793,64 @@ export default function Home() {
       menuHoverCloseTimeoutRef.current = null;
     }, 200);
   }
+  // Toolbar tool-group flyouts (Illustrator's stacked tools) open two ways,
+  // both deliberately slower than the menu bar's instant hover-open, since
+  // these buttons sit right above the canvas where the pointer constantly
+  // passes through en route to drawing:
+  // - long-press (~300ms, Illustrator's own gesture): pointerdown arms a
+  //   timer; if it fires before pointerup, the flyout opens AND the click
+  //   that still fires on release must be swallowed — a completed
+  //   long-press means "show me the stack", not "…and also activate".
+  // - hover (~500ms): a discovery affordance for mouse users who'd never
+  //   guess long-press; any leave before the timer fires cancels it, so
+  //   merely crossing the toolbar never pops a flyout.
+  const flyoutLongPressTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flyoutLongPressFiredRef = useRef(false);
+  const flyoutHoverOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function cancelFlyoutLongPress() {
+    if (flyoutLongPressTimeoutRef.current !== null) {
+      clearTimeout(flyoutLongPressTimeoutRef.current);
+      flyoutLongPressTimeoutRef.current = null;
+    }
+  }
+  function armFlyoutLongPress(key: MenuKey) {
+    cancelFlyoutLongPress();
+    flyoutLongPressFiredRef.current = false;
+    flyoutLongPressTimeoutRef.current = setTimeout(() => {
+      flyoutLongPressTimeoutRef.current = null;
+      flyoutLongPressFiredRef.current = true;
+      setOpenMenu(key);
+    }, 300);
+  }
+  function cancelFlyoutHoverOpen() {
+    if (flyoutHoverOpenTimeoutRef.current !== null) {
+      clearTimeout(flyoutHoverOpenTimeoutRef.current);
+      flyoutHoverOpenTimeoutRef.current = null;
+    }
+  }
+  function scheduleFlyoutHoverOpen(key: MenuKey) {
+    // Re-entering the slot (or its open flyout) cancels a pending
+    // hover-close, same as openMenuOnHover does for the menu bar.
+    if (menuHoverCloseTimeoutRef.current !== null) {
+      clearTimeout(menuHoverCloseTimeoutRef.current);
+      menuHoverCloseTimeoutRef.current = null;
+    }
+    cancelFlyoutHoverOpen();
+    flyoutHoverOpenTimeoutRef.current = setTimeout(() => {
+      flyoutHoverOpenTimeoutRef.current = null;
+      setOpenMenu(key);
+    }, 500);
+  }
   // Info/How-to modal, opened from the Fontane menu — a plain overlay
   // rather than another dropdown, since this content is paragraph-length,
   // not a short action list.
   const [infoModal, setInfoModal] = useState<"info" | "howto" | null>(null);
+  // Ref twin for the mount-once keyboard effect below — its Esc/Enter
+  // end-vector-session branch must yield to the modal's own Escape closer.
+  const infoModalRef = useRef<"info" | "howto" | null>(null);
+  useEffect(() => {
+    infoModalRef.current = infoModal;
+  }, [infoModal]);
   // File > New File's "save first?" confirmation — same modal pattern as
   // infoModal, just a yes/no instead of paragraph content.
   const [confirmNewFile, setConfirmNewFile] = useState(false);
@@ -1045,6 +1124,12 @@ export default function Home() {
   }
 
   function toggleCharacterSet(id: string) {
+    // Which sets get switched on beyond the default is the most direct
+    // evidence of which glyph coverage is wanted, rather than which we
+    // guessed — the set id only, never which glyphs were then drawn. Sent
+    // from here rather than inside the updater below, which React may run
+    // more than once per call.
+    trackCharset(id, !activeSetIds.has(id));
     setActiveSetIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -1063,6 +1148,13 @@ export default function Home() {
 
   const topModeRef = useRef(topMode);
   const drawStyleRef = useRef(drawStyle);
+  // The view label every analytics event is tagged with — the same string
+  // useVisitTracking() reports below, so per-view time and per-view tool use
+  // are always talking about the same thing. Assigned during render (like
+  // undoRef further down) rather than in an effect: a tool used in the same
+  // tick as a view switch must land in the view it actually happened in.
+  const viewLabelRef = useRef("studio:grid");
+  viewLabelRef.current = topMode === "draw" ? `studio:${drawStyle}` : `studio:${topMode}`;
   // Editor has no stroke settings/tools of its own yet (Phase 1 is
   // read-only composition) — Free and Grid still get the full Pen/Eraser/
   // Nudge + stroke-appearance controls.
@@ -1070,6 +1162,18 @@ export default function Home() {
 
   const [drawTool, setDrawTool] = useState<DrawTool>("pen");
   const drawToolRef = useRef(drawTool);
+  // Which member each Illustrator-style toolbar group (see ToolGroup) last
+  // had active — the group's slot button wears this tool's face, exactly
+  // like Illustrator's toolbar remembers whether the Pen slot shows Pen or
+  // Delete Anchor. Written in ONE place, the [drawTool] effect below, so
+  // keyboard shortcuts, the menu bar's Tools list, the flyouts, and
+  // programmatic switches all move the slot face the same way. Initial
+  // values are each group's first (headline) tool.
+  const [activeByGroup, setActiveByGroup] = useState<Record<ToolGroup, DrawTool>>({
+    penFamily: "vector",
+    editFamily: "select",
+    transform: "move",
+  });
 
   // Nudge tool: which stroke is currently being reshaped, its anchor
   // indices (Douglas-Peucker-simplified — see src/lib/simplify.ts), whether
@@ -1114,6 +1218,41 @@ export default function Home() {
   const placingNewAnchorRef = useRef(false);
   const vectorDragStartRef = useRef<{ x: number; y: number } | null>(null);
 
+  // The settings palette's "Path" section — Glyphs' Info box parallel: a
+  // read-only digest of the vector editing session (which canvas it lives
+  // on, anchor count, open/closed, smooth-vs-corner split). Deliberately
+  // React state, unlike everything else vector: it drives palette JSX, not
+  // the canvas. Written ONLY at commit points (pointerdown/up, dblclick,
+  // session end — see syncVectorPanelInfo callers), never on pointermove,
+  // so drags don't re-render the page per frame.
+  const [vectorPanelInfo, setVectorPanelInfo] = useState<{
+    source: string;
+    anchorCount: number;
+    closed: boolean;
+    smoothCount: number;
+  } | null>(null);
+  // Which of the editing shape's anchors the last Free-canvas pointerdown
+  // landed on — the palette's "Toggle smooth" button needs a target anchor,
+  // and "the one you last clicked" is Glyphs' own convention for it.
+  const lastClickedAnchorIndexRef = useRef<number | null>(null);
+
+  // Derives the Path section from the live Free-canvas session refs. Grid
+  // cells report their own sessions via onVectorSessionChange instead —
+  // their shapes live in cell-local pixel space, not in these refs.
+  function syncVectorPanelInfo() {
+    const shape = vectorShapesRef.current.find((s) => s.id === editingShapeIdRef.current);
+    if (!shape) {
+      setVectorPanelInfo(null);
+      return;
+    }
+    setVectorPanelInfo({
+      source: "Free",
+      anchorCount: shape.anchors.length,
+      closed: shape.closed,
+      smoothCount: shape.anchors.filter(isSmoothAnchor).length,
+    });
+  }
+
   // Move/Rotate/Scale: a snapshot of every selected stroke's points taken at
   // gesture start, plus the pivot (bbox center) and start pointer position —
   // every pointermove recomputes from this frozen snapshot rather than the
@@ -1157,6 +1296,19 @@ export default function Home() {
   // loop with the offset it's busy mutating.
   const panOffsetRef = useRef({ x: 0, y: 0 });
   const panDragStartRef = useRef<{ clientX: number; clientY: number; offsetX: number; offsetY: number } | null>(null);
+  // Space = momentary pan (Illustrator's spacebar hand). A ref the pointer
+  // handlers check FIRST, deliberately not setDrawTool("pan") — the
+  // [drawTool] effect clears selection and ends editing sessions, exactly
+  // what a momentary pan must not do. Reuses the pan refs above; only the
+  // entry condition differs.
+  const spacePanRef = useRef(false);
+  // Last hover position in canvas space — lets an Alt/Meta press refresh the
+  // hover-contextual pen cursor without waiting for the next pointermove.
+  const lastPointerPosRef = useRef<{ x: number; y: number } | null>(null);
+  // Last cursor string written to the canvas — the pen cursors are ~1KB
+  // data-URI strings, so style.cursor is only rewritten when the value
+  // actually changes, not on every pointermove.
+  const lastCursorRef = useRef("");
 
   const [settings, setSettings] = useState<StrokeSettings>(() => loadSettings());
   const settingsRef = useRef(settings);
@@ -1566,9 +1718,24 @@ export default function Home() {
     function onPointerDown(e: PointerEvent) {
       canvas!.setPointerCapture(e.pointerId);
       const p = pointFromEvent(e);
+      notePointer(e.pointerType); // rides along on the next tool_use — see lib/analytics.ts
       setHud({ pointerType: e.pointerType, pressure: e.pressure, x: Math.round(p[0]), y: Math.round(p[1]) });
+      // Space held = momentary pan (Illustrator's spacebar hand), whatever
+      // tool is active — same body as the Pan tool's own branch below, just
+      // entered via spacePanRef so no tool switch (and none of the working
+      // state a switch would clear) is involved.
+      if (spacePanRef.current) {
+        panDragStartRef.current = {
+          clientX: e.clientX,
+          clientY: e.clientY,
+          offsetX: panOffsetRef.current.x,
+          offsetY: panOffsetRef.current.y,
+        };
+        canvas!.style.cursor = "grabbing";
+        return;
+      }
       if (topModeRef.current === "draw" && drawToolRef.current === "eraser") {
-        if (eraseAt(p[0], p[1])) trackToolUse("eraser");
+        if (eraseAt(p[0], p[1])) trackToolUse("eraser", viewLabelRef.current);
         redraw();
         return;
       }
@@ -1583,7 +1750,13 @@ export default function Home() {
         return;
       }
       if (topModeRef.current === "draw" && VECTOR_TOOLS.has(drawToolRef.current)) {
-        handleVectorPointerDown(p[0], p[1], e.altKey, drawToolRef.current);
+        // Cmd/Ctrl = Illustrator's momentary direct-select, see
+        // handleVectorPointerDown.
+        handleVectorPointerDown(p[0], p[1], e.altKey, drawToolRef.current, e.metaKey || e.ctrlKey);
+        // One sync per commit point, at the call site — the handler itself
+        // returns from half a dozen branches, and every one of them is a
+        // session start/switch/mutation the Path section must reflect.
+        syncVectorPanelInfo();
         redraw();
         return;
       }
@@ -1636,7 +1809,27 @@ export default function Home() {
 
     function onPointerMove(e: PointerEvent) {
       const p = pointFromEvent(e);
+      notePointer(e.pointerType);
       setHud({ pointerType: e.pointerType, pressure: e.pressure, x: Math.round(p[0]), y: Math.round(p[1]) });
+      // Remembered so a bare modifier press (no pointer movement) can
+      // re-derive the hover-contextual pen cursor at this same spot — see
+      // refreshVectorCursor in the heldKeys/space effect below.
+      lastPointerPosRef.current = { x: p[0], y: p[1] };
+      // Space-pan mirrors the Pan tool's own move branch below — drag if one
+      // is live, otherwise just show the hand.
+      if (spacePanRef.current) {
+        if (panDragStartRef.current) {
+          const start = panDragStartRef.current;
+          panOffsetRef.current = {
+            x: start.offsetX + (e.clientX - start.clientX),
+            y: start.offsetY + (e.clientY - start.clientY),
+          };
+          redraw();
+          return;
+        }
+        canvas!.style.cursor = "grab";
+        return;
+      }
       if (topModeRef.current === "draw" && drawToolRef.current === "eraser") {
         canvas!.style.cursor = "crosshair";
         return;
@@ -1662,7 +1855,14 @@ export default function Home() {
           handleVectorPointerMove(p[0], p[1]);
           return;
         }
-        canvas!.style.cursor = editingShapeIdRef.current ? "crosshair" : "pointer";
+        // Idle: hover-contextual pen cursor (Illustrator parity) instead of
+        // the old crosshair/pointer pair. Written only on change —
+        // lastCursorRef — since the data-URI strings are ~1KB each.
+        const nextCursor = vectorHoverCursor(p[0], p[1]);
+        if (lastCursorRef.current !== nextCursor) {
+          lastCursorRef.current = nextCursor;
+          canvas!.style.cursor = nextCursor;
+        }
         return;
       }
       if (topModeRef.current === "draw" && TRANSFORM_TOOLS.has(drawToolRef.current)) {
@@ -1698,11 +1898,19 @@ export default function Home() {
     }
 
     function onPointerUp(e: PointerEvent) {
+      // Space-pan release mirrors the Pan tool's own up branch below; the
+      // keyup handler covers the Space-lifted-mid-drag case instead.
+      if (spacePanRef.current) {
+        panDragStartRef.current = null;
+        canvas!.releasePointerCapture(e.pointerId);
+        redraw();
+        return;
+      }
       if (topModeRef.current === "draw" && drawToolRef.current === "nudge") {
         if (draggingAnchorRef.current !== null) {
           draggingAnchorRef.current = null;
           saveStrokes(completedRef.current);
-          trackToolUse("nudge");
+          trackToolUse("nudge", viewLabelRef.current);
         }
         canvas!.releasePointerCapture(e.pointerId);
         redraw();
@@ -1711,6 +1919,9 @@ export default function Home() {
       if (topModeRef.current === "draw" && VECTOR_TOOLS.has(drawToolRef.current)) {
         const p = pointFromEvent(e);
         handleVectorPointerUp(p[0], p[1]);
+        // Same call-site sync as pointerdown — pointerup is where drags
+        // (handle pulls, anchor moves, corner collapses) actually commit.
+        syncVectorPanelInfo();
         canvas!.releasePointerCapture(e.pointerId);
         redraw();
         return;
@@ -1735,7 +1946,7 @@ export default function Home() {
           }
           transformStartRef.current = null;
           saveStrokes(completedRef.current);
-          trackToolUse(t.mode);
+          trackToolUse(t.mode, viewLabelRef.current);
         }
         canvas!.releasePointerCapture(e.pointerId);
         redraw();
@@ -1782,7 +1993,7 @@ export default function Home() {
             tool: stroke.kind ?? "pen",
             ...summarizeStroke(stroke.points, strokeStartTimeRef.current),
           });
-          trackToolUse(stroke.kind ?? "pen");
+          trackToolUse(stroke.kind ?? "pen", viewLabelRef.current);
         }
         currentPointsRef.current = [];
       }
@@ -1791,10 +2002,23 @@ export default function Home() {
       redraw();
     }
 
+    // Double-click needs the same pan-corrected canvas coordinates as
+    // pointFromEvent — its two constituent clicks have already run through
+    // the normal pointer path by the time this fires (see
+    // handleVectorDblClick for why that's fine).
+    function onDblClick(e: MouseEvent) {
+      const rect = canvas!.getBoundingClientRect();
+      handleVectorDblClick(
+        e.clientX - rect.left - panOffsetRef.current.x,
+        e.clientY - rect.top - panOffsetRef.current.y
+      );
+    }
+
     canvas.addEventListener("pointerdown", onPointerDown);
     canvas.addEventListener("pointermove", onPointerMove);
     canvas.addEventListener("pointerup", onPointerUp);
     canvas.addEventListener("pointercancel", onPointerUp);
+    canvas.addEventListener("dblclick", onDblClick);
 
     return () => {
       window.removeEventListener("resize", resize);
@@ -1802,6 +2026,7 @@ export default function Home() {
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("pointercancel", onPointerUp);
+      canvas.removeEventListener("dblclick", onDblClick);
     };
   }, []);
 
@@ -1863,6 +2088,19 @@ export default function Home() {
     currentPointsRef.current = [];
     lassoRef.current = [];
     if (!SELECTION_TOOLS.has(drawTool)) setSelectedIds([]);
+    // Other tools write style.cursor directly, so the vector hover cache
+    // (write-on-change only) would otherwise believe its last value is still
+    // on screen and skip restoring it.
+    lastCursorRef.current = "";
+    // The ONE writer of activeByGroup: whenever the newly active tool
+    // belongs to a toolbar group, its slot button starts wearing that
+    // tool's face (Illustrator's flyout memory) — routing this through the
+    // [drawTool] chokepoint means keyboard, menu bar, flyout clicks, and
+    // programmatic switches all update the slot identically.
+    const toolGroup = TOOL_DEFS.find((t) => t.value === drawTool)?.group;
+    if (toolGroup) {
+      setActiveByGroup((prev) => (prev[toolGroup] === drawTool ? prev : { ...prev, [toolGroup]: drawTool }));
+    }
     redrawRef.current();
   }, [drawTool]);
 
@@ -1901,6 +2139,9 @@ export default function Home() {
     draggingHandleRef.current = null;
     placingNewAnchorRef.current = false;
     vectorDragStartRef.current = null;
+    lastClickedAnchorIndexRef.current = null;
+    // No session — the palette's Path section (Glyphs' Info box) empties too.
+    setVectorPanelInfo(null);
   }
 
   useEffect(() => {
@@ -1928,7 +2169,7 @@ export default function Home() {
   // "editor" surface (the marketplace browse→download ratio counts those
   // values); duration rows carry the finer view below, so switching between
   // Free/Grid/Editor/Animate splits the visit into per-view segments.
-  useVisitTracking("editor", topMode === "draw" ? `studio:${drawStyle}` : `studio:${topMode}`);
+  useVisitTracking("editor", viewLabelRef.current);
 
   // Provenance queue: periodic flush so a long drawing session doesn't sit
   // on an ever-growing localStorage-backed queue, plus a pagehide flush so
@@ -2055,7 +2296,7 @@ export default function Home() {
         saveVectorShapes(vectorShapesRef.current);
 
         setSelectedIds([...newStrokes.map((s) => s.id), ...newShapes.map((s) => s.id)]);
-        trackToolUse("paste");
+        trackToolUse("paste", viewLabelRef.current);
         redrawRef.current();
         return;
       }
@@ -2085,9 +2326,97 @@ export default function Home() {
         deleteStrokes(new Set(selectedIdsRef.current));
         setSelectedIds([]);
       }
+      // Esc/Enter = Illustrator's end-the-path: the shape stays exactly as
+      // drawn (an open path stays open, resumable by clicking it later — see
+      // exitVectorEditing), only the editing session ends so the next click
+      // starts a fresh path instead of extending this one. Yields to the
+      // Info/How-to modal's own Escape closer while that is open.
+      else if (
+        (e.key === "Escape" || e.key === "Enter") &&
+        VECTOR_TOOLS.has(drawToolRef.current) &&
+        editingShapeIdRef.current &&
+        !infoModalRef.current
+      ) {
+        e.preventDefault();
+        exitVectorEditing();
+        redrawRef.current();
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  // Held-modifier singleton (heldKeys.ts — shared with every GridCell) plus
+  // the two behaviors that hang off bare key presses rather than pointer
+  // events: Space = momentary pan, and Alt/Meta/Ctrl refreshing the
+  // hover-contextual pen cursor in place. initHeldKeys() runs first so its
+  // own listeners are registered before these — getHeldKeys() is already
+  // current by the time refreshVectorCursor reads it.
+  useEffect(() => {
+    initHeldKeys();
+
+    // Re-derive the pen cursor at the LAST hover position when a modifier
+    // changes with the mouse still — Illustrator flips the cursor the moment
+    // Cmd or Alt goes down, not on the next accidental jiggle.
+    function refreshVectorCursor() {
+      const canvas = canvasRef.current;
+      const pos = lastPointerPosRef.current;
+      if (!canvas || !pos) return;
+      if (topModeRef.current !== "draw" || drawStyleRef.current !== "free") return;
+      if (!VECTOR_TOOLS.has(drawToolRef.current)) return;
+      // Mid-drag and space-pan cursors are owned by the pointer handlers.
+      if (draggingHandleRef.current || draggingVectorAnchorRef.current !== null) return;
+      if (spacePanRef.current) return;
+      const next = vectorHoverCursor(pos.x, pos.y);
+      if (lastCursorRef.current !== next) {
+        lastCursorRef.current = next;
+        canvas.style.cursor = next;
+      }
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Alt" || e.key === "Meta" || e.key === "Control") refreshVectorCursor();
+      if (e.code !== "Space") return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+      if (topModeRef.current !== "draw" || drawStyleRef.current !== "free") return;
+      // preventDefault on repeats too — held Space must never scroll the
+      // page mid-pan — but the ref/cursor writes only need doing once.
+      e.preventDefault();
+      if (e.repeat) return;
+      spacePanRef.current = true;
+      const canvas = canvasRef.current;
+      if (canvas) canvas.style.cursor = "grab";
+      lastCursorRef.current = "";
+    }
+
+    // Shared by keyup and window blur — Cmd+Tabbing away mid-pan would
+    // otherwise never deliver the Space keyup and leave the hand stuck on.
+    function endSpacePan() {
+      if (!spacePanRef.current) return;
+      spacePanRef.current = false;
+      // A drag still live when Space lifts commits where it is —
+      // panOffsetRef is already current, only the gesture bookkeeping and
+      // cursor need clearing.
+      panDragStartRef.current = null;
+      const canvas = canvasRef.current;
+      if (canvas) canvas.style.cursor = "";
+      lastCursorRef.current = "";
+    }
+
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.key === "Alt" || e.key === "Meta" || e.key === "Control") refreshVectorCursor();
+      if (e.code === "Space") endSpacePan();
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", endSpacePan);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", endSpacePan);
+    };
   }, []);
 
   // Dismiss an open menu-bar dropdown on any click outside the menu bar
@@ -2153,6 +2482,7 @@ export default function Home() {
 
   function handleUndo() {
     if (undoStackRef.current.length === 0) return;
+    trackUndo(); // tagged with the last tool that reported a use — see lib/analytics.ts
     const current = snapshotNow();
     const prev = undoStackRef.current[undoStackRef.current.length - 1];
     undoStackRef.current = undoStackRef.current.slice(0, -1);
@@ -2285,7 +2615,7 @@ export default function Home() {
     setNameInput("");
     setComponentsInput("");
     setAlternateOfInput("");
-    trackToolUse("assign");
+    trackToolUse("assign", viewLabelRef.current);
   }
 
   function handleAssignKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -2697,7 +3027,7 @@ export default function Home() {
       tool: "vector",
       ...summarizeStroke([[0, 0, 1]], Date.now()),
     });
-    trackToolUse("vector");
+    trackToolUse("vector", viewLabelRef.current);
   }
 
   // Illustrator's tangent continuity, entered from every gesture that starts a
@@ -2777,8 +3107,14 @@ export default function Home() {
   // different existing shape's anchor/curve (or on empty space with nothing
   // active) starts/switches the editing session onto it, exactly the
   // Nudge/Anchor tools' own convention.
-  function handleVectorPointerDown(x: number, y: number, altKey: boolean, tool: DrawTool) {
-    if (tool !== "vector") {
+  //
+  // `directSelect` (Cmd/Ctrl held) is Illustrator's momentary Direct
+  // Selection tool, for the WHOLE pen family: existing geometry stays
+  // grabbable (the handle-hit and anchor-drag branches below), but nothing
+  // new can happen — close-path, segment-insert, append-anchor and new-shape
+  // creation are all skipped, so a Cmd-click on empty space is a no-op.
+  function handleVectorPointerDown(x: number, y: number, altKey: boolean, tool: DrawTool, directSelect: boolean) {
+    if (tool !== "vector" && !directSelect) {
       handleVectorAnchorToolPointerDown(x, y, tool);
       return;
     }
@@ -2797,7 +3133,7 @@ export default function Home() {
           return;
         }
 
-        if (!shape.closed && shape.anchors.length >= 3) {
+        if (!directSelect && !shape.closed && shape.anchors.length >= 3) {
           const first = shape.anchors[0];
           if (Math.hypot(x - first.x, y - first.y) <= ANCHOR_HIT_PX) {
             shape.closed = true;
@@ -2809,6 +3145,9 @@ export default function Home() {
 
         const anchorHit = vectorAnchorNear(shape, x, y);
         if (anchorHit !== null) {
+          // Arms the palette's "Toggle smooth" button (see the Path
+          // section) — same in the fallback scan loop below.
+          lastClickedAnchorIndexRef.current = anchorHit;
           if (altKey) {
             // Alt+drag pulls a fresh symmetric handle pair out of ANY
             // anchor — including the first/last point of the path, which
@@ -2825,14 +3164,27 @@ export default function Home() {
           return;
         }
 
-        const segHit = vectorSegmentHit(shape, x, y);
-        if (segHit) {
-          insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
-          return;
+        if (!directSelect) {
+          const segHit = vectorSegmentHit(shape, x, y);
+          if (segHit) {
+            insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
+            return;
+          }
         }
 
         if (!shape.closed) {
-          shape.anchors = [...shape.anchors, { x, y }];
+          // Direct-select never extends the path — with nothing grabbable
+          // under the cursor the click is a no-op, and the open session
+          // survives untouched.
+          if (directSelect) return;
+          // Shift-click = Illustrator's 45°-constrained segment: the new
+          // anchor lands snapped around the PREVIOUS anchor; a drag that
+          // follows constrains its handles separately (see
+          // handleVectorPointerMove). Read live from heldKeys so the
+          // signature stays identical to GridCell's copy.
+          const prev = shape.anchors[shape.anchors.length - 1];
+          const pt = getHeldKeys().shift ? constrainTo45(prev.x, prev.y, x, y) : { x, y };
+          shape.anchors = [...shape.anchors, { x: pt.x, y: pt.y }];
           draggingHandleRef.current = { anchorIndex: shape.anchors.length - 1, which: "handleOut" };
           placingNewAnchorRef.current = true;
           vectorDragStartRef.current = { x, y };
@@ -2842,8 +3194,10 @@ export default function Home() {
         }
 
         // Closed shape, click elsewhere on it: stop editing, fall through to
-        // check other shapes / empty space below.
-        editingShapeIdRef.current = null;
+        // check other shapes / empty space below. Direct-select instead
+        // keeps the session — deselecting is not what a missed Cmd-grab
+        // should do.
+        if (!directSelect) editingShapeIdRef.current = null;
       }
     }
 
@@ -2860,6 +3214,7 @@ export default function Home() {
       const anchorHit = vectorAnchorNear(shape, x, y);
       if (anchorHit !== null) {
         editingShapeIdRef.current = shape.id;
+        lastClickedAnchorIndexRef.current = anchorHit;
         if (altKey) {
           draggingHandleRef.current = { anchorIndex: anchorHit, which: "handleOut" };
           placingNewAnchorRef.current = true;
@@ -2870,13 +3225,18 @@ export default function Home() {
         vectorDragStartRef.current = { x, y };
         return;
       }
-      const segHit = vectorSegmentHit(shape, x, y);
-      if (segHit) {
-        editingShapeIdRef.current = shape.id;
-        insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
-        return;
+      if (!directSelect) {
+        const segHit = vectorSegmentHit(shape, x, y);
+        if (segHit) {
+          editingShapeIdRef.current = shape.id;
+          insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
+          return;
+        }
       }
     }
+
+    // Direct-select on empty space: a no-op, never a fresh path.
+    if (directSelect) return;
 
     const newShape: VectorShape = {
       id: `${Date.now()}-${Math.round(Math.random() * 1e6)}`,
@@ -2904,15 +3264,19 @@ export default function Home() {
     if (draggingHandleRef.current) {
       const { anchorIndex, which } = draggingHandleRef.current;
       const anchor = shape.anchors[anchorIndex];
+      // Shift = Illustrator's 45° constraint, read live (heldKeys) so it can
+      // be pressed/released mid-drag: the dragged handle snaps around its
+      // own anchor, whichever of the two branches below is running.
+      const p = getHeldKeys().shift ? constrainTo45(anchor.x, anchor.y, x, y) : { x, y };
       if (placingNewAnchorRef.current) {
         // Symmetric: dragging out from a freshly-placed anchor (or from a
         // corner with the Convert tool) sets both handles at once, mirrored —
         // that IS a smooth curve point, so record it as one.
-        anchor.handleOut = { x, y };
-        anchor.handleIn = { x: anchor.x - (x - anchor.x), y: anchor.y - (y - anchor.y) };
+        anchor.handleOut = { x: p.x, y: p.y };
+        anchor.handleIn = { x: anchor.x - (p.x - anchor.x), y: anchor.y - (p.y - anchor.y) };
         anchor.smooth = true;
       } else {
-        anchor[which] = { x, y };
+        anchor[which] = { x: p.x, y: p.y };
         // Illustrator's tangent continuity on a smooth point: the opposite
         // handle swings to stay collinear but keeps its own length. A corner
         // (including one just broken by Alt or the Convert tool, which
@@ -2973,6 +3337,11 @@ export default function Home() {
           anchor.handleOut = undefined;
           anchor.smooth = false;
           saveVectorShapes(vectorShapesRef.current);
+        } else if (PEN_ANCHOR_CLICK === "delete") {
+          // Dormant behind cursors.ts's flag (the user chose "select"):
+          // Glyphs' click-deletes-anchor variant, kept wired so flipping the
+          // constant is the whole change.
+          deleteVectorAnchorAt(shape.id, index);
         }
       } else {
         saveVectorShapes(vectorShapesRef.current);
@@ -2984,6 +3353,71 @@ export default function Home() {
     placingNewAnchorRef.current = false;
     vectorDragStartRef.current = null;
     redrawRef.current();
+  }
+
+  // Glyphs' double-click parity: toggle the anchor under the cursor between
+  // smooth and corner (see toggleAnchorSmooth) without reaching for the
+  // Convert tool. The dblclick's two constituent clicks have already run the
+  // normal pointer path (selecting the shape, possibly retracting a last
+  // anchor's handle) — a known, acceptable quirk: the toggle lands last and
+  // wins. Topmost shape first, same convention as every other vector hit-test.
+  function handleVectorDblClick(x: number, y: number) {
+    if (topModeRef.current !== "draw" || !VECTOR_TOOLS.has(drawToolRef.current)) return;
+    for (let i = vectorShapesRef.current.length - 1; i >= 0; i--) {
+      const shape = vectorShapesRef.current[i];
+      const anchorHit = vectorAnchorNear(shape, x, y);
+      if (anchorHit === null) continue;
+      if (toggleAnchorSmooth(shape.anchors[anchorHit])) {
+        saveVectorShapes(vectorShapesRef.current);
+        redrawRef.current();
+      }
+      // The toggle changes the Path section's smooth/corner tally, and the
+      // dblclick fires AFTER its two constituent clicks already synced.
+      syncVectorPanelInfo();
+      return;
+    }
+  }
+
+  // The Path section's "Toggle smooth" button — the same smooth/corner flip
+  // as double-clicking the anchor (Glyphs offers both routes too), aimed at
+  // the anchor the last Free-canvas click landed on. Bounds-checked because
+  // the ref can outlive the anchor it named (e.g. Delete Anchor removed it).
+  function handleToggleSmoothClick() {
+    const shape = vectorShapesRef.current.find((s) => s.id === editingShapeIdRef.current);
+    const index = lastClickedAnchorIndexRef.current;
+    if (!shape || index === null) return;
+    const anchor = shape.anchors[index];
+    if (!anchor) return;
+    if (toggleAnchorSmooth(anchor)) {
+      saveVectorShapes(vectorShapesRef.current);
+      redrawRef.current();
+      syncVectorPanelInfo();
+    }
+  }
+
+  // Hover-contextual pen cursor (cursors.ts): what WOULD a click do right
+  // here? Mirrors handleVectorPointerDown's branch order — close beats
+  // continue beats plain anchor beats segment-insert — so the badge never
+  // promises something the click won't deliver. Cmd/Ctrl flips the whole
+  // family into direct-select, hence the plain arrow.
+  function vectorHoverCursor(x: number, y: number): string {
+    const held = getHeldKeys();
+    if (held.meta || held.ctrl) return "default";
+    const editing = vectorShapesRef.current.find((s) => s.id === editingShapeIdRef.current);
+    for (let i = vectorShapesRef.current.length - 1; i >= 0; i--) {
+      const shape = vectorShapesRef.current[i];
+      const anchorHit = vectorAnchorNear(shape, x, y);
+      if (anchorHit === null) continue;
+      if (editing && shape.id === editing.id && !editing.closed) {
+        if (anchorHit === 0 && shape.anchors.length >= 3) return PEN_CLOSE;
+        if (anchorHit === shape.anchors.length - 1) return PEN_CONTINUE;
+      }
+      // Alt over a smooth point = the cusp-break gesture (Convert's caret).
+      if (held.alt && isSmoothAnchor(shape.anchors[anchorHit])) return CONVERT;
+      return PEN_ANCHOR_CLICK === "delete" ? PEN_MINUS : "default";
+    }
+    if (editing && vectorSegmentHit(editing, x, y)) return PEN_ADD;
+    return PEN;
   }
 
   // Move/Rotate/Scale click: the pointerdown must land on a stroke that's
@@ -3213,7 +3647,7 @@ export default function Home() {
         // recordVectorProvenance takes on the Free canvas.
         ...summarizeStroke([[0, 0, 1]], Date.now()),
       });
-      trackToolUse("vector");
+      trackToolUse("vector", viewLabelRef.current);
     }
 
     const shapeIds = anchored.map((s) => s.id);
@@ -3327,8 +3761,15 @@ export default function Home() {
     );
   }
 
+  // How many glyphs the document actually has something in — strokes or
+  // vector shapes, either counts. Sent with every export as one of five
+  // buckets (never the number itself, see lib/analytics.ts): the difference
+  // between "tried three letters" and "built a typeface" is the whole
+  // question of what this tool is for, and no other event answers it.
+  const drawnGlyphCount = glyphs.filter((g) => g.strokeIds.length > 0 || (g.vectorShapeIds?.length ?? 0) > 0).length;
+
   function handleDownloadJson() {
-    trackExport("json");
+    trackExport("json", drawnGlyphCount);
     const blob = new Blob([exportJson], { type: "application/json" });
     saveFile(blob, {
       suggestedName: "fontane-document.json",
@@ -3340,17 +3781,25 @@ export default function Home() {
 
   function handleExportOtf() {
     if (!exportDoc) return;
-    trackExport("otf");
-    downloadFont(exportDoc, "fontane.otf");
+    trackExport("otf", drawnGlyphCount);
+    // The export event above fires on the click, so a build that throws
+    // would otherwise be indistinguishable from a finished download — the
+    // one place where "used" and "worked" quietly diverge.
+    try {
+      downloadFont(exportDoc, "fontane.otf");
+    } catch (err) {
+      trackError("export:otf");
+      throw err; // reporting it must not also swallow it
+    }
   }
 
   function handleExportSkeleton() {
-    trackExport("skeleton-svg");
+    trackExport("skeleton-svg", drawnGlyphCount);
     downloadSkeletonSvg(glyphs, completedRef.current);
   }
 
   function handleDownloadFff() {
-    trackExport("fff");
+    trackExport("fff", drawnGlyphCount);
     downloadProjectFile(glyphs, completedRef.current, vectorShapesRef.current, metrics, settings, "untitled.fff");
   }
 
@@ -3417,6 +3866,9 @@ export default function Home() {
     try {
       const res = await fetch("/api/projects", { headers: { "x-fontane-code": code } });
       if (!res.ok) {
+        // Not an error to log — a person asking for the thing behind the
+        // wall. Which wall, nothing about the code they tried.
+        trackGate("cloud-code");
         setCloudError("Wrong code.");
         return;
       }
@@ -3587,6 +4039,29 @@ export default function Home() {
   }
 
   const visibleTools = TOOL_DEFS.filter((t) => (FREE_ONLY_TOOLS.has(t.value) ? drawStyle === "free" : true));
+
+  // The toolbar row compacts visibleTools into slots, Illustrator-style: a
+  // ToolGroup collapses into ONE slot at its first visible member's position,
+  // holding the whole (visible) family for the flyout; ungrouped tools stay
+  // one slot each. Derived from visibleTools, not TOOL_DEFS, so FREE_ONLY
+  // filtering composes for free — Anchor outside Free simply drops out of
+  // the editFamily flyout rather than needing its own special case.
+  type ToolSlot = { kind: "single"; def: ToolDef } | { kind: "group"; group: ToolGroup; defs: ToolDef[] };
+  const toolSlots: ToolSlot[] = [];
+  {
+    const defsByGroup = new Map<ToolGroup, ToolDef[]>();
+    for (const t of visibleTools) {
+      if (!t.group) {
+        toolSlots.push({ kind: "single", def: t });
+      } else if (defsByGroup.has(t.group)) {
+        defsByGroup.get(t.group)!.push(t); // same array the slot already holds
+      } else {
+        const defs = [t];
+        defsByGroup.set(t.group, defs);
+        toolSlots.push({ kind: "group", group: t.group, defs });
+      }
+    }
+  }
 
   return (
     <div className={styles.page}>
@@ -4073,19 +4548,92 @@ export default function Home() {
         <div className={styles.toolsViewsBar} data-chrome-menu>
           <div className={styles.hBarGroup}>
             <span className={styles.hBarLabel}>Tools</span>
-            {visibleTools.map((t) => (
-              <button
-                key={t.value}
-                type="button"
-                className={`${styles.hBarItem} ${drawTool === t.value ? styles.hBarItemActive : ""}`}
-                onClick={() => setDrawTool(t.value)}
-                aria-label={`${t.label} (${t.shortcut})`}
-                title={`${t.label} (${t.shortcut})`}
-              >
-                <t.icon size={16} strokeWidth={2} />
-                <span>{t.label}</span>
-              </button>
-            ))}
+            {toolSlots.map((slot) => {
+              if (slot.kind === "single") {
+                const t = slot.def;
+                return (
+                  <button
+                    key={t.value}
+                    type="button"
+                    className={`${styles.hBarItem} ${drawTool === t.value ? styles.hBarItemActive : ""}`}
+                    onClick={() => setDrawTool(t.value)}
+                    aria-label={`${t.label} (${t.shortcut})`}
+                    title={`${t.label} (${t.shortcut})`}
+                  >
+                    <t.icon size={16} strokeWidth={2} />
+                    <span>{t.label}</span>
+                  </button>
+                );
+              }
+              // Illustrator-style grouped slot: the button wears the
+              // last-used member's face (activeByGroup), falling back to the
+              // group's headline tool when the remembered one is filtered out
+              // of this view (Anchor in Grid) — the fallback also keeps the
+              // click handler from re-activating a tool with no button here.
+              // hBarItemActive tracks the LIVE drawTool, not the remembered
+              // face: the slot only lights up while one of its members is
+              // actually the current tool.
+              const face = slot.defs.find((t) => t.value === activeByGroup[slot.group]) ?? slot.defs[0];
+              const flyoutKey: MenuKey = `flyout-${slot.group}`;
+              return (
+                <div
+                  key={slot.group}
+                  className={styles.toolSlot}
+                  onMouseEnter={() => scheduleFlyoutHoverOpen(flyoutKey)}
+                  onMouseLeave={() => {
+                    cancelFlyoutHoverOpen();
+                    scheduleMenuHoverClose();
+                  }}
+                >
+                  <button
+                    type="button"
+                    className={`${styles.hBarItem} ${styles.toolSlotCorner} ${slot.defs.some((t) => t.value === drawTool) ? styles.hBarItemActive : ""}`}
+                    aria-haspopup="menu"
+                    aria-expanded={openMenu === flyoutKey}
+                    aria-label={`${face.label} (${face.shortcut})`}
+                    title={`${face.label} (${face.shortcut}) — hold for more tools`}
+                    onPointerDown={() => armFlyoutLongPress(flyoutKey)}
+                    onPointerUp={cancelFlyoutLongPress}
+                    onPointerLeave={cancelFlyoutLongPress}
+                    onClick={() => {
+                      // A completed long-press already opened the flyout —
+                      // the click that fires on release must not ALSO
+                      // activate (armFlyoutLongPress resets the flag on the
+                      // next press, so a swallowed click can't go stale).
+                      if (flyoutLongPressFiredRef.current) {
+                        flyoutLongPressFiredRef.current = false;
+                        return;
+                      }
+                      setDrawTool(face.value);
+                    }}
+                  >
+                    <face.icon size={16} strokeWidth={2} />
+                    <span>{face.label}</span>
+                  </button>
+                  {openMenu === flyoutKey && (
+                    <div className={styles.dropdown} role="menu">
+                      {slot.defs.map((t) => (
+                        <button
+                          key={t.value}
+                          type="button"
+                          role="menuitem"
+                          className={`${styles.dropdownItem} ${styles.flyoutItem} ${drawTool === t.value ? styles.dropdownItemActive : ""}`}
+                          onClick={() => {
+                            setDrawTool(t.value);
+                            setOpenMenu(null);
+                          }}
+                        >
+                          <t.icon size={14} strokeWidth={2} />
+                          <span>
+                            {t.label} ({t.shortcut})
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -4272,6 +4820,16 @@ export default function Home() {
                   }
                   vectorShapes={cellVectorShapes}
                   onVectorShapesChange={(shapes) => handleGridVectorShapes(slot, shapes, liveWidth, liveHeight)}
+                  // Feeds the palette's Path section, tagging the cell's
+                  // label as the source. A cell's session-END (null) only
+                  // clears the panel if the panel was showing THAT cell —
+                  // sessions are per-cell and several can be open at once,
+                  // so cell A ending must not blank cell B's fresh report.
+                  onVectorSessionChange={(info) =>
+                    setVectorPanelInfo((prev) =>
+                      info ? { source: name, ...info } : prev && prev.source === name ? null : prev
+                    )
+                  }
                   metrics={metrics}
                   leftBearing={glyph?.leftBearing}
                   rightBearing={glyph?.rightBearing}
@@ -4364,6 +4922,49 @@ export default function Home() {
             })}
           </div>
           <div className={styles.settingsPanelLabel}>Settings</div>
+          {/* Glyphs' Info box, as a palette section: while a pen-family tool
+              is active, the current path's vitals live here — fed by the
+              Free canvas's own session refs (syncVectorPanelInfo) or by
+              whichever Grid cell last reported via onVectorSessionChange. */}
+          {topMode === "draw" && VECTOR_TOOLS.has(drawTool) && (
+            <SettingsSection id="anchorInfo" title="Path" defaultOpen>
+              {vectorPanelInfo ? (
+                <>
+                  <div className={styles.sliders}>
+                    <div className={styles.sliderRow}>
+                      <span>Source</span>
+                      <span className={styles.val}>{vectorPanelInfo.source}</span>
+                    </div>
+                    <div className={styles.sliderRow}>
+                      <span>Anchors</span>
+                      <span className={styles.val}>{vectorPanelInfo.anchorCount}</span>
+                    </div>
+                    <div className={styles.sliderRow}>
+                      <span>Closed</span>
+                      <span className={styles.val}>{vectorPanelInfo.closed ? "yes" : "no"}</span>
+                    </div>
+                    <div className={styles.sliderRow}>
+                      <span>Smooth</span>
+                      <span className={styles.val}>
+                        {vectorPanelInfo.smoothCount}/{vectorPanelInfo.anchorCount}
+                      </span>
+                    </div>
+                  </div>
+                  {vectorPanelInfo.source === "Free" ? (
+                    <button type="button" className={styles.clearBtn} onClick={handleToggleSmoothClick}>
+                      Toggle smooth
+                    </button>
+                  ) : (
+                    // Grid sessions live in cell-local space the page can't
+                    // reach into — the cells' own dblclick toggle covers it.
+                    <span className={styles.unicodeHint}>Double-click an anchor to toggle smooth/corner</span>
+                  )}
+                </>
+              ) : (
+                <span className={styles.unicodeHint}>Click or draw a path</span>
+              )}
+            </SettingsSection>
+          )}
           {topMode === "draw" && drawStyle === "free" && drawTool === "assign" && (
             <>
               <input
@@ -4450,140 +5051,151 @@ export default function Home() {
             </>
           )}
           {topMode === "draw" && drawStyle === "grid" && (
-            <div className={styles.sliders}>
-              {/* The label stays the same string in both states on purpose:
-                  lockBearings is read from localStorage during the first render
-                  (so the Grid is already locked on the very first frame, not a
-                  frame later), which means the server rendered this button
-                  from the default. Swapping the TEXT on it made that a
-                  hydration mismatch React can't patch up quietly — a real
-                  #418 in the console on every locked reload. The on state
-                  rides on the class and aria-pressed instead, attributes React
-                  reconciles without complaint, and the filled treatment is the
-                  same one the Base/Ligature/Alt toggle already uses for
-                  "this one is active". */}
-              <button
-                type="button"
-                aria-pressed={lockBearings}
-                className={`${styles.clearBtn} ${lockBearings ? styles.toggleBtnOn : ""}`}
-                onClick={() => updateLockBearings(!lockBearings)}
-                title={
-                  lockBearings
-                    ? "Bearings are locked — the bearing lines and the cell width handle ignore the pointer, so you can draw straight over them"
-                    : "Lock the bearing lines and the cell width handle so drawing over them doesn't drag them"
-                }
-              >
-                Lock Bearings
-              </button>
-              <label className={styles.sliderRow}>
-                <span>Cell size</span>
-                <input
-                  type="range"
-                  min={60}
-                  max={240}
-                  step={10}
-                  value={cellSize}
-                  onChange={(e) => updateCellSize(Number(e.target.value))}
-                />
-                <span className={styles.val}>{cellSize}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>Width</span>
-                <input
-                  type="range"
-                  min={0.5}
-                  max={2}
-                  step={0.05}
-                  value={cellWidthRatio}
-                  onChange={(e) => updateCellWidthRatio(Number(e.target.value))}
-                />
-                <span className={styles.val}>{cellWidthRatio.toFixed(2)}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>
+            <>
+              <div className={styles.sliders}>
+                {/* The label stays the same string in both states on purpose:
+                    lockBearings is read from localStorage during the first render
+                    (so the Grid is already locked on the very first frame, not a
+                    frame later), which means the server rendered this button
+                    from the default. Swapping the TEXT on it made that a
+                    hydration mismatch React can't patch up quietly — a real
+                    #418 in the console on every locked reload. The on state
+                    rides on the class and aria-pressed instead, attributes React
+                    reconciles without complaint, and the filled treatment is the
+                    same one the Base/Ligature/Alt toggle already uses for
+                    "this one is active". */}
+                <button
+                  type="button"
+                  aria-pressed={lockBearings}
+                  className={`${styles.clearBtn} ${lockBearings ? styles.toggleBtnOn : ""}`}
+                  onClick={() => updateLockBearings(!lockBearings)}
+                  title={
+                    lockBearings
+                      ? "Bearings are locked — the bearing lines and the cell width handle ignore the pointer, so you can draw straight over them"
+                      : "Lock the bearing lines and the cell width handle so drawing over them doesn't drag them"
+                  }
+                >
+                  Lock Bearings
+                </button>
+                <label className={styles.sliderRow}>
+                  <span>Cell size</span>
                   <input
-                    type="checkbox"
-                    checked={keepProportions}
-                    onChange={(e) => updateKeepProportions(e.target.checked)}
-                  />{" "}
-                  Keep Proportions
-                </span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>Ascender</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={metrics.ascender}
-                  onChange={(e) => updateMetric("ascender", Math.min(Number(e.target.value), metrics.xHeight - 0.02))}
-                />
-                <span className={styles.val}>{metrics.ascender.toFixed(2)}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>X-height</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={metrics.xHeight}
-                  onChange={(e) =>
-                    updateMetric(
-                      "xHeight",
-                      Math.min(Math.max(Number(e.target.value), metrics.ascender + 0.02), metrics.baseline - 0.02)
-                    )
-                  }
-                />
-                <span className={styles.val}>{metrics.xHeight.toFixed(2)}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>Baseline</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={metrics.baseline}
-                  onChange={(e) =>
-                    updateMetric(
-                      "baseline",
-                      Math.min(Math.max(Number(e.target.value), metrics.xHeight + 0.02), metrics.descender - 0.02)
-                    )
-                  }
-                />
-                <span className={styles.val}>{metrics.baseline.toFixed(2)}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>Descender</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={metrics.descender}
-                  onChange={(e) => updateMetric("descender", Math.max(Number(e.target.value), metrics.baseline + 0.02))}
-                />
-                <span className={styles.val}>{metrics.descender.toFixed(2)}</span>
-              </label>
-            </div>
+                    type="range"
+                    min={60}
+                    max={240}
+                    step={10}
+                    value={cellSize}
+                    onChange={(e) => updateCellSize(Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{cellSize}</span>
+                </label>
+                <label className={styles.sliderRow}>
+                  <span>Width</span>
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={2}
+                    step={0.05}
+                    value={cellWidthRatio}
+                    onChange={(e) => updateCellWidthRatio(Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{cellWidthRatio.toFixed(2)}</span>
+                </label>
+                <label className={styles.sliderRow}>
+                  <span>
+                    <input
+                      type="checkbox"
+                      checked={keepProportions}
+                      onChange={(e) => updateKeepProportions(e.target.checked)}
+                    />{" "}
+                    Keep Proportions
+                  </span>
+                </label>
+              </div>
+              {/* Collapsed by default, Glyphs' Font Info parallel: the four
+                  font metrics get set once early on and then mostly rest,
+                  unlike the cell-layout controls above them. */}
+              <SettingsSection id="metrics" title="Metrics" defaultOpen={false}>
+                <div className={styles.sliders}>
+                  <label className={styles.sliderRow}>
+                    <span>Ascender</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={metrics.ascender}
+                      onChange={(e) => updateMetric("ascender", Math.min(Number(e.target.value), metrics.xHeight - 0.02))}
+                    />
+                    <span className={styles.val}>{metrics.ascender.toFixed(2)}</span>
+                  </label>
+                  <label className={styles.sliderRow}>
+                    <span>X-height</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={metrics.xHeight}
+                      onChange={(e) =>
+                        updateMetric(
+                          "xHeight",
+                          Math.min(Math.max(Number(e.target.value), metrics.ascender + 0.02), metrics.baseline - 0.02)
+                        )
+                      }
+                    />
+                    <span className={styles.val}>{metrics.xHeight.toFixed(2)}</span>
+                  </label>
+                  <label className={styles.sliderRow}>
+                    <span>Baseline</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={metrics.baseline}
+                      onChange={(e) =>
+                        updateMetric(
+                          "baseline",
+                          Math.min(Math.max(Number(e.target.value), metrics.xHeight + 0.02), metrics.descender - 0.02)
+                        )
+                      }
+                    />
+                    <span className={styles.val}>{metrics.baseline.toFixed(2)}</span>
+                  </label>
+                  <label className={styles.sliderRow}>
+                    <span>Descender</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={metrics.descender}
+                      onChange={(e) => updateMetric("descender", Math.max(Number(e.target.value), metrics.baseline + 0.02))}
+                    />
+                    <span className={styles.val}>{metrics.descender.toFixed(2)}</span>
+                  </label>
+                </div>
+              </SettingsSection>
+            </>
           )}
           {topMode === "draw" && drawStyle === "free" && (
-            <div className={styles.sliders}>
-              <label className={styles.sliderRow}>
-                <span>Line spacing</span>
-                <input
-                  type="range"
-                  min={20}
-                  max={300}
-                  step={5}
-                  value={lineSpacing}
-                  onChange={(e) => updateLineSpacing(Number(e.target.value))}
-                />
-                <span className={styles.val}>{lineSpacing}</span>
-              </label>
-            </div>
+            <SettingsSection id="freeCanvas" title="Canvas" defaultOpen>
+              <div className={styles.sliders}>
+                <label className={styles.sliderRow}>
+                  <span>Line spacing</span>
+                  <input
+                    type="range"
+                    min={20}
+                    max={300}
+                    step={5}
+                    value={lineSpacing}
+                    onChange={(e) => updateLineSpacing(Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{lineSpacing}</span>
+                </label>
+              </div>
+            </SettingsSection>
           )}
           {topMode === "draw" && drawStyle === "free" && selectedIds.length > 0 && (
             <div className={styles.sliders}>
@@ -4650,378 +5262,387 @@ export default function Home() {
               below them: none of Mono/Dynamic, Thinning, Smoothing or
               Streamline mean anything to a broad nib (it ignores pressure by
               design — width comes from the direction you move), and Size
-              would read as one shared control while actually being two. */}
+              would read as one shared control while actually being two. The
+              Brush toggle stays out too: a calligraphy stroke never goes
+              through an applicator (see outlineFor). */}
           {showStrokeControls && drawTool === "calligraphy" && (
-            <div className={styles.sliders}>
-              <NibPreview nib={nibFor(settings)} />
-              <label className={styles.sliderRow}>
-                <span>Nib size</span>
-                <input
-                  type="range"
-                  min={4}
-                  max={60}
-                  step={1}
-                  value={settings.nibSize}
-                  onChange={(e) => updateSetting("nibSize", Number(e.target.value))}
-                />
-                <span className={styles.val}>{settings.nibSize}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>Oval</span>
-                <input
-                  type="range"
-                  min={0.05}
-                  max={1}
-                  step={0.05}
-                  value={settings.nibRatio}
-                  onChange={(e) => updateSetting("nibRatio", Number(e.target.value))}
-                />
-                <span className={styles.val}>{settings.nibRatio.toFixed(2)}</span>
-              </label>
-              <label className={styles.sliderRow}>
-                <span>Angle</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={180}
-                  step={1}
-                  value={settings.nibAngle}
-                  onChange={(e) => updateSetting("nibAngle", Number(e.target.value))}
-                />
-                <span className={styles.val}>{settings.nibAngle}°</span>
-              </label>
-            </div>
-          )}
-
-          {showStrokeControls && drawTool !== "calligraphy" && (
-            <div className={styles.sliders}>
-              {/* Which applicator turns the skeleton into ink. Everything
-                  below this toggle is that brush's own parameter set — the
-                  three have almost nothing in common beyond Size, so showing
-                  all of them at once would be mostly disabled controls. */}
-              <div className={styles.settingsSubLabel}>Brush</div>
-              <div className={styles.modeToggle} role="radiogroup" aria-label="Brush">
-                {BRUSH_DEFS.map((b) => (
-                  <button
-                    key={b.kind}
-                    type="button"
-                    role="radio"
-                    aria-checked={settings.brush.kind === b.kind}
-                    title={b.hint}
-                    className={`${styles.modeBtn} ${settings.brush.kind === b.kind ? styles.modeBtnActive : ""}`}
-                    onClick={() => updateBrushKind(b.kind)}
-                  >
-                    {b.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Mono/Dynamic is a freehand-only distinction: it zeroes
-                  perfect-freehand's thinning, which the other two brushes
-                  never consult (they have their own Pressure amount). */}
-              {settings.brush.kind === "freehand" && (
-                <div className={styles.modeToggle} role="radiogroup" aria-label="Stroke mode">
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={settings.mode === "mono"}
-                    className={`${styles.modeBtn} ${settings.mode === "mono" ? styles.modeBtnActive : ""}`}
-                    onClick={() => updateSetting("mode", "mono")}
-                  >
-                    Mono line
-                  </button>
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={settings.mode === "dynamic"}
-                    className={`${styles.modeBtn} ${settings.mode === "dynamic" ? styles.modeBtnActive : ""}`}
-                    onClick={() => updateSetting("mode", "dynamic")}
-                  >
-                    Dynamic
-                  </button>
-                </div>
-              )}
-
-              {/* Size is the one setting every brush shares — pen width for
-                  freehand, nib length for the nib, and the unit every
-                  scatter length is a multiple of. It stays put across brush
-                  switches so the toggle doesn't move the controls under the
-                  pointer. */}
-              <label className={styles.sliderRow}>
-                <span>Size</span>
-                <input
-                  type="range"
-                  min={4}
-                  max={60}
-                  step={1}
-                  value={settings.size}
-                  onChange={(e) => updateSetting("size", Number(e.target.value))}
-                />
-                <span className={styles.val}>{settings.size}</span>
-              </label>
-
-              {settings.brush.kind === "freehand" && settings.mode === "dynamic" && (
-                <>
-                  <label className={styles.sliderRow}>
-                    <span>Thinning</span>
-                    <input
-                      type="range"
-                      min={-1}
-                      max={1}
-                      step={0.05}
-                      value={settings.thinning}
-                      onChange={(e) => updateSetting("thinning", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.thinning.toFixed(2)}</span>
-                  </label>
-                  <label className={styles.sliderRow}>
-                    <span>Smoothing</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={settings.smoothing}
-                      onChange={(e) => updateSetting("smoothing", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.smoothing.toFixed(2)}</span>
-                  </label>
-                </>
-              )}
-
-              {settings.brush.kind === "nib" && (
-                <>
-                  <label className={styles.sliderRow}>
-                    <span>Nib angle</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={180}
-                      step={1}
-                      value={settings.brush.nib.angle}
-                      onChange={(e) => updateNib("angle", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.brush.nib.angle}°</span>
-                  </label>
-                  <label className={styles.sliderRow}>
-                    <span>Flatness</span>
-                    <input
-                      type="range"
-                      min={0.02}
-                      max={1}
-                      step={0.02}
-                      value={settings.brush.nib.ratio}
-                      onChange={(e) => updateNib("ratio", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.brush.nib.ratio.toFixed(2)}</span>
-                  </label>
-                  <div className={styles.modeToggle} role="radiogroup" aria-label="Nib shape">
-                    <button
-                      type="button"
-                      role="radio"
-                      aria-checked={settings.brush.nib.shape === "ellipse"}
-                      className={`${styles.modeBtn} ${settings.brush.nib.shape === "ellipse" ? styles.modeBtnActive : ""}`}
-                      onClick={() => updateNib("shape", "ellipse")}
-                    >
-                      Round
-                    </button>
-                    <button
-                      type="button"
-                      role="radio"
-                      aria-checked={settings.brush.nib.shape === "rect"}
-                      className={`${styles.modeBtn} ${settings.brush.nib.shape === "rect" ? styles.modeBtnActive : ""}`}
-                      onClick={() => updateNib("shape", "rect")}
-                    >
-                      Cut
-                    </button>
-                  </div>
-                  <label className={styles.sliderRow}>
-                    <span>Pressure</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={settings.brush.nib.pressure}
-                      onChange={(e) => updateNib("pressure", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.brush.nib.pressure.toFixed(2)}</span>
-                  </label>
-                </>
-              )}
-
-              {settings.brush.kind === "scatter" && (
-                <>
-                  <div className={styles.modeToggle} role="radiogroup" aria-label="Stamp">
-                    {STAMP_DEFS.map((s) => (
-                      <button
-                        key={s.shape}
-                        type="button"
-                        role="radio"
-                        aria-checked={settings.brush.scatter.stamp === s.shape}
-                        title={s.label}
-                        className={`${styles.modeBtn} ${settings.brush.scatter.stamp === s.shape ? styles.modeBtnActive : ""}`}
-                        onClick={() => updateScatter("stamp", s.shape)}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
-                  <label className={styles.sliderRow}>
-                    <span>Spacing</span>
-                    <input
-                      type="range"
-                      min={0.1}
-                      max={4}
-                      step={0.05}
-                      value={settings.brush.scatter.spacing}
-                      onChange={(e) => updateScatter("spacing", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.brush.scatter.spacing.toFixed(2)}</span>
-                  </label>
-                  <label className={styles.sliderRow}>
-                    <span>Stamp size</span>
-                    <input
-                      type="range"
-                      min={0.05}
-                      max={2}
-                      step={0.05}
-                      value={settings.brush.scatter.size}
-                      onChange={(e) => updateScatter("size", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.brush.scatter.size.toFixed(2)}</span>
-                  </label>
-                  <div className={styles.modeToggle} role="radiogroup" aria-label="Stamp rotation">
-                    {ROTATION_DEFS.map((r) => (
-                      <button
-                        key={r.mode}
-                        type="button"
-                        role="radio"
-                        aria-checked={settings.brush.scatter.rotationMode === r.mode}
-                        title={r.hint}
-                        className={`${styles.modeBtn} ${settings.brush.scatter.rotationMode === r.mode ? styles.modeBtnActive : ""}`}
-                        onClick={() => updateScatter("rotationMode", r.mode)}
-                      >
-                        {r.label}
-                      </button>
-                    ))}
-                  </div>
-                  {/* A fixed offset on top of a random angle is a no-op —
-                      hide it there rather than leave a slider that does
-                      nothing. */}
-                  {settings.brush.scatter.rotationMode !== "random" && (
-                    <label className={styles.sliderRow}>
-                      <span>Rotation</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={180}
-                        step={1}
-                        value={settings.brush.scatter.rotation}
-                        onChange={(e) => updateScatter("rotation", Number(e.target.value))}
-                      />
-                      <span className={styles.val}>{settings.brush.scatter.rotation}°</span>
-                    </label>
-                  )}
-                  <label className={styles.sliderRow}>
-                    <span>Pressure</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={settings.brush.scatter.pressure}
-                      onChange={(e) => updateScatter("pressure", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.brush.scatter.pressure.toFixed(2)}</span>
-                  </label>
-                  <div className={styles.settingsSubLabel}>Jitter</div>
-                  <label className={styles.sliderRow}>
-                    <span>Size</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={settings.brush.scatter.sizeJitter}
-                      onChange={(e) => updateScatter("sizeJitter", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.brush.scatter.sizeJitter.toFixed(2)}</span>
-                  </label>
-                  <label className={styles.sliderRow}>
-                    <span>Offset</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={settings.brush.scatter.offsetJitter}
-                      onChange={(e) => updateScatter("offsetJitter", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.brush.scatter.offsetJitter.toFixed(2)}</span>
-                  </label>
-                  <label className={styles.sliderRow}>
-                    <span>Spacing</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={settings.brush.scatter.spacingJitter}
-                      onChange={(e) => updateScatter("spacingJitter", Number(e.target.value))}
-                    />
-                    <span className={styles.val}>{settings.brush.scatter.spacingJitter.toFixed(2)}</span>
-                  </label>
-                  {settings.brush.scatter.rotationMode !== "random" && (
-                    <label className={styles.sliderRow}>
-                      <span>Rotation</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={180}
-                        step={1}
-                        value={settings.brush.scatter.rotationJitter}
-                        onChange={(e) => updateScatter("rotationJitter", Number(e.target.value))}
-                      />
-                      <span className={styles.val}>{settings.brush.scatter.rotationJitter}°</span>
-                    </label>
-                  )}
-                </>
-              )}
-
-              {/* Streamline smooths the SKELETON, so it applies to every
-                  brush — for freehand it's a perfect-freehand option, for the
-                  other two it's what buildPathSpace samples. */}
-              {(settings.brush.kind !== "freehand" || settings.mode === "dynamic") && (
+            <SettingsSection id="stroke" title="Stroke" defaultOpen>
+              <div className={styles.sliders}>
+                <NibPreview nib={nibFor(settings)} />
                 <label className={styles.sliderRow}>
-                  <span>Streamline</span>
+                  <span>Nib size</span>
+                  <input
+                    type="range"
+                    min={4}
+                    max={60}
+                    step={1}
+                    value={settings.nibSize}
+                    onChange={(e) => updateSetting("nibSize", Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{settings.nibSize}</span>
+                </label>
+                <label className={styles.sliderRow}>
+                  <span>Oval</span>
+                  <input
+                    type="range"
+                    min={0.05}
+                    max={1}
+                    step={0.05}
+                    value={settings.nibRatio}
+                    onChange={(e) => updateSetting("nibRatio", Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{settings.nibRatio.toFixed(2)}</span>
+                </label>
+                <label className={styles.sliderRow}>
+                  <span>Angle</span>
                   <input
                     type="range"
                     min={0}
-                    max={1}
-                    step={0.05}
-                    value={settings.streamline}
-                    onChange={(e) => updateSetting("streamline", Number(e.target.value))}
+                    max={180}
+                    step={1}
+                    value={settings.nibAngle}
+                    onChange={(e) => updateSetting("nibAngle", Number(e.target.value))}
                   />
-                  <span className={styles.val}>{settings.streamline.toFixed(2)}</span>
+                  <span className={styles.val}>{settings.nibAngle}°</span>
                 </label>
-              )}
+              </div>
+            </SettingsSection>
+          )}
 
-              {settings.brush.kind !== "freehand" && (
-                <>
-                  {/* Every one of these points ends up in the exported glyf
-                      table. A stipple brush can reach five figures without
-                      looking any different on screen, so the number is shown
-                      rather than discovered at export time. */}
-                  <div className={styles.brushBudget}>
-                    {inkStats.contours.toLocaleString("de-DE")} contours · {inkStats.points.toLocaleString("de-DE")} points
+          {/* Stroke sliders only while a stroke-family tool is active (see
+              STROKE_TOOLS) — with a vector or transform tool up they'd
+              promise an effect the tool can't deliver. */}
+          {showStrokeControls && STROKE_TOOLS.has(drawTool) && drawTool !== "calligraphy" && (
+            <SettingsSection id="stroke" title="Stroke" defaultOpen>
+              <div className={styles.sliders}>
+                {/* Which applicator turns the skeleton into ink. Everything
+                    below this toggle is that brush's own parameter set — the
+                    three have almost nothing in common beyond Size, so showing
+                    all of them at once would be mostly disabled controls. */}
+                <div className={styles.settingsSubLabel}>Brush</div>
+                <div className={styles.modeToggle} role="radiogroup" aria-label="Brush">
+                  {BRUSH_DEFS.map((b) => (
+                    <button
+                      key={b.kind}
+                      type="button"
+                      role="radio"
+                      aria-checked={settings.brush.kind === b.kind}
+                      title={b.hint}
+                      className={`${styles.modeBtn} ${settings.brush.kind === b.kind ? styles.modeBtnActive : ""}`}
+                      onClick={() => updateBrushKind(b.kind)}
+                    >
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Mono/Dynamic is a freehand-only distinction: it zeroes
+                    perfect-freehand's thinning, which the other two brushes
+                    never consult (they have their own Pressure amount). */}
+                {settings.brush.kind === "freehand" && (
+                  <div className={styles.modeToggle} role="radiogroup" aria-label="Stroke mode">
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={settings.mode === "mono"}
+                      className={`${styles.modeBtn} ${settings.mode === "mono" ? styles.modeBtnActive : ""}`}
+                      onClick={() => updateSetting("mode", "mono")}
+                    >
+                      Mono line
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={settings.mode === "dynamic"}
+                      className={`${styles.modeBtn} ${settings.mode === "dynamic" ? styles.modeBtnActive : ""}`}
+                      onClick={() => updateSetting("mode", "dynamic")}
+                    >
+                      Dynamic
+                    </button>
                   </div>
-                  <button type="button" className={styles.clearBtn} onClick={resetBrushParams}>
-                    Reset brush
-                  </button>
-                </>
-              )}
-            </div>
+                )}
+
+                {/* Size is the one setting every brush shares — pen width for
+                    freehand, nib length for the nib, and the unit every
+                    scatter length is a multiple of. It stays put across brush
+                    switches so the toggle doesn't move the controls under the
+                    pointer. */}
+                <label className={styles.sliderRow}>
+                  <span>Size</span>
+                  <input
+                    type="range"
+                    min={4}
+                    max={60}
+                    step={1}
+                    value={settings.size}
+                    onChange={(e) => updateSetting("size", Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{settings.size}</span>
+                </label>
+
+                {settings.brush.kind === "freehand" && settings.mode === "dynamic" && (
+                  <>
+                    <label className={styles.sliderRow}>
+                      <span>Thinning</span>
+                      <input
+                        type="range"
+                        min={-1}
+                        max={1}
+                        step={0.05}
+                        value={settings.thinning}
+                        onChange={(e) => updateSetting("thinning", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.thinning.toFixed(2)}</span>
+                    </label>
+                    <label className={styles.sliderRow}>
+                      <span>Smoothing</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={settings.smoothing}
+                        onChange={(e) => updateSetting("smoothing", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.smoothing.toFixed(2)}</span>
+                    </label>
+                  </>
+                )}
+
+                {settings.brush.kind === "nib" && (
+                  <>
+                    <label className={styles.sliderRow}>
+                      <span>Nib angle</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={180}
+                        step={1}
+                        value={settings.brush.nib.angle}
+                        onChange={(e) => updateNib("angle", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.brush.nib.angle}°</span>
+                    </label>
+                    <label className={styles.sliderRow}>
+                      <span>Flatness</span>
+                      <input
+                        type="range"
+                        min={0.02}
+                        max={1}
+                        step={0.02}
+                        value={settings.brush.nib.ratio}
+                        onChange={(e) => updateNib("ratio", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.brush.nib.ratio.toFixed(2)}</span>
+                    </label>
+                    <div className={styles.modeToggle} role="radiogroup" aria-label="Nib shape">
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={settings.brush.nib.shape === "ellipse"}
+                        className={`${styles.modeBtn} ${settings.brush.nib.shape === "ellipse" ? styles.modeBtnActive : ""}`}
+                        onClick={() => updateNib("shape", "ellipse")}
+                      >
+                        Round
+                      </button>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={settings.brush.nib.shape === "rect"}
+                        className={`${styles.modeBtn} ${settings.brush.nib.shape === "rect" ? styles.modeBtnActive : ""}`}
+                        onClick={() => updateNib("shape", "rect")}
+                      >
+                        Cut
+                      </button>
+                    </div>
+                    <label className={styles.sliderRow}>
+                      <span>Pressure</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={settings.brush.nib.pressure}
+                        onChange={(e) => updateNib("pressure", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.brush.nib.pressure.toFixed(2)}</span>
+                    </label>
+                  </>
+                )}
+
+                {settings.brush.kind === "scatter" && (
+                  <>
+                    <div className={styles.modeToggle} role="radiogroup" aria-label="Stamp">
+                      {STAMP_DEFS.map((s) => (
+                        <button
+                          key={s.shape}
+                          type="button"
+                          role="radio"
+                          aria-checked={settings.brush.scatter.stamp === s.shape}
+                          title={s.label}
+                          className={`${styles.modeBtn} ${settings.brush.scatter.stamp === s.shape ? styles.modeBtnActive : ""}`}
+                          onClick={() => updateScatter("stamp", s.shape)}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                    <label className={styles.sliderRow}>
+                      <span>Spacing</span>
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={4}
+                        step={0.05}
+                        value={settings.brush.scatter.spacing}
+                        onChange={(e) => updateScatter("spacing", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.brush.scatter.spacing.toFixed(2)}</span>
+                    </label>
+                    <label className={styles.sliderRow}>
+                      <span>Stamp size</span>
+                      <input
+                        type="range"
+                        min={0.05}
+                        max={2}
+                        step={0.05}
+                        value={settings.brush.scatter.size}
+                        onChange={(e) => updateScatter("size", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.brush.scatter.size.toFixed(2)}</span>
+                    </label>
+                    <div className={styles.modeToggle} role="radiogroup" aria-label="Stamp rotation">
+                      {ROTATION_DEFS.map((r) => (
+                        <button
+                          key={r.mode}
+                          type="button"
+                          role="radio"
+                          aria-checked={settings.brush.scatter.rotationMode === r.mode}
+                          title={r.hint}
+                          className={`${styles.modeBtn} ${settings.brush.scatter.rotationMode === r.mode ? styles.modeBtnActive : ""}`}
+                          onClick={() => updateScatter("rotationMode", r.mode)}
+                        >
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
+                    {/* A fixed offset on top of a random angle is a no-op —
+                        hide it there rather than leave a slider that does
+                        nothing. */}
+                    {settings.brush.scatter.rotationMode !== "random" && (
+                      <label className={styles.sliderRow}>
+                        <span>Rotation</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={180}
+                          step={1}
+                          value={settings.brush.scatter.rotation}
+                          onChange={(e) => updateScatter("rotation", Number(e.target.value))}
+                        />
+                        <span className={styles.val}>{settings.brush.scatter.rotation}°</span>
+                      </label>
+                    )}
+                    <label className={styles.sliderRow}>
+                      <span>Pressure</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={settings.brush.scatter.pressure}
+                        onChange={(e) => updateScatter("pressure", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.brush.scatter.pressure.toFixed(2)}</span>
+                    </label>
+                    <div className={styles.settingsSubLabel}>Jitter</div>
+                    <label className={styles.sliderRow}>
+                      <span>Size</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={settings.brush.scatter.sizeJitter}
+                        onChange={(e) => updateScatter("sizeJitter", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.brush.scatter.sizeJitter.toFixed(2)}</span>
+                    </label>
+                    <label className={styles.sliderRow}>
+                      <span>Offset</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={settings.brush.scatter.offsetJitter}
+                        onChange={(e) => updateScatter("offsetJitter", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.brush.scatter.offsetJitter.toFixed(2)}</span>
+                    </label>
+                    <label className={styles.sliderRow}>
+                      <span>Spacing</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={settings.brush.scatter.spacingJitter}
+                        onChange={(e) => updateScatter("spacingJitter", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{settings.brush.scatter.spacingJitter.toFixed(2)}</span>
+                    </label>
+                    {settings.brush.scatter.rotationMode !== "random" && (
+                      <label className={styles.sliderRow}>
+                        <span>Rotation</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={180}
+                          step={1}
+                          value={settings.brush.scatter.rotationJitter}
+                          onChange={(e) => updateScatter("rotationJitter", Number(e.target.value))}
+                        />
+                        <span className={styles.val}>{settings.brush.scatter.rotationJitter}°</span>
+                      </label>
+                    )}
+                  </>
+                )}
+
+                {/* Streamline smooths the SKELETON, so it applies to every
+                    brush — for freehand it's a perfect-freehand option, for the
+                    other two it's what buildPathSpace samples. */}
+                {(settings.brush.kind !== "freehand" || settings.mode === "dynamic") && (
+                  <label className={styles.sliderRow}>
+                    <span>Streamline</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={settings.streamline}
+                      onChange={(e) => updateSetting("streamline", Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{settings.streamline.toFixed(2)}</span>
+                  </label>
+                )}
+
+                {settings.brush.kind !== "freehand" && (
+                  <>
+                    {/* Every one of these points ends up in the exported glyf
+                        table. A stipple brush can reach five figures without
+                        looking any different on screen, so the number is shown
+                        rather than discovered at export time. */}
+                    <div className={styles.brushBudget}>
+                      {inkStats.contours.toLocaleString("de-DE")} contours · {inkStats.points.toLocaleString("de-DE")} points
+                    </div>
+                    <button type="button" className={styles.clearBtn} onClick={resetBrushParams}>
+                      Reset brush
+                    </button>
+                  </>
+                )}
+              </div>
+            </SettingsSection>
           )}
         </aside>
       </div>
