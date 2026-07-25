@@ -53,7 +53,8 @@ const jsonLd = {
     "Anker- und Nudge-Werkzeuge, um bereits gezeichnete Striche Punkt für Punkt umzuformen",
     "Kompakter, kontextbezogener Arbeitsbereich: Illustrator-artige Werkzeuggruppen-Flyouts und eine Glyphs-artige Einstellungs-Palette, die nur zeigt, was das aktive Werkzeug nutzt",
     "Zeichensatz-Bibliothek: Latin Basic, mittel- und westeuropäische Akzente, Kyrillisch, Griechisch, Interpunktion sowie Währungs- und Mathe-Symbole",
-    "Ligaturen und stilistische Alternates, getaggt und als echte OpenType-Substitutionsglyphen exportiert",
+    "Ligaturen exportieren mit einer echten, automatischen OpenType-liga-Regel — die Ligatur löst von selbst aus, in Apps, die das Feature respektieren",
+    "Stilistische Alternates exportieren als eigene benannte Glyphen zur manuellen Auswahl in einer Glyphen-Palette",
     "Striche und Vektorformen kopieren und einfügen innerhalb von Free Draw, innerhalb von Grid, und zwischen beiden",
     "Verschieben-, Drehen- und Skalieren-Werkzeuge zum Umformen und Neupositionieren gezeichneter Buchstaben",
     "Illustrator-artige kurzzeitige Auswahl: Cmd (oder Ctrl) halten, während Draw, Brush, Kalligrafie oder Radierer aktiv ist, um Striche per Lasso auszuwählen — loslassen, und du zeichnest mit demselben Werkzeug weiter",
@@ -138,7 +139,7 @@ const SECTIONS: Section[] = [
       },
       {
         name: "Ligaturen & Alternates",
-        description: "Markiere eine gezeichnete Form als Ligatur (z. B. 'fi') oder als stilistische Alternative eines bestehenden Buchstabens — beide werden als echte OpenType-Substitutionsglyphen exportiert.",
+        description: "Markiere eine gezeichnete Form als Ligatur (z. B. 'fi'), und sie exportiert mit einer echten, automatischen OpenType-liga-Regel — die Ligatur löst von selbst aus, in Apps, die das Feature respektieren. Stilistische Alternates exportieren als eigene benannte Glyphen zur manuellen Auswahl in einer Glyphen-Palette.",
       },
       {
         name: "Eigene Glyphen",

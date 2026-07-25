@@ -53,7 +53,8 @@ const jsonLd = {
     "Anchor and Nudge tools to reshape already-drawn strokes point by point",
     "Compact, context-aware workspace: Illustrator-style tool-group flyouts and a Glyphs-style settings palette that shows only what the active tool uses",
     "Character set library: Latin Basic, Central European and Western European accents, Cyrillic, Greek, punctuation, and currency/math symbols",
-    "Ligatures and stylistic alternates, tagged and exported as real OpenType substitution glyphs",
+    "Ligatures export with a real, automatic OpenType liga substitution — type the letters and the ligature triggers on its own in apps that respect the feature",
+    "Stylistic alternates export as their own named glyphs for manual selection in a glyph panel",
     "Copy and paste strokes and vector shapes within Free Draw, within Grid, and between the two",
     "Move, rotate, and scale tools for reshaping and repositioning drawn letters",
     "Illustrator-style momentary Select: hold Cmd (or Ctrl) while Draw, Brush, Calligraphy, or Eraser is active to lasso-select strokes, release to keep drawing with the same tool",
@@ -138,7 +139,7 @@ const SECTIONS: Section[] = [
       },
       {
         name: "Ligatures & alternates",
-        description: "Tag a drawn shape as a ligature (e.g. 'fi') or a stylistic alternate of an existing letter — both export as real OpenType substitution glyphs.",
+        description: "Tag a drawn shape as a ligature (e.g. 'fi') and it exports with a real, automatic OpenType liga rule — the ligature triggers on its own in apps that respect the feature. Stylistic alternates export as their own named glyphs, for manual selection in a glyph panel.",
       },
       {
         name: "Custom glyphs",

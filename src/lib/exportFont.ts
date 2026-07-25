@@ -175,6 +175,36 @@ function glyphNameFor(entry: CompiledGlyph): string {
   return entry.name;
 }
 
+// @types/opentype.js mistypes Font.substitution as `(font: Font) => any`
+// (a stale/wrong guess — the real runtime object, straight from opentype.js's
+// own source, is a Substitution instance with add/addLigature/addSingle/
+// addAlternate/getFeature methods). This is the real shape of the one method
+// this file actually calls.
+type SubstitutionApi = {
+  add(feature: string, sub: { sub: number[]; by: number }, script?: string, language?: string): void;
+};
+
+// Wires up a real GSUB 'liga' feature (LookupType 4, Ligature Substitution)
+// for every ligature glyph — until now, a "ligature" was only ever a
+// separately-named glyph (see glyphNameFor's `f_i.liga` convention) with no
+// actual substitution rule anywhere in the pipeline, reachable only by
+// direct glyph-index access. opentype.js's font.substitution API (a real,
+// documented wrapper around raw GSUB table construction — no manual Table/
+// Coverage/LookupList assembly needed) builds the DFLT script/langsys/
+// feature/lookup structure lazily, only if this ever actually calls .add(),
+// so a document with zero ligatures still emits a font with no GSUB table
+// at all — this can't make an export worse, only sometimes better.
+function wireLigatures(font: Font, doc: CompiledDocument, nameToIndex: Map<string, number>) {
+  const substitution = font.substitution as unknown as SubstitutionApi;
+  for (const entry of doc.glyphs) {
+    if (entry.kind !== "ligature" || !entry.components?.length) continue;
+    const ligatureIndex = nameToIndex.get(glyphNameFor(entry));
+    const componentIndices = entry.components.map((name) => nameToIndex.get(name));
+    if (ligatureIndex == null || componentIndices.some((i) => i == null)) continue; // a component glyph isn't in this export — skip rather than guess
+    substitution.add("liga", { sub: componentIndices as number[], by: ligatureIndex });
+  }
+}
+
 export function buildFont(doc: CompiledDocument, familyName = "Fontane Sketch", styleName = "Regular"): Font {
   const notdefGlyph = new Glyph({
     name: ".notdef",
@@ -183,6 +213,7 @@ export function buildFont(doc: CompiledDocument, familyName = "Fontane Sketch", 
   });
 
   const glyphs: Glyph[] = [notdefGlyph];
+  const nameToIndex = new Map<string, number>();
 
   for (const entry of doc.glyphs) {
     const contours = entry.contours.map(parseContour);
@@ -201,6 +232,7 @@ export function buildFont(doc: CompiledDocument, familyName = "Fontane Sketch", 
         ? [parseInt(entry.unicode.replace("U+", ""), 16)]
         : undefined;
 
+    nameToIndex.set(glyphNameFor(entry), glyphs.length);
     glyphs.push(
       new Glyph({
         name: glyphNameFor(entry),
@@ -211,7 +243,7 @@ export function buildFont(doc: CompiledDocument, familyName = "Fontane Sketch", 
     );
   }
 
-  return new Font({
+  const font = new Font({
     familyName,
     styleName,
     unitsPerEm: UPM,
@@ -219,6 +251,10 @@ export function buildFont(doc: CompiledDocument, familyName = "Fontane Sketch", 
     descender: DESCENT,
     glyphs,
   });
+
+  wireLigatures(font, doc, nameToIndex);
+
+  return font;
 }
 
 export function downloadFont(doc: CompiledDocument, fileName = "fontane.otf") {
