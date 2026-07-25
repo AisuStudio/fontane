@@ -38,7 +38,7 @@ const jsonLd = {
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
   featureList: [
     "Pressure-sensitive freehand drawing with Apple Pencil, Wacom, or a mouse",
-    "Grid View with per-character guides (ascender, x-height, baseline, descender) and adjustable side bearings",
+    "Grid View with per-character guides (ascender, x-height, baseline, descender) and adjustable side bearings, with a Lock Bearings toggle so drawing over a bearing draws instead of dragging it",
     "Illustrator-style vector pen family: Pen, Add Anchor, Delete Anchor, and Convert Anchor tools on familiar shortcuts (P, +, -, C)",
     "Smooth anchor points with tangent-continuity handles — dragging one handle keeps the opposite one aligned at its own length, Alt breaks the pair, double-click toggles smooth/corner",
     "Held-key modifiers like a desktop pen tool: Cmd for momentary direct selection, Shift for 45-degree constraints, Space to pan, Esc/Enter to end a path — with context-aware pen cursors for add, close, and continue",
@@ -78,7 +78,7 @@ const SECTIONS: Section[] = [
       {
         name: "Grid View",
         description:
-          "One cell per character, with ascender, x-height, baseline, and descender guides plus draggable side bearings — the systematic way to draw a full alphabet.",
+          "One cell per character, with ascender, x-height, baseline, and descender guides plus draggable side bearings — the systematic way to draw a full alphabet. A Lock Bearings toggle freezes the bearings so drawing over one draws instead of dragging it.",
       },
       {
         name: "Mono line & Dynamic strokes",

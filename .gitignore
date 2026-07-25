@@ -46,3 +46,6 @@ __pycache__/
 
 # Output of `npm run check:analytics`
 .analytics-check/
+
+# research/spike notes — intentionally not part of the repo
+/docs/

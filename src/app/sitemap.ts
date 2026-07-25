@@ -22,7 +22,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
     {
       url: "https://fontane.studio/legal",
-      lastModified: "2026-07-19",
+      lastModified: "2026-07-25",
       changeFrequency: "yearly",
       priority: 0.3,
     },
