@@ -1,5 +1,5 @@
 import polygonClipping, { type Polygon, type MultiPolygon } from "polygon-clipping";
-import type { VectorShape, BezierPoint } from "./vectorShapes";
+import type { VectorShape, BezierAnchor, BezierPoint } from "./vectorShapes";
 
 export type PathCommand =
   | { type: "M"; x: number; y: number }
@@ -121,6 +121,61 @@ export function cubicPoint(p0: BezierPoint, c1: BezierPoint, c2: BezierPoint, p1
   const c = 3 * mt * t * t;
   const d = t * t * t;
   return [a * p0.x + b * c1.x + c * c2.x + d * p1.x, a * p0.y + b * c1.y + c * c2.y + d * p1.y];
+}
+
+// Splits one segment of a VectorShape at parameter t and returns the shape's
+// new anchor list — a De Casteljau subdivision, which is the whole point:
+// the two halves it produces reproduce the original curve EXACTLY, so adding
+// a point doesn't move the outline by a hair. That only works if the
+// neighbours' adjacent handles are adjusted too (both shrink toward the
+// split), which is why this returns a whole anchors array rather than just
+// the new anchor. Illustrator's Add Anchor Point tool and the Pen's own
+// contextual insert both go through here.
+//
+// A straight segment (no handle on either end) stays straight: a plain corner
+// at the split point is already exact there, and manufacturing zero-length
+// handles for it would only add noise to the stored shape.
+export function splitVectorSegment(shape: VectorShape, segmentIndex: number, t: number): BezierAnchor[] {
+  const anchors = shape.anchors;
+  const i = segmentIndex;
+  const j = (i + 1) % anchors.length;
+  const p0 = anchors[i];
+  const p1 = anchors[j];
+  const lerp = (a: BezierPoint, b: BezierPoint): BezierPoint => ({
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+  });
+  // A control point that lands on its own anchor is no handle at all — drop
+  // it rather than storing a zero-length one (see flattenVectorShape's
+  // straight-segment shortcut, which keys off handles being absent).
+  const kept = (p: BezierPoint, anchor: BezierPoint): BezierPoint | undefined =>
+    Math.hypot(p.x - anchor.x, p.y - anchor.y) < 1e-6 ? undefined : p;
+  const spliced = (mid: BezierAnchor, leftOut?: BezierPoint, rightIn?: BezierPoint): BezierAnchor[] => {
+    const next = anchors.slice();
+    next[i] = { ...p0, handleOut: leftOut };
+    next[j] = { ...p1, handleIn: rightIn };
+    // i + 1 also lands correctly when j wrapped to 0 on a closed shape: the
+    // new anchor belongs at the end of the list there, between last and first.
+    next.splice(i + 1, 0, mid);
+    return next;
+  };
+
+  if (!p0.handleOut && !p1.handleIn) return spliced({ ...lerp(p0, p1) });
+
+  const c1 = p0.handleOut ?? { x: p0.x, y: p0.y };
+  const c2 = p1.handleIn ?? { x: p1.x, y: p1.y };
+  // One De Casteljau level per line: the intermediate points ARE the control
+  // points of the two halves, and the last one is the split point itself.
+  const a = lerp(p0, c1);
+  const b = lerp(c1, c2);
+  const c = lerp(c2, p1);
+  const d = lerp(a, b);
+  const e = lerp(b, c);
+  const split = lerp(d, e);
+  // d / split / e are collinear by construction (split is the midpoint-by-t of
+  // d and e), so the inserted anchor is genuinely a smooth point, not just a
+  // point we're labelling as one.
+  return spliced({ ...split, handleIn: d, handleOut: e, smooth: true }, kept(a, p0), kept(c, p1));
 }
 
 // Dense-samples the Vector tool's true cubic Bezier anchors into a plain

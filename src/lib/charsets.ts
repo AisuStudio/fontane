@@ -79,4 +79,10 @@ export const CHARACTER_SETS: CharacterSet[] = [
   { id: "symbols", label: "Symbols", chars: SYMBOLS },
 ];
 
-export const DEFAULT_CHARACTER_SET_IDS = ["latin-basic", "central-european", "numbers", "punctuation"];
+// Just the 52 basic letters to start with. Four sets on by default meant a new
+// font opened onto ~165 empty cells — most of them accents and symbols nobody
+// draws first — which reads as a chore rather than an invitation. Every other
+// set is one checkbox away in the Character Sets picker (the same picker the
+// Grid setup overlay shows before the first stroke), and turning one on later
+// never disturbs what's already drawn.
+export const DEFAULT_CHARACTER_SET_IDS = ["latin-basic"];

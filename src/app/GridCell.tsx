@@ -3,17 +3,29 @@
 import { useEffect, useRef } from "react";
 import { getStroke } from "perfect-freehand";
 import styles from "./page.module.css";
-import { outlineToPath, skeletonToPath, cubicPoint, type PathCommand } from "@/lib/contour";
+import { outlineToPath, skeletonToPath, cubicPoint, splitVectorSegment, type PathCommand } from "@/lib/contour";
 import { pointInPolygon, anyPointInPolygon, fitPointsToBox } from "@/lib/geometry";
 import { simplifyStrokeIndices } from "@/lib/simplify";
 import type { StrokeKind, StrokePoint } from "@/lib/strokes";
 import type { Metrics } from "@/lib/metrics";
 import { unicodeFor } from "@/lib/glyphs";
 import { setClipboard, getClipboard, type ClipboardStroke } from "@/lib/clipboard";
-import type { BezierAnchor, VectorShape } from "@/lib/vectorShapes";
+import { isSmoothAnchor, alignOppositeHandle, type BezierAnchor, type VectorShape } from "@/lib/vectorShapes";
 
 export type StrokeOptions = { size: number; thinning: number; smoothing: number; streamline: number };
-export type CellTool = "pen" | "brush" | "eraser" | "select" | "nudge" | "move" | "rotate" | "scale" | "vector";
+export type CellTool =
+  | "pen"
+  | "brush"
+  | "eraser"
+  | "select"
+  | "nudge"
+  | "move"
+  | "rotate"
+  | "scale"
+  | "vector"
+  | "vectorAdd"
+  | "vectorDelete"
+  | "vectorConvert";
 // Raw points now, not a precomputed outline — Nudge/Move/Rotate/Scale need
 // the real geometry to reshape/transform; the cell computes its own outline
 // from these via outlineFor() below, the same split Free's own canvas uses.
@@ -49,6 +61,10 @@ const LASSO_TOOLS = new Set<CellTool>(["select"]);
 // Tools that read (rather than replace) the current selection.
 const SELECTION_TOOLS = new Set<CellTool>(["select", "move", "rotate", "scale"]);
 const TRANSFORM_TOOLS = new Set<CellTool>(["move", "rotate", "scale"]);
+// The Vector family — the Bezier pen plus Illustrator's three Pen-submenu
+// anchor tools, all driving the same handleVectorPointerDown/Move/Up and
+// sharing one editing session. Mirrors page.tsx's VECTOR_TOOLS.
+const VECTOR_TOOLS = new Set<CellTool>(["vector", "vectorAdd", "vectorDelete", "vectorConvert"]);
 
 export const DEFAULT_LEFT_BEARING = 0.15;
 export const DEFAULT_RIGHT_BEARING = 0.85;
@@ -222,10 +238,13 @@ function vectorHandleNear(
 // Hit-tests the true sampled curve (cubicPoint, the same math flattenVectorShape
 // uses at compile time) rather than a straight chord between anchors — a click
 // near a pronounced curve's midpoint should register even though it's far from
-// the anchor-to-anchor line. Returns the LEFT anchor index of the segment
-// ("insert between i and i+1").
-function vectorInsertionIndex(shape: VectorShape, x: number, y: number): number | null {
+// the anchor-to-anchor line. Reports WHERE on the segment the click landed
+// (index = the segment's left anchor, t = the Bezier parameter), since
+// splitVectorSegment needs a parameter to split at, and takes the CLOSEST point
+// across the shape rather than the first within tolerance.
+function vectorSegmentHit(shape: VectorShape, x: number, y: number): { index: number; t: number } | null {
   const segmentCount = shape.closed ? shape.anchors.length : shape.anchors.length - 1;
+  let best: { index: number; t: number; dist: number } | null = null;
   for (let i = 0; i < segmentCount; i++) {
     const p0 = shape.anchors[i];
     const p1 = shape.anchors[(i + 1) % shape.anchors.length];
@@ -240,11 +259,27 @@ function vectorInsertionIndex(shape: VectorShape, x: number, y: number): number 
       const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((x - prev[0]) * dx + (y - prev[1]) * dy) / lenSq));
       const projX = prev[0] + t * dx;
       const projY = prev[1] + t * dy;
-      if (Math.hypot(x - projX, y - projY) <= ANCHOR_HIT_PX) return i;
+      const dist = Math.hypot(x - projX, y - projY);
+      // The projection sits somewhere inside sample step s, so its curve
+      // parameter interpolates across that step.
+      if (dist <= ANCHOR_HIT_PX && (!best || dist < best.dist)) {
+        best = { index: i, t: (s - 1 + t) / 24, dist };
+      }
       prev = pt;
     }
   }
-  return null;
+  return best ? { index: best.index, t: best.t } : null;
+}
+
+// Illustrator's tangent continuity, entered from every gesture that starts a
+// handle drag. Resolving smoothness HERE and writing it back is the point:
+// isSmoothAnchor's geometric fallback reads the handles' current directions,
+// and the first pointermove destroys that evidence, so the flag has to become
+// authoritative before the drag mutates anything. `breakPair` is Alt-drag (and
+// the Convert tool's plain drag): snap to a corner up front so only the dragged
+// side moves. Local copy of page.tsx's beginVectorHandleDrag.
+function beginVectorHandleDrag(anchor: BezierAnchor, breakPair: boolean) {
+  anchor.smooth = breakPair ? false : isSmoothAnchor(anchor);
 }
 
 // Finished (closed) shapes punched out of whatever's already on the cell's
@@ -617,7 +652,7 @@ export default function GridCell({
         ctx.lineWidth = 0.5;
         ctx.stroke();
       }
-      if (toolRef.current === "vector") {
+      if (VECTOR_TOOLS.has(toolRef.current)) {
         drawVectorAffordances(ctx, vectorShapesRef.current, editingShapeIdRef.current);
       }
     }
@@ -710,15 +745,17 @@ export default function GridCell({
       onVectorShapesChangeRef.current(vectorShapesRef.current);
     }
 
-    function insertVectorAnchor(shapeId: string, afterIndex: number, x: number, y: number) {
+    // Adds an anchor that sits exactly ON the curve and leaves its shape
+    // untouched (De Casteljau split — see splitVectorSegment in contour.ts).
+    // Both routes into inserting a point use it: the Add Anchor tool and the
+    // Pen's own click-on-a-segment. Replaces the older insertVectorAnchor,
+    // which dropped a plain corner at the clicked position and deformed the
+    // curve it landed in.
+    function insertVectorAnchorOnCurve(shapeId: string, segmentIndex: number, t: number) {
       const idx = vectorShapesRef.current.findIndex((s) => s.id === shapeId);
       if (idx === -1) return;
       const shape = vectorShapesRef.current[idx];
-      // A plain corner point — inserting mid-curve without guessing at handles
-      // keeps the result predictable; the user can drag it into a curve
-      // afterward like any other anchor.
-      const newAnchor: BezierAnchor = { x, y };
-      shape.anchors = [...shape.anchors.slice(0, afterIndex + 1), newAnchor, ...shape.anchors.slice(afterIndex + 1)];
+      shape.anchors = splitVectorSegment(shape, segmentIndex, t);
       commitVectorShapes();
     }
 
@@ -739,14 +776,78 @@ export default function GridCell({
       commitVectorShapes();
     }
 
-    // Click on an existing anchor deletes it UNLESS the click turns into a
-    // drag (moved past ANCHOR_HIT_PX before pointerup) — then it repositions
-    // instead. Click on the first anchor of the currently-open path closes it.
-    // Click on empty space while a path is open extends it (drag = curve
-    // point, plain click = corner). Click on a different existing shape's
-    // anchor/curve (or on empty space with nothing active) starts/switches the
-    // editing session onto it. Straight port of Free's handleVectorPointerDown.
-    function handleVectorPointerDown(x: number, y: number, altKey: boolean) {
+    // Illustrator's three Pen-submenu tools. Unlike the pen itself they act on
+    // whatever shape is under the cursor rather than on the current editing
+    // session, and the shape they hit becomes the edited one — its anchors and
+    // handles are the only ones drawn, so the click has to target it. Topmost
+    // (last-drawn) shape wins, same convention as the Eraser. Straight port of
+    // Free's handleVectorAnchorToolPointerDown.
+    function handleVectorAnchorToolPointerDown(x: number, y: number, tool: CellTool) {
+      for (let i = vectorShapesRef.current.length - 1; i >= 0; i--) {
+        const shape = vectorShapesRef.current[i];
+
+        // Convert only: dragging an EXISTING handle breaks the pair, exactly
+        // like Alt-dragging it with the pen.
+        if (tool === "vectorConvert") {
+          const handleHit = vectorHandleNear(shape, x, y);
+          if (handleHit) {
+            editingShapeIdRef.current = shape.id;
+            beginVectorHandleDrag(shape.anchors[handleHit.anchorIndex], true);
+            draggingHandleRef.current = handleHit;
+            vectorDragStartRef.current = { x, y };
+            return;
+          }
+        }
+
+        const anchorHit = vectorAnchorNear(shape, x, y);
+        if (anchorHit !== null) {
+          editingShapeIdRef.current = shape.id;
+          if (tool === "vectorDelete") {
+            deleteVectorAnchorAt(shape.id, anchorHit);
+            return;
+          }
+          if (tool === "vectorConvert") {
+            // Illustrator's Anchor Point tool in one gesture: dragging pulls a
+            // fresh symmetric handle pair out (smooth), releasing without
+            // moving retracts them (corner). That's exactly the
+            // placingNewAnchorRef gesture a freshly placed pen anchor already
+            // uses — including the pointerup that collapses it back to a
+            // corner — so it's reused rather than re-implemented.
+            draggingHandleRef.current = { anchorIndex: anchorHit, which: "handleOut" };
+            placingNewAnchorRef.current = true;
+            vectorDragStartRef.current = { x, y };
+          }
+          // Add Anchor on an anchor that already exists: nothing to add, the
+          // click just selects the shape.
+          return;
+        }
+
+        if (tool === "vectorAdd") {
+          const segHit = vectorSegmentHit(shape, x, y);
+          if (segHit) {
+            editingShapeIdRef.current = shape.id;
+            insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
+            return;
+          }
+        }
+      }
+    }
+
+    // Click on an existing anchor selects its shape for editing UNLESS the
+    // click turns into a drag (moved past ANCHOR_HIT_PX before pointerup) —
+    // then it repositions instead. Click on the first anchor of the
+    // currently-open path closes it; click on its LAST anchor retracts that
+    // anchor's outgoing handle so the next segment leaves straight (both
+    // Illustrator pen behaviors). Click on empty space while a path is open
+    // extends it (drag = curve point, plain click = corner). Click on a
+    // different existing shape's anchor/curve (or on empty space with nothing
+    // active) starts/switches the editing session onto it. Straight port of
+    // Free's handleVectorPointerDown.
+    function handleVectorPointerDown(x: number, y: number, altKey: boolean, tool: CellTool) {
+      if (tool !== "vector") {
+        handleVectorAnchorToolPointerDown(x, y, tool);
+        return;
+      }
       if (editingShapeIdRef.current) {
         const idx = vectorShapesRef.current.findIndex((s) => s.id === editingShapeIdRef.current);
         if (idx !== -1) {
@@ -754,7 +855,11 @@ export default function GridCell({
 
           const handleHit = vectorHandleNear(shape, x, y);
           if (handleHit) {
+            // Alt breaks the handle pair (Illustrator's cusp gesture); a plain
+            // drag keeps a smooth point smooth — see beginVectorHandleDrag.
+            beginVectorHandleDrag(shape.anchors[handleHit.anchorIndex], altKey);
             draggingHandleRef.current = handleHit;
+            vectorDragStartRef.current = { x, y };
             return;
           }
 
@@ -784,9 +889,9 @@ export default function GridCell({
             return;
           }
 
-          const insertAt = vectorInsertionIndex(shape, x, y);
-          if (insertAt !== null) {
-            insertVectorAnchor(shape.id, insertAt, x, y);
+          const segHit = vectorSegmentHit(shape, x, y);
+          if (segHit) {
+            insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
             return;
           }
 
@@ -810,7 +915,9 @@ export default function GridCell({
         const handleHit = vectorHandleNear(shape, x, y);
         if (handleHit) {
           editingShapeIdRef.current = shape.id;
+          beginVectorHandleDrag(shape.anchors[handleHit.anchorIndex], altKey);
           draggingHandleRef.current = handleHit;
+          vectorDragStartRef.current = { x, y };
           return;
         }
         const anchorHit = vectorAnchorNear(shape, x, y);
@@ -826,10 +933,10 @@ export default function GridCell({
           vectorDragStartRef.current = { x, y };
           return;
         }
-        const insertAt = vectorInsertionIndex(shape, x, y);
-        if (insertAt !== null) {
+        const segHit = vectorSegmentHit(shape, x, y);
+        if (segHit) {
           editingShapeIdRef.current = shape.id;
-          insertVectorAnchor(shape.id, insertAt, x, y);
+          insertVectorAnchorOnCurve(shape.id, segHit.index, segHit.t);
           return;
         }
       }
@@ -859,12 +966,19 @@ export default function GridCell({
         const { anchorIndex, which } = draggingHandleRef.current;
         const anchor = shape.anchors[anchorIndex];
         if (placingNewAnchorRef.current) {
-          // Symmetric: dragging out from a freshly-placed anchor sets both
-          // handles at once (mirrored), making it a smooth curve point.
+          // Symmetric: dragging out from a freshly-placed anchor (or from a
+          // corner with the Convert tool) sets both handles at once, mirrored
+          // — that IS a smooth curve point, so record it as one.
           anchor.handleOut = { x, y };
           anchor.handleIn = { x: anchor.x - (x - anchor.x), y: anchor.y - (y - anchor.y) };
+          anchor.smooth = true;
         } else {
           anchor[which] = { x, y };
+          // Illustrator's tangent continuity on a smooth point: the opposite
+          // handle swings to stay collinear but keeps its own length. A corner
+          // (including one just broken by Alt or the Convert tool, which
+          // beginVectorHandleDrag already flagged) moves one side only.
+          if (anchor.smooth) alignOppositeHandle(anchor, which);
         }
         redraw();
         return;
@@ -899,15 +1013,28 @@ export default function GridCell({
         if (placingNewAnchorRef.current && moved <= ANCHOR_HIT_PX) {
           // Released without dragging — a plain click, so this anchor is a
           // corner, not a curve point. Discard the handles set on pointerdown.
+          // This is also the Convert tool's click behavior: a smooth point
+          // clicked (not dragged) loses both handles and becomes a corner.
           const anchor = shape.anchors[draggingHandleRef.current.anchorIndex];
           anchor.handleIn = undefined;
           anchor.handleOut = undefined;
+          anchor.smooth = false;
         }
         commitVectorShapes();
       } else if (shape && draggingVectorAnchorRef.current !== null) {
+        const index = draggingVectorAnchorRef.current;
         if (moved <= ANCHOR_HIT_PX) {
-          // A real click, not a drag — delete, per the Vector tool's spec.
-          deleteVectorAnchorAt(shape.id, draggingVectorAnchorRef.current);
+          // A click, not a drag. Deleting the anchor used to happen here;
+          // that's the Delete Anchor tool's job now, and the pen instead
+          // follows Illustrator: clicking the open path's own last anchor
+          // retracts its outgoing handle, so the next segment leaves it
+          // straight. Clicking any other anchor just selects the shape.
+          if (!shape.closed && index === shape.anchors.length - 1) {
+            const anchor = shape.anchors[index];
+            anchor.handleOut = undefined;
+            anchor.smooth = false;
+            commitVectorShapes();
+          }
         } else {
           commitVectorShapes();
         }
@@ -1039,8 +1166,8 @@ export default function GridCell({
       // hit-tested at ±8px, the same radius as a vector anchor, so letting
       // them fight over a click near a guide would make the guides
       // undraggable in Vector mode.
-      if (toolRef.current === "vector") {
-        handleVectorPointerDown(x, y, e.altKey);
+      if (VECTOR_TOOLS.has(toolRef.current)) {
+        handleVectorPointerDown(x, y, e.altKey, toolRef.current);
         redraw();
         return;
       }
@@ -1087,7 +1214,7 @@ export default function GridCell({
         canvas!.style.cursor = editingStrokeIdRef.current ? "grab" : "pointer";
         return;
       }
-      if (toolRef.current === "vector") {
+      if (VECTOR_TOOLS.has(toolRef.current)) {
         if (draggingHandleRef.current || draggingVectorAnchorRef.current !== null) {
           handleVectorPointerMove(x, y);
           return;
@@ -1144,7 +1271,7 @@ export default function GridCell({
         redraw();
         return;
       }
-      if (toolRef.current === "vector") {
+      if (VECTOR_TOOLS.has(toolRef.current)) {
         const [x, y] = pointFromEvent(e);
         handleVectorPointerUp(x, y);
         canvas!.releasePointerCapture(e.pointerId);
