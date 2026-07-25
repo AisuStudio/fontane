@@ -143,6 +143,13 @@ type GridSlot = { name: string; kind: GlyphKind; components?: string[]; alternat
 // Tools whose pointerdown-through-pointerup gesture on empty/stroke space is
 // "drag out a lasso and replace selectedIds with whatever it enclosed".
 const LASSO_TOOLS = new Set<DrawTool>(["assign", "select"]);
+// Illustrator parity: holding Cmd/Ctrl while one of these is active swaps the
+// gesture for a momentary lasso-select (same polygon-match as the Select
+// tool), released back to normal drawing the instant the pointer lifts. Only
+// the tools whose own gesture is a plain draw/erase qualify — Nudge/Anchor/
+// Vector/transform tools already have their own Cmd/Ctrl or modifier meaning
+// (see handleVectorPointerDown's directSelect) and are deliberately excluded.
+const CMD_SELECT_OVERRIDE_TOOLS = new Set<DrawTool>(["pen", "brush", "eraser"]);
 // Tools that read (rather than replace) the current selection — switching
 // among these must NOT clear selectedIds, unlike switching to pen/eraser/
 // nudge/pan, which should.
@@ -681,6 +688,10 @@ export default function Home() {
   const outlinesRef = useRef<BrushOutput[]>([]);
   const currentPointsRef = useRef<StrokePoint[]>([]);
   const lassoRef = useRef<[number, number][]>([]);
+  // True for the duration of a gesture that started with Cmd/Ctrl held over a
+  // CMD_SELECT_OVERRIDE_TOOLS tool — decided once at pointerdown so a
+  // mid-drag modifier release can't switch a lasso into a half-drawn stroke.
+  const cmdSelectRef = useRef(false);
   const redrawRef = useRef<() => void>(() => {});
   // Grid became the default view, so Free's canvas can mount hidden
   // (display:none) — its getBoundingClientRect() is 0x0 then, and stays
@@ -1470,10 +1481,10 @@ export default function Home() {
         paint(fills, false);
         paint(punches, true);
       }
-      if (!LASSO_TOOLS.has(drawToolRef.current) && currentPointsRef.current.length > 0) {
+      if (!LASSO_TOOLS.has(drawToolRef.current) && !cmdSelectRef.current && currentPointsRef.current.length > 0) {
         fillOutline(ctx, outlineFor(currentPointsRef.current, settingsRef.current), COLOR_DEFAULT);
       }
-      if (LASSO_TOOLS.has(drawToolRef.current) && lassoRef.current.length > 1) {
+      if ((LASSO_TOOLS.has(drawToolRef.current) || cmdSelectRef.current) && lassoRef.current.length > 1) {
         strokeLassoPath(ctx, lassoRef.current);
       }
       if (TRANSFORM_TOOLS.has(drawToolRef.current) && transformStartRef.current) {
@@ -1663,6 +1674,17 @@ export default function Home() {
         canvas!.style.cursor = "grabbing";
         return;
       }
+      if (
+        topModeRef.current === "draw" &&
+        (e.metaKey || e.ctrlKey) &&
+        CMD_SELECT_OVERRIDE_TOOLS.has(drawToolRef.current)
+      ) {
+        cmdSelectRef.current = true;
+        drawingRef.current = true;
+        strokeStartTimeRef.current = Date.now();
+        lassoRef.current = [[p[0], p[1]]];
+        return;
+      }
       if (topModeRef.current === "draw" && drawToolRef.current === "eraser") {
         if (eraseAt(p[0], p[1])) trackToolUse("eraser", viewLabelRef.current);
         redraw();
@@ -1757,6 +1779,13 @@ export default function Home() {
           return;
         }
         canvas!.style.cursor = "grab";
+        return;
+      }
+      if (cmdSelectRef.current) {
+        canvas!.style.cursor = "";
+        if (!drawingRef.current) return;
+        lassoRef.current.push([p[0], p[1]]);
+        redraw();
         return;
       }
       if (topModeRef.current === "draw" && drawToolRef.current === "eraser") {
@@ -1887,7 +1916,7 @@ export default function Home() {
         redraw();
         return;
       }
-      if (LASSO_TOOLS.has(drawToolRef.current)) {
+      if (LASSO_TOOLS.has(drawToolRef.current) || cmdSelectRef.current) {
         const polygon = lassoRef.current;
         const matchedStrokes = completedRef.current
           .filter((s) => anyPointInPolygon(s.points.map((p) => [p[0], p[1]]) as [number, number][], polygon))
@@ -1901,6 +1930,7 @@ export default function Home() {
           .map((s) => s.id);
         setSelectedIds([...matchedStrokes, ...matchedShapes]);
         lassoRef.current = [];
+        cmdSelectRef.current = false;
       } else {
         if (drawingRef.current && currentPointsRef.current.length > 1) {
           pushUndoSnapshot();

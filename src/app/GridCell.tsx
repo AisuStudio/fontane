@@ -70,6 +70,10 @@ const ANCHOR_RING_COLOR = "#eae8e0"; // vanilla
 // page.tsx's LASSO_TOOLS. Grid has no Assign (auto-tags on draw), so Select
 // is the only member here.
 const LASSO_TOOLS = new Set<CellTool>(["select"]);
+// Illustrator parity (mirrors page.tsx's CMD_SELECT_OVERRIDE_TOOLS): holding
+// Cmd/Ctrl over one of these swaps the gesture for a momentary lasso-select,
+// released back to normal drawing the instant the pointer lifts.
+const CMD_SELECT_OVERRIDE_TOOLS = new Set<CellTool>(["pen", "brush", "eraser"]);
 // Tools that read (rather than replace) the current selection.
 const SELECTION_TOOLS = new Set<CellTool>(["select", "move", "rotate", "scale"]);
 const TRANSFORM_TOOLS = new Set<CellTool>(["move", "rotate", "scale"]);
@@ -523,6 +527,9 @@ export default function GridCell({
   const redrawRef = useRef<() => void>(() => {});
 
   const lassoRef = useRef<[number, number][]>([]);
+  // True for the duration of a gesture that started with Cmd/Ctrl held over a
+  // CMD_SELECT_OVERRIDE_TOOLS tool — see page.tsx's cmdSelectRef.
+  const cmdSelectRef = useRef(false);
   const selectedIdsRef = useRef<Set<string>>(new Set());
   // Current authoritative cell size for Copy/Paste's target-box scaling
   // (see onKeyDown below) — read from a ref, not the widthPx/heightPx props
@@ -1305,6 +1312,13 @@ export default function GridCell({
         draggingRef.current = hit;
         return;
       }
+      if ((e.metaKey || e.ctrlKey) && CMD_SELECT_OVERRIDE_TOOLS.has(toolRef.current)) {
+        cmdSelectRef.current = true;
+        drawingRef.current = true;
+        strokeStartTimeRef.current = Date.now();
+        lassoRef.current = [[x, y]];
+        return;
+      }
       if (toolRef.current === "eraser") {
         // Topmost (last-drawn) stroke wins when strokes overlap.
         for (let i = strokesRef.current.length - 1; i >= 0; i--) {
@@ -1364,6 +1378,13 @@ export default function GridCell({
         return;
       }
       const [x, y] = pointFromEvent(e);
+      if (cmdSelectRef.current) {
+        canvas!.style.cursor = "";
+        if (!drawingRef.current) return;
+        lassoRef.current.push([x, y]);
+        redraw();
+        return;
+      }
       if (toolRef.current === "nudge") {
         if (draggingAnchorRef.current !== null && editingStrokeIdRef.current) {
           const idx = strokesRef.current.findIndex((s) => s.id === editingStrokeIdRef.current);
@@ -1467,13 +1488,14 @@ export default function GridCell({
         redraw();
         return;
       }
-      if (LASSO_TOOLS.has(toolRef.current)) {
+      if (LASSO_TOOLS.has(toolRef.current) || cmdSelectRef.current) {
         const polygon = lassoRef.current;
         const matched = strokesRef.current
           .filter((s) => anyPointInPolygon(s.points.map((p) => [p[0], p[1]]) as [number, number][], polygon))
           .map((s) => s.id);
         selectedIdsRef.current = new Set(matched);
         lassoRef.current = [];
+        cmdSelectRef.current = false;
       } else {
         if (drawingRef.current && pointsRef.current.length > 1) {
           onStrokeCompleteRef.current(
