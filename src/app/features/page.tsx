@@ -50,6 +50,7 @@ const jsonLd = {
     "Ligatures and stylistic alternates, tagged and exported as real OpenType substitution glyphs",
     "Copy and paste strokes and vector shapes within Free Draw, within Grid, and between the two",
     "Move, rotate, and scale tools for reshaping and repositioning drawn letters",
+    "Illustrator-style momentary Select: hold Cmd (or Ctrl) while Draw, Brush, Calligraphy, or Eraser is active to lasso-select strokes, release to keep drawing with the same tool",
     "Editor view to type live preview text using your own tagged glyphs",
     "Animate mode: CSS-driven text animations exportable as a self-contained HTML embed",
     "Instant OTF font export, generated entirely client-side, no upload required",
@@ -138,7 +139,8 @@ const SECTIONS: Section[] = [
     features: [
       {
         name: "Select, Move, Rotate, Scale",
-        description: "Lasso-select any combination of strokes and vector shapes, then transform them as a group.",
+        description:
+          "Lasso-select any combination of strokes and vector shapes, then transform them as a group. Hold Cmd/Ctrl while Draw, Brush, Calligraphy, or Eraser is active for a momentary Select, Illustrator-style — release and you're back to drawing.",
       },
       {
         name: "Copy & paste",
