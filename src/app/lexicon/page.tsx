@@ -2,16 +2,30 @@ import type { Metadata } from "next";
 import MarketplaceNav from "../marketplace/MarketplaceNav";
 import PageviewTracker from "../PageviewTracker";
 
-// Deliberately not in any nav/sitemap and not disallowed in robots.txt either
-// (a Disallow would just draw attention to it) — reachable only by URL, same
-// pattern as /vf and /anneliese. English only for now: a small, genuinely
+// Public since 2026-07-25 (council review) — English only: a small, genuinely
 // useful glossary for people drawing their first font who've never had to
-// know what a sidebearing is — not yet linked from anywhere while it's
-// reviewed, unlike /vf and /anneliese it's meant to eventually go public
-// (SEO/GEO value: atomic, quotable term definitions), just not yet.
+// know what a sidebearing is. Each term is written as an atomic, quotable
+// definition on purpose — the same "answer engines should be able to lift
+// this whole" reasoning as features/page.tsx's own jsonLd.
+const description =
+  "A small glossary of type-design terms — baseline, x-height, kerning vs. tracking, ligature, variable font, and more — written for someone drawing their first font, not someone who already owns a type-design textbook.";
+
 export const metadata: Metadata = {
   title: "Type Lexicon — Fontane.Studio",
-  robots: { index: false, follow: false },
+  description,
+  alternates: { canonical: "/lexicon" },
+  openGraph: {
+    title: "Type Lexicon — Fontane.Studio",
+    description,
+    url: "https://fontane.studio/lexicon",
+    siteName: "Fontane.Studio",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Type Lexicon — Fontane.Studio",
+    description,
+  },
 };
 
 type Term = { term: string; definition: string };

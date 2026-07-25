@@ -20,6 +20,10 @@ Fontane.Studio runs entirely client-side in the browser (no account, no upload o
 - **JSON** — the compiled document (glyphs + contours), for custom tooling.
 - A local Python script (`font-build/`) compiles the same JSON into a real TrueType `.ttf`, and a Glyphs.app import script (`glyphs-plugin/`) builds native glyphs directly in an open Glyphs font.
 
+## Reference
+
+- [Type Lexicon](https://fontane.studio/lexicon) — a glossary of type-design terms (baseline, x-height, kerning vs. tracking, ligature, variable font, and more), written for someone drawing their first font.
+
 ## Source
 
 - [GitHub repository](https://github.com/AisuStudio/fontane): full source code, READMEs for the local TTF build script and the Glyphs.app import script.
