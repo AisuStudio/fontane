@@ -38,13 +38,15 @@ export default function LegalPage() {
         <h3 style={{ fontSize: 15, margin: "24px 0 8px" }}>What we don&apos;t do</h3>
         <p style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7 }}>
           No cookies. No third-party trackers, ads, or analytics scripts — no Google Analytics, no Meta Pixel,
-          nothing like that. No persistent identifier is ever written to your device for tracking purposes.
+          nothing like that. Nothing at all is written to your device for tracking purposes: no cookie, no
+          local storage, no identifier of any kind that survives closing the tab. Because of that, we also
+          can&apos;t tell whether you have been here before.
         </p>
 
         <h3 style={{ fontSize: 15, margin: "24px 0 8px" }}>Mini analytics</h3>
         <p style={{ marginBottom: 8, fontSize: 14, lineHeight: 1.7 }}>
-          Visiting the live site (fontane.studio) briefly logs three kinds of event, none of which can identify
-          you personally:
+          Visiting the live site (fontane.studio) briefly logs the events below. Every one of them is either a
+          count or a fixed category from a short list — never free text, never a file, never anything you drew:
         </p>
         <ul style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7, paddingLeft: 20 }}>
           <li>
@@ -52,14 +54,44 @@ export default function LegalPage() {
             user-agent, and the calendar date, combined with a private salt. That hash changes every day and
             can&apos;t be reversed back into your IP — it only lets us approximate how many different people
             visit per day, without storing your actual IP anywhere. We also record the referring site&apos;s
-            hostname only (e.g. &quot;google.com&quot;), never a full URL or query parameters.
+            hostname only (e.g. &quot;google.com&quot;), never a full URL or query parameters, plus which page
+            you landed on (e.g. &quot;editor&quot;, &quot;marketplace&quot;), your country as a two-letter code,
+            your browser language as a two-letter code, and whether the device is a phone, tablet or desktop.
+            The country comes from our host&apos;s edge network and the device category is read from the
+            user-agent string — neither the IP nor the full user-agent is stored.
           </li>
           <li>
-            <strong>Time on site</strong> — how many seconds a visit lasted, with no identifier attached at all.
+            <strong>A visit id</strong> — a random number generated fresh on every page load and kept only in
+            the page&apos;s memory. It is <em>not</em> stored on your device, so reloading, opening a second tab,
+            or coming back tomorrow all produce a completely unrelated id, and there is no way to connect them.
+            It exists so the events in one visit can be counted together — for example &quot;how many visits used
+            a drawing tool at least once&quot; — rather than as unconnected totals.
           </li>
           <li>
-            <strong>Font exports</strong> — which file format you exported (e.g. &quot;otf&quot;), with no
-            identifier attached.
+            <strong>Time on site</strong> — how many seconds a visit was actually visible, and in which part of
+            the app (Grid, Free Draw, Editor, Animate).
+          </li>
+          <li>
+            <strong>Tool actions</strong> — that a tool was used and which one (e.g. &quot;pen&quot;,
+            &quot;eraser&quot;), in which part of the app, and whether the input was a stylus, a finger or a
+            mouse. Not what you drew with it, where on the canvas, or on which letter.
+          </li>
+          <li>
+            <strong>Undo</strong> — that an undo happened, and which tool had been used last.
+          </li>
+          <li>
+            <strong>Font exports</strong> — which file format you exported (e.g. &quot;otf&quot;) and roughly how
+            many letters the document had, as one of five ranges (empty, 1–5, 6–20, 21–60, more than 60). The
+            exact number is never recorded, and neither is the font itself.
+          </li>
+          <li>
+            <strong>Character sets</strong> — which of the built-in character sets (e.g. &quot;Latin
+            Extended&quot;) you switched on or off in the Grid.
+          </li>
+          <li>
+            <strong>Blocked actions and errors</strong> — that an entry code was rejected, or that something like
+            an export failed, with a short label saying where. Never the code you typed, and never the contents
+            of an error.
           </li>
         </ul>
         <p style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7 }}>

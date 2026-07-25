@@ -40,7 +40,7 @@ export default async function AnneliesePage({
         />
         <StatTile
           value={stats.activation == null ? "—" : `${Math.round(stats.activation * 100)}%`}
-          label="visits that drew something"
+          label="sessions that drew something"
           current={stats.activation ?? 0}
           previous={stats.prevActivation ?? 0}
           note={
@@ -54,18 +54,18 @@ export default async function AnneliesePage({
           label="median visit (visible time)"
           current={stats.medianVisitSeconds}
           previous={stats.prevMedianVisitSeconds}
-          note={`${stats.sessionsMeasured} visits measured`}
+          note={`${stats.sessionsMeasured} sessions measured`}
         />
       </div>
 
       <Section
         title="where visits stop"
-        note="sessions, not events — one determined person can't inflate a step. The steps aren't strictly nested: a project loaded from a file can be exported without drawing anything first, so a lower step can be wider than the one above it"
+        note="a session is one page load; the visits tile above counts pageviews, so a visit that opens the marketplace too is two of those and one of these. Sessions, not events, so one determined person can't inflate a step. The steps aren't strictly nested: a project loaded from a file can be exported without drawing anything first, so a lower step can be wider than the one above it"
         since={stats.sessionsSince}
       >
         <Funnel
           steps={[
-            { label: "visited", value: stats.funnel.sessions },
+            { label: "sessions", value: stats.funnel.sessions },
             { label: "drew something", value: stats.funnel.drew },
             { label: "exported", value: stats.funnel.exported, note: "otf / fff / json / svg / cloud" },
             { label: "published to marketplace", value: stats.funnel.published },
@@ -119,12 +119,12 @@ export default async function AnneliesePage({
       </Section>
 
       <Section
-        title="how long visits actually last"
+        title="how long sessions actually last"
         note="a bounce and a working session are two populations; one median between them describes neither"
         since={stats.sessionsSince}
       >
         {stats.sessionsMeasured === 0 ? (
-          <Empty>no measured visits in this range</Empty>
+          <Empty>no measured sessions in this range</Empty>
         ) : (
           <BarTable rows={stats.durationHistogram} extra={(r) => <Ratio n={r.count} of={stats.sessionsMeasured} />} />
         )}

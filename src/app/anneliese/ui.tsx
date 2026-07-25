@@ -185,7 +185,7 @@ export function Funnel({ steps }: { steps: { label: string; value: number; note?
                 {step.note && <span style={{ opacity: 0.4, fontSize: 11 }}> {step.note}</span>}
               </span>
               <span style={{ opacity: 0.6, fontSize: 12 }}>
-                {Math.round((step.value / first) * 100)}% of visits
+                {Math.round((step.value / first) * 100)}% of sessions
                 {i > 0 && prev > 0 && ` · ${Math.round((step.value / prev) * 100)}% of step above`}
               </span>
             </div>
