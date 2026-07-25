@@ -4264,6 +4264,17 @@ export default function Home() {
           )}
           {topMode === "draw" && drawStyle === "grid" && (
             <div className={styles.sliders}>
+              {/* The label stays the same string in both states on purpose:
+                  lockGuides is read from localStorage during the first render
+                  (so the Grid is already locked on the very first frame, not a
+                  frame later), which means the server rendered this button
+                  from the default. Swapping the TEXT on it made that a
+                  hydration mismatch React can't patch up quietly — a real
+                  #418 in the console on every locked reload. The on state
+                  rides on the class and aria-pressed instead, attributes React
+                  reconciles without complaint, and the filled treatment is the
+                  same one the Base/Ligature/Alt toggle already uses for
+                  "this one is active". */}
               <button
                 type="button"
                 aria-pressed={lockGuides}
@@ -4275,7 +4286,7 @@ export default function Home() {
                     : "Lock the bearing lines and the cell width handle so drawing over them doesn't drag them"
                 }
               >
-                {lockGuides ? "Guides Locked" : "Lock Guides"}
+                Lock Guides
               </button>
               <label className={styles.sliderRow}>
                 <span>Cell size</span>
