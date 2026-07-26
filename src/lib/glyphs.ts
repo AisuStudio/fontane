@@ -31,6 +31,17 @@ export type Glyph = {
   widthRatio?: number;
 };
 
+// Alternates are auto-named so normal users never have to invent a glyph
+// name themselves — same idea as ligatures' auto-derived `f_i.liga`, just
+// computed up front instead of at export time, since an alternate's name is
+// also its cmap-free identity while drawing. Order = creation order (the
+// position this call sees `existing` in), reused directly by the CALT
+// rotation chain in exportFont.ts — no separate ordering field yet.
+export function nextAlternateName(base: string, existing: Pick<Glyph, "kind" | "alternateOf">[]): string {
+  const count = existing.filter((g) => g.kind === "alternate" && g.alternateOf === base).length;
+  return `${base}.alt${count + 1}`;
+}
+
 // Only meaningful for a name that's exactly one Unicode codepoint (typed straight off a
 // keyboard). Composed glyphs, ligatures, and custom names just don't get one.
 export function unicodeFor(name: string): string | undefined {

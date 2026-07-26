@@ -5,7 +5,7 @@ import Link from "next/link";
 import styles from "./page.module.css";
 import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokeKind, type StrokePoint } from "@/lib/strokes";
 import { nibPolygon, type Nib } from "@/lib/calligraphy";
-import { loadGlyphs, saveGlyphs, unicodeFor, type Glyph, type GlyphKind } from "@/lib/glyphs";
+import { loadGlyphs, saveGlyphs, unicodeFor, nextAlternateName, type Glyph, type GlyphKind } from "@/lib/glyphs";
 import { anyPointInPolygon, pointInPolygon } from "@/lib/geometry";
 import {
   applyBrush,
@@ -2622,7 +2622,9 @@ export default function Home() {
   }
 
   function handleAssign() {
-    const name = nameInput.trim();
+    const alternateOf = alternateOfInput.trim();
+    if (kindInput === "alternate" && !alternateOf) return;
+    const name = kindInput === "alternate" ? nextAlternateName(alternateOf, glyphs) : nameInput.trim();
     if (!name || selectedIds.length === 0) return;
     const vectorIdSet = new Set(vectorShapesRef.current.map((s) => s.id));
     const strokeIds = selectedIds.filter((id) => !vectorIdSet.has(id));
@@ -2638,7 +2640,7 @@ export default function Home() {
       ...(kindInput === "ligature"
         ? { components: componentsInput.split(/[\s,]+/).map((c) => c.trim()).filter(Boolean) }
         : {}),
-      ...(kindInput === "alternate" ? { alternateOf: alternateOfInput.trim() || undefined } : {}),
+      ...(kindInput === "alternate" ? { alternateOf } : {}),
     };
     setGlyphs((gs) => [...gs, glyph]);
     setSelectedIds([]);
@@ -2661,7 +2663,12 @@ export default function Home() {
   // Shares nameInput/kindInput/componentsInput/alternateOfInput with Free's
   // Assign panel since the two forms are never visible at the same time.
   function handleAddGridSlot() {
-    const name = nameInput.trim();
+    const alternateOf = alternateOfInput.trim();
+    if (kindInput === "alternate" && !alternateOf) return;
+    // Pending (undrawn) alt slots take up a name slot too, so count them
+    // alongside committed glyphs — otherwise two alts added back-to-back in
+    // Grid before either is drawn would both land on the same `.alt1` name.
+    const name = kindInput === "alternate" ? nextAlternateName(alternateOf, [...glyphs, ...extraGridSlots]) : nameInput.trim();
     if (!name) return;
     addGridSlot({
       name,
@@ -2669,7 +2676,7 @@ export default function Home() {
       ...(kindInput === "ligature"
         ? { components: componentsInput.split(/[\s,]+/).map((c) => c.trim()).filter(Boolean) }
         : {}),
-      ...(kindInput === "alternate" ? { alternateOf: alternateOfInput.trim() || undefined } : {}),
+      ...(kindInput === "alternate" ? { alternateOf } : {}),
     });
     setNameInput("");
     setComponentsInput("");
@@ -4460,25 +4467,21 @@ export default function Home() {
                     Free's Assign panel does — Grid fuses capture+tagging per
                     cell, so this just appends an empty slot to draw into. */}
                 <div className={styles.extraGlyphForm}>
-                  <input
-                    type="text"
-                    className={styles.nameInput}
-                    placeholder={
-                      kindInput === "base"
-                        ? "character (e.g. a, é)"
-                        : kindInput === "ligature"
-                          ? "name (e.g. f_i.liga)"
-                          : "name (e.g. a.alt01)"
-                    }
-                    value={nameInput}
-                    onChange={(e) => setNameInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        handleAddGridSlot();
-                      }
-                    }}
-                  />
+                  {kindInput !== "alternate" && (
+                    <input
+                      type="text"
+                      className={styles.nameInput}
+                      placeholder={kindInput === "base" ? "character (e.g. a, é)" : "name (e.g. f_i.liga)"}
+                      value={nameInput}
+                      onChange={(e) => setNameInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleAddGridSlot();
+                        }
+                      }}
+                    />
+                  )}
                   <div className={styles.modeToggle} role="radiogroup" aria-label="Glyph kind">
                     <button
                       type="button"
@@ -4525,21 +4528,33 @@ export default function Home() {
                     />
                   )}
                   {kindInput === "alternate" && (
-                    <input
-                      type="text"
-                      className={styles.nameInput}
-                      placeholder="alternate of (e.g. a)"
-                      value={alternateOfInput}
-                      onChange={(e) => setAlternateOfInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          handleAddGridSlot();
-                        }
-                      }}
-                    />
+                    <>
+                      <input
+                        type="text"
+                        className={styles.nameInput}
+                        placeholder="alternate of (e.g. a)"
+                        value={alternateOfInput}
+                        onChange={(e) => setAlternateOfInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleAddGridSlot();
+                          }
+                        }}
+                      />
+                      {alternateOfInput.trim() && (
+                        <span className={styles.unicodeHint}>
+                          {nextAlternateName(alternateOfInput.trim(), [...glyphs, ...extraGridSlots])}
+                        </span>
+                      )}
+                    </>
                   )}
-                  <button type="button" className={styles.clearBtn} onClick={handleAddGridSlot} disabled={!nameInput.trim()}>
+                  <button
+                    type="button"
+                    className={styles.clearBtn}
+                    onClick={handleAddGridSlot}
+                    disabled={kindInput === "alternate" ? !alternateOfInput.trim() : !nameInput.trim()}
+                  >
                     Add Glyph
                   </button>
                 </div>
@@ -4997,16 +5012,16 @@ export default function Home() {
           )}
           {topMode === "draw" && drawStyle === "free" && drawTool === "assign" && (
             <>
-              <input
-                type="text"
-                className={styles.contextField}
-                placeholder={
-                  kindInput === "base" ? "character (e.g. a, é)" : kindInput === "ligature" ? "name (e.g. f_i.liga)" : "name (e.g. a.alt01)"
-                }
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-                onKeyDown={handleAssignKeyDown}
-              />
+              {kindInput !== "alternate" && (
+                <input
+                  type="text"
+                  className={styles.contextField}
+                  placeholder={kindInput === "base" ? "character (e.g. a, é)" : "name (e.g. f_i.liga)"}
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  onKeyDown={handleAssignKeyDown}
+                />
+              )}
               <div className={styles.modeToggle} role="radiogroup" aria-label="Glyph kind">
                 <button
                   type="button"
@@ -5052,21 +5067,26 @@ export default function Home() {
                 />
               )}
               {kindInput === "alternate" && (
-                <input
-                  type="text"
-                  className={styles.nameInput}
-                  placeholder="alternate of (e.g. a)"
-                  value={alternateOfInput}
-                  onChange={(e) => setAlternateOfInput(e.target.value)}
-                  onKeyDown={handleAssignKeyDown}
-                />
+                <>
+                  <input
+                    type="text"
+                    className={styles.nameInput}
+                    placeholder="alternate of (e.g. a)"
+                    value={alternateOfInput}
+                    onChange={(e) => setAlternateOfInput(e.target.value)}
+                    onKeyDown={handleAssignKeyDown}
+                  />
+                  {alternateOfInput.trim() && (
+                    <span className={styles.unicodeHint}>{nextAlternateName(alternateOfInput.trim(), glyphs)}</span>
+                  )}
+                </>
               )}
 
               <button
                 type="button"
                 className={styles.clearBtn}
                 onClick={handleAssign}
-                disabled={!nameInput.trim() || selectedIds.length === 0}
+                disabled={(kindInput === "alternate" ? !alternateOfInput.trim() : !nameInput.trim()) || selectedIds.length === 0}
               >
                 Assign ({selectedIds.length})
               </button>

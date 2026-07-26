@@ -213,26 +213,44 @@ function wireLigatures(font: Font, doc: CompiledDocument, nameToIndex: Map<strin
   }
 }
 
-// Wires up a real GSUB 'calt' feature so a base letter drawn with at least
-// one stylistic alternate doesn't render as an identical stamp every time it
-// repeats — the classic hand-lettering-font trick, and the actual reason
-// this matters more for a handwriting tool than kerning does: two identical
-// "e"s side by side read as mechanical in a way imprecise spacing never
-// does. Scope, deliberately minimal for a first version: only catches the
-// immediate doubled case ("ee" -> "e" + first alternate of "e"), not a full
-// cycle through every alternate — that's a straightforward extension of the
-// same mechanism (one more chaining subtable per step), not a different one.
+// Wires up a real GSUB 'calt' feature so a base letter drawn with stylistic
+// alternates doesn't render as an identical stamp every time it repeats —
+// the classic hand-lettering-font trick, and the actual reason this matters
+// more for a handwriting tool than kerning does: identical repeated letters
+// read as mechanical in a way imprecise spacing never does.
+//
+// Cycles through every alternate of a base letter, in creation order (the
+// order alternatesByBase collects them in, which is also baked into their
+// auto-generated names — see nextAlternateName in glyphs.ts): the 2nd
+// occurrence of "e" becomes e.alt1, the 3rd becomes e.alt2, and so on. Each
+// step is its own backtrack=[previous step's result] rule, chained onto the
+// same lookup — this relies on a real shaper (HarfBuzz, CoreText, ...)
+// applying calt's subtables left-to-right over the actual glyph sequence, so
+// by the time it reaches the 3rd "e" the 2nd has already become e.alt1 and
+// is what the 3rd rule's backtrack coverage matches against.
+//
+// What happens after the last alternate is NOT "holds on it" — there's no
+// rule for backtrack=[last alt], so the next repeat falls through with no
+// substitution at all and renders as the plain base again, which then feeds
+// step 1's rule and restarts the whole cycle (base, alt1, alt2, base, alt1,
+// alt2, ...). This is deliberate, confirmed with Dom: real rotation (looping
+// back through the base) beats freezing on the last alternate for repeated
+// runs — a frozen alternate would just trade one mechanical stamp for
+// another. Confirmed live: a synthetic 3-shape (circle/square/triangle) test
+// font, built with this exact function and rendered via @font-face in a real
+// browser (real HarfBuzz/CoreText shaping, not just GSUB-table inspection),
+// showed exactly this base/alt1/alt2/base/alt1 cycle for "eeeee".
 //
 // No high-level Substitution.add() case exists for chaining-context lookups
 // (LookupType 6) the way there is for liga, so this uses the lower-level
 // Layout methods (getTable/getLookupTables) both classes share, matching
 // exactly the shape opentype.js's own GSUB parser/writer expect for a Format
-// 3 (coverage-based) chaining context subtable: one glyph of backtrack (the
-// glyph immediately before), one glyph of input (the repeat that should
-// change), and a lookupRecord pointing at a plain single-substitution lookup
-// (added to the lookup list but deliberately never registered under any
-// feature of its own — chaining context is the only thing that ever invokes
-// it, exactly like real-world calt implementations).
+// 3 (coverage-based) chaining context subtable: one glyph of backtrack, one
+// glyph of input (the repeat that should change), and a lookupRecord
+// pointing at a plain single-substitution lookup (added to the lookup list
+// but deliberately never registered under any feature of its own — chaining
+// context is the only thing that ever invokes it, exactly like real-world
+// calt implementations).
 //
 // Must run BEFORE wireLigatures: opentype.js's feature table requires
 // features to be added in alphabetical tag order ("calt" < "liga"), and
@@ -253,25 +271,35 @@ function wireContextualAlternates(font: Font, doc: CompiledDocument, nameToIndex
 
   for (const [baseName, altNames] of alternatesByBase) {
     const baseIndex = nameToIndex.get(baseName);
-    const altIndex = nameToIndex.get(altNames[0]);
-    if (baseIndex == null || altIndex == null) continue;
+    if (baseIndex == null) continue;
+    const baseCoverage: GsubCoverage = { format: 1, glyphs: [baseIndex] };
 
-    const coverage: GsubCoverage = { format: 1, glyphs: [baseIndex] };
-    const actionLookupIndex = table.lookups.length;
-    table.lookups.push({
-      lookupType: 1,
-      lookupFlag: 0,
-      subtables: [{ substFormat: 2, coverage, substitute: [altIndex] }],
-    });
+    // backtrackIndex tracks what the *previous* occurrence resolved to —
+    // base itself for the first repeat, then each alternate in turn.
+    let backtrackIndex = baseIndex;
+    for (const altName of altNames) {
+      const altIndex = nameToIndex.get(altName);
+      if (altIndex == null) continue;
 
-    const [chainLookup] = gsub.getLookupTables("DFLT", "dflt", "calt", 6, true);
-    chainLookup.subtables.push({
-      substFormat: 3,
-      backtrackCoverage: [coverage],
-      inputCoverage: [coverage],
-      lookaheadCoverage: [],
-      lookupRecords: [{ sequenceIndex: 0, lookupListIndex: actionLookupIndex }],
-    });
+      const backtrackCoverage: GsubCoverage = { format: 1, glyphs: [backtrackIndex] };
+      const actionLookupIndex = table.lookups.length;
+      table.lookups.push({
+        lookupType: 1,
+        lookupFlag: 0,
+        subtables: [{ substFormat: 2, coverage: baseCoverage, substitute: [altIndex] }],
+      });
+
+      const [chainLookup] = gsub.getLookupTables("DFLT", "dflt", "calt", 6, true);
+      chainLookup.subtables.push({
+        substFormat: 3,
+        backtrackCoverage: [backtrackCoverage],
+        inputCoverage: [baseCoverage],
+        lookaheadCoverage: [],
+        lookupRecords: [{ sequenceIndex: 0, lookupListIndex: actionLookupIndex }],
+      });
+
+      backtrackIndex = altIndex;
+    }
   }
 }
 
