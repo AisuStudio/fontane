@@ -69,6 +69,7 @@ const jsonLd = {
     "Provenance verification gate that checks a font was actually hand-drawn before it can be published",
     "No cookies, no third-party trackers, GDPR-safe anonymous analytics",
     "Installable as a Progressive Web App, works entirely in the browser",
+    "Writer (beta): copy a known reference text with the stylus and Fontane segments it into individual characters automatically — no OCR, no handwriting recognition, just position against the known sequence",
   ],
 };
 
@@ -102,6 +103,11 @@ const SECTIONS: Section[] = [
         name: "Calligraphy",
         description:
           "A dedicated broad-nib pen: an oval held at a fixed size, roundness, and angle, dragged along your stroke — width comes from the direction you move, not how hard you press, the classic broad-pen hand (Italic, Gothic) rather than pressure-based contrast.",
+      },
+      {
+        name: "Writer (beta)",
+        description:
+          "Copy a printed reference line with the stylus instead of drawing letter by letter — because the text is already known, Fontane only has to work out where one letter ends and the next begins (the biggest gaps between strokes), not what each one is. No OCR, no handwriting recognition, no server round-trip. Queue up whole character sets (Latin Basic, Cyrillic, punctuation, and more) and track coverage as you go.",
       },
     ],
   },

@@ -4278,6 +4278,14 @@ export default function Home() {
                   </button>
                 );
               })}
+              {/* Not a ViewDef/selectView entry on purpose — Writer is a
+                  separate route (/writer), not a topMode/drawStyle switch
+                  within this page, so it's a plain nav link rather than
+                  going through the topMode/drawStyle machinery the rest of
+                  this dropdown shares. */}
+              <Link href="/writer" role="menuitem" className={styles.dropdownItem} onClick={() => setOpenMenu(null)}>
+                Writer (BETA)
+              </Link>
             </div>
           )}
         </div>

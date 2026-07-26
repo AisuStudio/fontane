@@ -69,6 +69,7 @@ const jsonLd = {
     "Provenance-Prüfung, die vor der Veröffentlichung nachweist, dass ein Font tatsächlich von Hand gezeichnet wurde",
     "Keine Cookies, keine Drittanbieter-Tracker, DSGVO-sichere anonyme Analytics",
     "Installierbar als Progressive Web App, läuft komplett im Browser",
+    "Writer (Beta): eine vorgegebene Referenzzeile mit dem Stylus abschreiben, Fontane segmentiert sie automatisch in einzelne Zeichen — kein OCR, keine Handschrifterkennung, nur Position gegen die bekannte Zeichenfolge",
   ],
 };
 
@@ -102,6 +103,11 @@ const SECTIONS: Section[] = [
         name: "Kalligrafie",
         description:
           "Eine eigene Breitfeder: ein Oval mit fester Größe, Rundung und Winkel, entlang deines Strichs gezogen — die Breite ergibt sich aus der Zugrichtung, nicht aus dem Druck, die klassische Breitfeder-Hand (Italic, Gotisch) statt druckbasiertem Kontrast.",
+      },
+      {
+        name: "Writer (Beta)",
+        description:
+          "Statt Buchstabe für Buchstabe zu zeichnen, schreibst du eine gedruckte Referenzzeile mit dem Stylus ab — weil der Text schon bekannt ist, muss Fontane nur herausfinden, wo ein Buchstabe endet und der nächste beginnt (die größten Lücken zwischen den Strichen), nicht was jeder einzelne ist. Kein OCR, keine Handschrifterkennung, kein Server-Roundtrip. Ganze Zeichensätze (Latin Basic, Kyrillisch, Interpunktion und mehr) abfragen und den Fortschritt dabei verfolgen.",
       },
     ],
   },
