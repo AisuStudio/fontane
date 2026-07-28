@@ -93,3 +93,59 @@ diese Properties — es muss **kein** Komponenten-Code angefasst werden.
 - **UdeM / Prof. Oliver Sonnentag** (Flüsse), **AWI Potsdam**, **LFE Eberswalde / PYROPHOB**.
 - Referenzen: PYROPHOB · Copernicus/Sentinel-2 · GHG Protocol LSR (2026) · GALK-Straßenbaumliste ·
   Stroh-Schachbrett/Nurse-Structures (Shapotou; New Phytologist 2025) · Hobbs, „Novel Ecosystems".
+
+---
+
+## Anhang A — Sentinel-2-Rezept: Erholungs-Komposit Jüterbog
+
+Ersetzt das prozedurale Platzhalter-Komposit (`renderComposite()` in `app.js`).
+
+### AOI (Bounding Box, EPSG:4326, ca. — im Copernicus Browser an der Brandnarbe feinjustieren)
+Ehem. Truppenübungsplatz / NSG Forst Zinna–Jüterbog–Keilberg, Brand 2019 (744 ha, westl. der Stadt):
+
+    lonMin 12.90, latMin 51.98, lonMax 13.06, latMax 52.08
+
+Feuerjahr 2019 → Jahre z. B. R=2020, G=2022, B=2024 (Sommer Jul/Aug, Wolken < 10 %).
+
+### Daten & Auth (Copernicus Data Space Ecosystem, kostenlos)
+- Registrieren → OAuth-Client (client_id / client_secret).
+- Token: `POST https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token`
+  (`grant_type=client_credentials`)
+- Process API: `POST https://sh.dataspace.copernicus.eu/api/v1/process`
+
+### Evalscript (NBR, ein Band, pro Jahr)
+
+    //VERSION=3
+    function setup() {
+      return { input: ["B08","B12","dataMask"], output: { bands: 1, sampleType: "UINT8" } };
+    }
+    function evaluatePixel(s) {
+      if (s.dataMask === 0) return [0];
+      let nbr = (s.B08 - s.B12) / (s.B08 + s.B12);        // ~ -1..1
+      return [Math.max(0, Math.min(255, Math.round((nbr + 1) / 2 * 255)))];
+    }
+
+### Request-Body (pro Jahr; L2A, Sommerfenster, Wolkenfilter, wolkenärmste Szene)
+
+    {
+      "input": {
+        "bounds": { "bbox": [12.90,51.98,13.06,52.08],
+                    "properties": { "crs": "http://www.opengis.net/def/crs/EPSG/0/4326" } },
+        "data": [{ "type": "sentinel-2-l2a",
+                   "dataFilter": { "timeRange": { "from": "2022-07-01T00:00:00Z", "to": "2022-08-31T23:59:59Z" },
+                                   "maxCloudCoverage": 10 },
+                   "mosaickingOrder": "leastCC" }]
+      },
+      "output": { "width": 512, "height": 512,
+                  "responses": [{ "identifier": "default", "format": { "type": "image/png" } }] },
+      "evalscript": "<Evalscript oben, als String>"
+    }
+
+### Merge zu RGB (Client — ersetzt die Platzhalter-Logik in renderComposite)
+- 3 Requests (Jahr R / G / B) → 3 PNGs → je in ein Offscreen-Canvas, `getImageData`.
+- Ziel-Pixel: R = NBR[JahrR], G = NBR[JahrG], B = NBR[JahrB]. Struktur wie im Platzhalter, nur echte Werte.
+
+### Secret-Handling (WICHTIG — Static App)
+`client_secret` NIE ins Frontend. Zwei saubere Wege:
+1. **Vorab-Kacheln:** die 3 PNGs per Skript holen, als statische Dateien in `assets/` legen — App bleibt rein statisch.
+2. **Mini-Proxy:** kleine Serverless-Funktion (Cloudflare/Vercel) hält das Secret und liefert die 3 Bilder.

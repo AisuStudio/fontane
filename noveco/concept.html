@@ -1,0 +1,452 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Zweierlei Neuland — Konzept</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --ground:#E7E1D4;--surface:#F2ECE0;--surface-2:#EAE3D5;--ink:#211D18;--muted:#6C6356;
+    --line:#CDC3B1;--ember:#A9432A;--pine:#42605A;--neo:#77853F;
+    --pine-wash:#42605a1a;--neo-wash:#77853f1f;--ember-wash:#a9432a14;
+    --shadow:0 1px 0 #ffffff40, 0 18px 40px -28px #21201a55;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --ground:#161209;--surface:#1E1910;--surface-2:#241E14;--ink:#ECE5D6;--muted:#A79C88;
+      --line:#382F22;--ember:#D77049;--pine:#7FA098;--neo:#A9B96C;
+      --pine-wash:#7fa09818;--neo-wash:#a9b96c1c;--ember-wash:#d7704918;
+      --shadow:0 1px 0 #ffffff08, 0 24px 50px -30px #000000cc;
+    }
+  }
+  :root[data-theme="light"]{
+    --ground:#E7E1D4;--surface:#F2ECE0;--surface-2:#EAE3D5;--ink:#211D18;--muted:#6C6356;
+    --line:#CDC3B1;--ember:#A9432A;--pine:#42605A;--neo:#77853F;
+    --pine-wash:#42605a1a;--neo-wash:#77853f1f;--ember-wash:#a9432a14;
+    --shadow:0 1px 0 #ffffff40, 0 18px 40px -28px #21201a55;
+  }
+  :root[data-theme="dark"]{
+    --ground:#161209;--surface:#1E1910;--surface-2:#241E14;--ink:#ECE5D6;--muted:#A79C88;
+    --line:#382F22;--ember:#D77049;--pine:#7FA098;--neo:#A9B96C;
+    --pine-wash:#7fa09818;--neo-wash:#a9b96c1c;--ember-wash:#d7704918;
+    --shadow:0 1px 0 #ffffff08, 0 24px 50px -30px #000000cc;
+  }
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;background:var(--ground);color:var(--ink);
+    font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    font-size:clamp(1rem,0.96rem + 0.2vw,1.075rem);line-height:1.62;-webkit-font-smoothing:antialiased;
+  }
+  .sans{font-family:ui-sans-serif,system-ui,"Segoe UI",Helvetica,Arial,sans-serif}
+  .wrap{max-width:940px;margin:0 auto;padding:clamp(1.1rem,4vw,2.4rem)}
+  .measure{max-width:68ch}
+
+  .eyebrow{font-family:ui-sans-serif,system-ui,sans-serif;font-weight:650;text-transform:uppercase;
+    letter-spacing:.16em;font-size:.72rem;color:var(--ember);display:flex;align-items:center;gap:.6rem}
+  .eyebrow::after{content:"";height:1px;flex:1;background:var(--line)}
+
+  header.hero{padding-top:clamp(1rem,5vw,3rem);opacity:0;transform:translateY(8px);animation:rise .7s ease .05s forwards}
+  @keyframes rise{to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){header.hero{animation:none;opacity:1;transform:none}}
+  h1{font-family:ui-sans-serif,system-ui,sans-serif;font-weight:800;letter-spacing:-.028em;line-height:.98;
+    text-wrap:balance;font-size:clamp(2.5rem,1.4rem + 5.4vw,4.6rem);margin:.7rem 0 .1rem}
+  h1 .slash{color:var(--ember);font-weight:700;padding:0 .1em}
+  .dek{font-size:clamp(1.12rem,1.02rem + 0.5vw,1.4rem);color:var(--muted);max-width:46ch;margin:.5rem 0 0;text-wrap:balance}
+
+  .define,.thesis{margin:clamp(1.6rem,4vw,2.4rem) 0;padding:clamp(1.1rem,3vw,1.7rem) clamp(1.2rem,3vw,1.9rem);
+    background:var(--surface);border:1px solid var(--line);border-radius:2px;box-shadow:var(--shadow)}
+  .define{border-left:3px solid var(--neo)}
+  .thesis{border-left:3px solid var(--ember);margin-top:1rem}
+  .define p{margin:0;font-size:clamp(1.02rem,0.96rem + 0.4vw,1.18rem)}
+  .define b{font-family:ui-sans-serif,system-ui,sans-serif}
+  .thesis p{margin:0;font-size:clamp(1.18rem,1.02rem + 0.7vw,1.5rem);line-height:1.4;text-wrap:balance}
+  .thesis .em{color:var(--ember);font-style:italic}
+
+  h2{font-family:ui-sans-serif,system-ui,sans-serif;font-weight:750;letter-spacing:-.01em;
+    font-size:clamp(1.2rem,1.05rem + 0.7vw,1.6rem);margin:0 0 .3rem;text-wrap:balance}
+  section{margin-top:clamp(2.3rem,5.5vw,3.4rem)}
+  .lead-num{font-family:ui-sans-serif,system-ui,sans-serif;color:var(--ember);font-weight:700;font-size:.82rem;letter-spacing:.04em}
+  p{margin:.75rem 0}
+  a{color:var(--ember);text-decoration-thickness:1px;text-underline-offset:2px}
+  strong{font-weight:700}
+
+  .qbig{margin-top:1.1rem;padding:clamp(1rem,3vw,1.5rem) clamp(1.1rem,3vw,1.6rem);background:var(--pine-wash);
+    border-left:3px solid var(--pine);border-radius:2px;font-family:ui-sans-serif,system-ui,sans-serif;
+    font-weight:700;letter-spacing:-.01em;font-size:clamp(1.1rem,1rem + 0.6vw,1.42rem);line-height:1.32;text-wrap:balance}
+
+  .tablewrap{overflow-x:auto;margin-top:1.2rem;border:1px solid var(--line);border-radius:3px;box-shadow:var(--shadow);background:var(--surface)}
+  table{border-collapse:collapse;width:100%;min-width:660px}
+  thead th{font-family:ui-sans-serif,system-ui,sans-serif;font-size:.7rem;text-transform:uppercase;letter-spacing:.11em;
+    font-weight:650;color:var(--muted);text-align:left;padding:.85rem 1rem;border-bottom:1px solid var(--line);vertical-align:bottom}
+  thead th.c-pine{color:var(--pine)}
+  thead th.c-neo{color:var(--neo)}
+  tbody td{padding:.85rem 1rem;border-bottom:1px solid var(--line);vertical-align:top;font-size:.95rem;line-height:1.42}
+  tbody tr:last-child td{border-bottom:0}
+  .krit{font-family:ui-sans-serif,system-ui,sans-serif;font-weight:650;color:var(--ink);white-space:nowrap}
+  td.pine-col{background:var(--pine-wash)}
+  td.neo-col{background:var(--neo-wash)}
+  .verdict{display:inline-flex;align-items:center;gap:.4rem;font-family:ui-sans-serif,system-ui,sans-serif;font-size:.72rem;
+    font-weight:700;letter-spacing:.02em;padding:.28rem .6rem;border-radius:999px;white-space:nowrap;border:1px solid transparent}
+  .verdict::before{content:"";width:.5rem;height:.5rem;border-radius:50%;background:currentColor}
+  .v-neo{color:var(--neo);background:var(--neo-wash);border-color:var(--neo)}
+  .v-pine{color:var(--pine);background:var(--pine-wash);border-color:var(--pine)}
+  .v-split{color:var(--muted);background:var(--surface-2);border-color:var(--line)}
+  .v-ctx{color:var(--ember);background:var(--ember-wash);border-color:var(--ember)}
+  .caption{font-family:ui-sans-serif,system-ui,sans-serif;font-size:.8rem;color:var(--muted);margin-top:.7rem}
+  .legend{display:flex;gap:1rem;flex-wrap:wrap;font-family:ui-sans-serif,system-ui,sans-serif;font-size:.76rem;color:var(--muted);margin-top:.7rem}
+  .legend span{display:inline-flex;align-items:center;gap:.4rem}
+  .dot{width:.6rem;height:.6rem;border-radius:50%;display:inline-block}
+
+  .grid3{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-top:1.2rem}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:1.15rem 1.2rem;box-shadow:var(--shadow)}
+  .card h3{font-family:ui-sans-serif,system-ui,sans-serif;font-size:1rem;margin:.15rem 0 .35rem;letter-spacing:-.01em}
+  .card .tag{font-family:ui-sans-serif,system-ui,sans-serif;font-size:.68rem;text-transform:uppercase;letter-spacing:.12em;color:var(--ember);font-weight:650}
+  .card p{margin:.35rem 0 0;font-size:.92rem;color:var(--ink)}
+  .card ul{margin:.5rem 0 0;padding-left:1.05rem;font-size:.9rem;color:var(--ink);display:grid;gap:.3rem}
+
+  .kv{list-style:none;margin:1.1rem 0 0;padding:0;display:grid;gap:.55rem}
+  .kv li{display:flex;gap:.8rem;padding:.7rem .9rem;background:var(--surface);border:1px solid var(--line);border-radius:3px}
+  .kv b{font-family:ui-sans-serif,system-ui,sans-serif;font-weight:650;color:var(--ink);min-width:13ch;flex:0 0 auto}
+  .kv span{color:var(--muted);font-size:.94rem}
+
+  /* two-column compare (reused for Kern/Verstärkung, MVP/Vision) */
+  .duo{display:grid;gap:1rem;grid-template-columns:1fr 1fr;margin-top:1.2rem}
+  @media (max-width:560px){.duo{grid-template-columns:1fr}}
+  .duo-col{background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:1rem 1.1rem;box-shadow:var(--shadow)}
+  .c-core{border-top:3px solid var(--neo)}
+  .c-amp{border-top:3px solid var(--pine)}
+  .duo-head{display:block;font-family:ui-sans-serif,system-ui,sans-serif;font-size:.7rem;text-transform:uppercase;
+    letter-spacing:.12em;font-weight:650;margin-bottom:.6rem}
+  .c-core .duo-head{color:var(--neo)}
+  .c-amp .duo-head{color:var(--pine)}
+  .duo-col ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.5rem}
+  .duo-col li{font-size:.92rem;line-height:1.4;padding-left:1rem;position:relative}
+  .duo-col li::before{content:"";position:absolute;left:0;top:.55em;width:.4rem;height:.4rem;border-radius:50%;background:currentColor;opacity:.5}
+  .duo-note{font-family:ui-sans-serif,system-ui,sans-serif;font-size:.8rem;color:var(--muted);margin-top:.7rem}
+
+  .pillrow{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.7rem}
+  .pill{font-family:ui-sans-serif,system-ui,sans-serif;font-size:.82rem;background:var(--surface);border:1px solid var(--line);
+    border-radius:999px;padding:.4rem .8rem}
+  .pill.net{border-color:var(--pine);color:var(--pine);background:var(--pine-wash)}
+  .subhead{font-family:ui-sans-serif,system-ui,sans-serif;font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;
+    font-weight:650;color:var(--muted);margin:1.2rem 0 0}
+
+  .fieldnote{margin-top:1.3rem;background:var(--ember-wash);border-left:3px solid var(--ember);border-radius:2px;padding:1rem 1.25rem;font-style:italic}
+  .fieldnote .fn-label{font-family:ui-sans-serif,system-ui,sans-serif;font-style:normal;font-size:.68rem;text-transform:uppercase;
+    letter-spacing:.13em;font-weight:650;color:var(--ember);display:block;margin-bottom:.45rem}
+  .fieldnote p{margin:.35rem 0}
+  .fieldnote strong{font-style:normal}
+
+  /* grow / fail chips (Prüfstein) */
+  .grow{display:grid;gap:1rem;grid-template-columns:1fr 1fr;margin-top:1.2rem}
+  @media (max-width:560px){.grow{grid-template-columns:1fr}}
+  .grow-col{background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:1rem 1.1rem;box-shadow:var(--shadow)}
+  .thrive-col{border-top:3px solid var(--neo)}
+  .fail-col{border-top:3px solid var(--ember)}
+  .grow-head{display:block;font-family:ui-sans-serif,system-ui,sans-serif;font-size:.7rem;text-transform:uppercase;
+    letter-spacing:.12em;font-weight:650;margin-bottom:.7rem}
+  .thrive-col .grow-head{color:var(--neo)}
+  .fail-col .grow-head{color:var(--ember)}
+  .grow-col ul{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:.45rem}
+  .grow-col li{font-family:ui-sans-serif,system-ui,sans-serif;font-size:.82rem;background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:.32rem .68rem}
+  .grow-col li span{color:var(--muted);font-size:.9em}
+
+  .honesty{margin-top:1.2rem;background:var(--surface-2);border:1px dashed var(--line);border-radius:3px;padding:1.15rem 1.3rem}
+  .honesty h2{color:var(--ember)}
+  .honesty ul{margin:.6rem 0 0;padding-left:1.1rem}
+  .honesty li{margin:.5rem 0;font-size:.95rem}
+
+  footer{margin-top:clamp(3rem,7vw,4.5rem);padding-top:1.2rem;border-top:1px solid var(--line);
+    font-family:ui-sans-serif,system-ui,sans-serif;font-size:.8rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:.4rem .9rem;justify-content:space-between}
+</style>
+
+<div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow sans">Konzept · Post-Fire Novel Ecosystems · Aisu Studio</div>
+    <h1>Zweierlei<br>Neu<span class="slash">/</span>land</h1>
+    <p class="dek">Nach dem Waldbrand konkurrieren zwei menschgemachte Ökosysteme. Ein Werkzeug, das zeigt, welche Wiederbewaldung klimaangepasst, wirtschaftlich und kohlenstoff-wirksam ist — am Anker Jüterbog.</p>
+  </header>
+
+  <section class="measure" style="margin-top:clamp(1.6rem,4vw,2.4rem)">
+    <h2><span class="lead-num sans">Was es ist&nbsp;&nbsp;</span>In einem Satz</h2>
+    <div class="define">
+      <p><b>Ein offenes Daten-Werkzeug, das eine Waldbrandfläche danach lesbar macht, welche Wiederbewaldung dort zugleich klimaangepasst, wirtschaftlich zukunftsfähig und kohlenstoff-wirksam ist</b> — und diesen Wert in der Sprache trackbar macht, die Landbesitzer und Unternehmen ab 2027 brauchen.</p>
+    </div>
+    <div class="thesis">
+      <p>Der Wert einer Sukzession ist keine Eigenschaft der <span class="em">Pflanze</span> — sondern der <span class="em">Fläche</span>.</p>
+    </div>
+  </section>
+
+  <section class="measure">
+    <h2><span class="lead-num sans">Problem&nbsp;&nbsp;</span>Keine Entscheidungsgrundlage, die nach vorn schaut</h2>
+    <p>Die ARD-Doku <em>„Aus der Asche"</em> und das Projekt <strong>PYROPHOB</strong> (Jüterbog, Treuenbrietzen) zeigen die tröstliche Seite: Der Wald kommt zurück. Was fehlt, ist die *Entscheidung*: Auf derselben offenen Sandfläche keimen Birke und Zitterpappel — und die <strong>Neophyten</strong> (Robinie, Essigbaum). „Roden und aufforsten" gegen „laufen lassen" wird ideologisch geführt, nicht anhand von Funktion.</p>
+    <p>Dabei ist der märkische <strong>Kiefernforst selbst kein Urzustand</strong>, sondern eine gepflanzte, hochbrandgefährdete Monokultur — Teil des Problems, nicht die Referenz. Es stehen sich also nicht „Natur" und „Eindringling" gegenüber, sondern <strong>zwei <em>novel ecosystems</em></strong>: zwei vom Menschen geprägte Zukünfte für dieselbe Fläche.</p>
+  </section>
+
+  <section class="measure">
+    <h2><span class="lead-num sans">Die Frage&nbsp;&nbsp;</span>Was das Werkzeug beantwortet</h2>
+    <div class="qbig">Welche Wiederbewaldungs-Trajektorie ist auf <em>dieser</em> Fläche zugleich klimaangepasst, wirtschaftlich zukunftsfähig — und kohlenstoff-wirksam?</div>
+  </section>
+
+  <section>
+    <h2><span class="lead-num sans">Methode&nbsp;&nbsp;</span>Robuster Kern, optionale Verstärkung</h2>
+    <p class="measure">Das Konzept hängt nicht an unsicherem Datenzugang. Es steht auf einem Kern aus Daten, die garantiert verfügbar sind — und wird schärfer, wenn die Kontakte liefern.</p>
+    <div class="duo">
+      <div class="duo-col c-core">
+        <span class="duo-head">Sicherer Kern — garantiert</span>
+        <ul>
+          <li>Sentinel-2 (offen): Erholungs-Komposit + Brandlast-/Kühlungs-Proxys</li>
+          <li>Eigene Bodenwahrheit: Garten &amp; Feriengrundstücke (Bestensee)</li>
+          <li>GALK-Liste: Arten nach Funktion statt Herkunft (mit TreesAI geteilt)</li>
+        </ul>
+      </div>
+      <div class="duo-col c-amp">
+        <span class="duo-head">Verstärkung — falls verfügbar</span>
+        <ul>
+          <li>Eddy-Covariance-Flüsse (Sonnentag/UdeM): gemessene C-/Wasser-Funktion, MRV-tauglich</li>
+          <li>Bezahl-Fernerkundung &amp; Vegetation (AWI Potsdam)</li>
+          <li>Optional: borealer Spiegel (post-fire-Regimewechsel Nadel→Laub)</li>
+        </ul>
+      </div>
+    </div>
+    <p class="duo-note">Das löst „Rahmen vs. Metrik": Der Kern ist ein ground-truth-gestützter Bewertungs<em>rahmen</em> mit echten, offenen Rechenteilen; die Flüsse sind der Rigor- und MRV-Verstärker, keine Abhängigkeit.</p>
+  </section>
+
+  <section>
+    <h2><span class="lead-num sans">Der Vergleich&nbsp;&nbsp;</span>Novel vs. Novel — die Scorecard</h2>
+    <p class="measure">Kein Sieger-Loblied. Ein Raster, auf dem jede Seite Achsen gewinnt und verliert — bewusst inklusive der Achsen, auf denen der Neophyt <em>nicht</em> überlegen ist.</p>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Achse</th>
+            <th scope="col" class="c-pine">Kulturkiefernforst</th>
+            <th scope="col" class="c-neo">Neophyten-Sukzession</th>
+            <th scope="col">Vorteil</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="krit">Tempo der Resilienz</td>
+            <td class="pine-col">Jahrzehnte bis Kronenschluss, Kühlung und Bodenschutz.</td>
+            <td class="neo-col">Pionier: Deckung, Kühlung und Stickstoff schon in wenigen Jahren.</td>
+            <td><span class="verdict v-neo sans">Neophyt</span></td>
+          </tr>
+          <tr>
+            <td class="krit">Trocken- &amp; Klimastress</td>
+            <td class="pine-col">Flachwurzler, auf Sand zunehmend hitzegestresst.</td>
+            <td class="neo-col">Robinie: tiefwurzelnd, stickstofffixierend, hitzetolerant.</td>
+            <td><span class="verdict v-neo sans">Neophyt</span></td>
+          </tr>
+          <tr>
+            <td class="krit">Kühlung &amp; Brandrisiko</td>
+            <td class="pine-col">Harzreiche Monokultur — hochbrandgefährdet, Teil des Problems.</td>
+            <td class="neo-col">Laub-Unterwuchs, feuchteres Mikroklima — senkt die Brandlast.</td>
+            <td><span class="verdict v-neo sans">Neophyt</span></td>
+          </tr>
+          <tr>
+            <td class="krit">Wirtschaftl. Verwertung</td>
+            <td class="pine-col">Große Holzmengen, etablierte Kette, Harz.</td>
+            <td class="neo-col">Dauerhaftestes Holz Europas (Nische), Honig, Energieholz, Gerbstoff.</td>
+            <td><span class="verdict v-split sans">Geteilt</span></td>
+          </tr>
+          <tr>
+            <td class="krit">Kohlenstoff-Wirksamkeit</td>
+            <td class="pine-col">Langsamer Aufbau, aber Boden-C und Beständigkeit — solange kein Brand.</td>
+            <td class="neo-col">Schnelle Biomasse (Robinie), aber Permanenz durch Reburn-Risiko fragil.</td>
+            <td><span class="verdict v-split sans">Geteilt</span></td>
+          </tr>
+          <tr>
+            <td class="krit">Statur &amp; Holzvolumen</td>
+            <td class="pine-col">Höher, mehr Stammvolumen, langlebiger Kronenraum.</td>
+            <td class="neo-col">Kleiner, geringeres Volumen — nicht in allem überlegen.</td>
+            <td><span class="verdict v-pine sans">Kiefer</span></td>
+          </tr>
+          <tr>
+            <td class="krit">Biodiversität</td>
+            <td class="pine-col">Artenarm — aber nach Brand Trägerin von Totholz-Spezialisten.</td>
+            <td class="neo-col">Auf Ödland ein Gewinn; auf Schutz-Magerland verdrängt der N-Eintrag die Spezialisten.</td>
+            <td><span class="verdict v-ctx sans">Kontextabhängig</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--neo)"></span>Vorteil Neophyt</span>
+      <span><span class="dot" style="background:var(--pine)"></span>Vorteil Kiefer</span>
+      <span><span class="dot" style="background:var(--muted)"></span>Geteilt</span>
+      <span><span class="dot" style="background:var(--ember)"></span>Kippt je nach Fläche</span>
+    </div>
+    <p class="caption">Die letzte Achse ist der Angelpunkt: Biodiversität entscheidet sich nicht an der Pflanze, sondern am Untergrund. Genau das macht das Werkzeug sichtbar.</p>
+  </section>
+
+  <section>
+    <h2><span class="lead-num sans">Das Werkzeug&nbsp;&nbsp;</span>Was die Anwendung zeigt</h2>
+    <div class="grid3">
+      <div class="card">
+        <span class="tag sans">Datensubstrat</span>
+        <h3>Zeitkomposit</h3>
+        <p>Sentinel-2 (NBR) aus drei Jahren auf Rot·Grün·Blau gelegt. Ein Bild, dessen Farbe den Erholungspfad jedes Pixels erzählt — grau = unverändert, Farbe = zeitversetztes Ergrünen.</p>
+      </div>
+      <div class="card">
+        <span class="tag sans">Bewertung</span>
+        <h3>Flächen-Scorecard</h3>
+        <p>Für eine gewählte Brandfläche das Raster oben — datengestützt. Brandrisiko, Trockenstress und Erholung aus den Spektralindizes abgeleitet.</p>
+      </div>
+      <div class="card">
+        <span class="tag sans">Der Angelpunkt</span>
+        <h3>Kontext-Layer</h3>
+        <p>Neophyten-Vorkommen × Flächentyp. Auf Rekultivierungs-/Ödland <span style="color:var(--neo);font-weight:700">grün</span> (Retter), auf Schutz-Magerland <span style="color:var(--ember);font-weight:700">rot</span> (Verdränger). Dieselbe Pflanze, entgegengesetzter Wert.</p>
+      </div>
+      <div class="card">
+        <span class="tag sans">Zweite Skala · Mikro</span>
+        <h3>Boden-Wahrheit</h3>
+        <p>Beobachtungen aus dem kuratierten Garten und den sich selbst überlassenen Feriengrundstücken — was auf Sand wirklich trägt. Die begehbare Gegenprobe zur Satellitensicht.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="measure">
+    <h2><span class="lead-num sans">Von Ökologie zu Wert&nbsp;&nbsp;</span>Die Kohlenstoff-Ebene</h2>
+    <p>Funktion — Kohlenstoff-Aufnahme, Kühlung, Wasser, gesenkte Brandlast — ist zugleich das <strong>Anpassungs</strong>-Argument <em>und</em> die Ökosystemleistung, die sich ökonomisch lesen lässt. Neben der Flächen-Ökonomie (Robinienholz, Honig, Biomasse) entsteht so eine härtere Wert-Ebene: <strong>Kohlenstoff</strong>. Das ist die Brücke zu „Nature as Infrastructure" (TreesAI) — Naturwert sichtbar und <em>entscheidbar</em> machen.</p>
+    <div class="fieldnote">
+      <span class="fn-label">Warum jetzt · GHG Protocol LSR</span>
+      <p>Der <strong>GHG Protocol Land Sector &amp; Removals Standard</strong> (Jan 2026, wirksam 2027) lässt Firmen Land-CO₂-Entnahmen in <strong>Scope 1/3</strong> verbuchen — aber nur mit <strong>standort-spezifischen, empirischen Daten</strong> und <strong>Permanenz-Monitoring</strong>. Genau das liefert der funktions-geerdete Kern hier.</p>
+      <p>Und die Fragilität ist real: <strong>Treuenbrietzen ist 2022 erneut gebrannt.</strong> Post-fire-Kohlenstoff kann zurückkommen — diese Reversal-Sichtbarkeit ist der eigentliche Wert des Trackings.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="lead-num sans">Vom Bewerten zum Handeln&nbsp;&nbsp;</span>Maßnahmen: Struktur schafft Mikroklima</h2>
+    <p class="measure">Die billigste Maßnahme ist nicht die Pflanze, sondern die <strong>Struktur</strong>: Wind bremsen, Schatten und Tau schaffen, Samen und Streu fangen — Ammenstrukturen. Bewährt von der Gobi (Stroh-Schachbretter, seit 1957) bis zur Leitplanke, an der in der Trockenheit ein grüner Streifen entsteht. Auf der frischen, wüstenähnlichen Brandfläche greift dasselbe Prinzip — und weil Stein und Totholz nicht brennen, ist es <strong>reburn-resilient</strong>.</p>
+    <div class="grid3">
+      <div class="card">
+        <span class="tag sans">Einzelperson · Garten</span>
+        <ul>
+          <li>Harke weglassen, Gras stehen lassen — Streu, Moos, Humus.</li>
+          <li>Totholz-/Reisighaufen als Schatten- und Feuchtinseln.</li>
+          <li>Steine/Stämme auf offenen Sand → Tau-Tropfkanten.</li>
+          <li>Kleine Reisig-/Stroh-Raster (Gobi im Kleinen).</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="tag sans">Kommune</span>
+        <ul>
+          <li>Leitplanken/Lärmwände als Tau- und Schattenlinien für grüne Randstreifen.</li>
+          <li>Brandschutzstreifen als feuchte Laub-Grünriegel — Puffer und Biotop.</li>
+          <li>Sand-/Heideflächen: Raster + Biokrusten gegen Winderosion.</li>
+          <li>Schwammstadt: Regenwasser in Baumgruben; Erholung/CO₂ tracken.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="tag sans">Forstbetrieb</span>
+        <ul>
+          <li>Totholz als Ammenstruktur lassen — nicht kahlräumen (PYROPHOB).</li>
+          <li>Schlagreisig auslegen: Wind bremsen, Feuchte halten, Saat fangen.</li>
+          <li>Zwei-Phasen: Pionier-Amme, Zielbaum darunter.</li>
+          <li>Weg vom Kiefern-Reinbestand → Mischung/Laub.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="lead-num sans">Der Prüfstein&nbsp;&nbsp;</span>Bodenwahrheit in Brandenburg</h2>
+    <p class="measure">Keine Theorie vom Schreibtisch. Ein Garten auf reinem Sand (Raum Bestensee) wird kuratiert und <strong>stellenweise bewässert</strong>: so weit möglich belassen — und den Rest auslesen. Was hier trägt, entscheidet weniger die Pflege als der Boden.</p>
+    <div class="grow">
+      <div class="grow-col thrive-col">
+        <span class="grow-head">Setzt sich durch</span>
+        <ul>
+          <li>Heidelbeere</li>
+          <li>Brombeere</li>
+          <li>Flieder <span>(„fliedert wie wild")</span></li>
+          <li>Yucca</li>
+          <li>kuratierte Robinie</li>
+          <li>Hasel · Eiche · Walnuss <span>(von Eichhörnchen gesät)</span></li>
+        </ul>
+      </div>
+      <div class="grow-col fail-col">
+        <span class="grow-head">Gescheitert</span>
+        <ul>
+          <li>Blauglockenbaum <span>(Paulownia)</span></li>
+          <li>Lavendel</li>
+          <li>das meiste Angepflanzte <span>(ohne großen Aufwand)</span></li>
+        </ul>
+      </div>
+    </div>
+    <p class="caption">Der Filter ist die <strong>Funktion</strong> — Trockenheit, Sand —, nicht die Herkunft: Der gehypte „Klimabaum" Paulownia fällt durch, die Robinie trägt.</p>
+    <div class="fieldnote measure">
+      <span class="fn-label">Feldnotiz · Mikroklima</span>
+      <p>In einer Schattenecke hat sich Moos gut 20&nbsp;cm an ungeschnittenem Gras hochgehangelt, oben Fliederlaub darauf. Darunter: warm, feucht, fluffig.</p>
+      <p><strong>Struktur schafft Mikroklima</strong> — nicht die Art, sondern die ungestörte Schichtung hält Wärme und Wasser und <strong>baut Humus</strong>. Genau die Humusschicht, die das Feuer in Jüterbog und Treuenbrietzen zerstört hat, entsteht hier von selbst — sobald die Harke wegbleibt.</p>
+    </div>
+    <p class="measure" style="margin-top:1.3rem">Der eigentliche Datenschatz liegt nebenan: die <strong>sich selbst überlassenen Feriengrundstücke</strong> — unbewässert, ungeschnitten. Ein natürliches Experiment und die günstigste Antwort darauf, welches Neuland auf diesem Sand von allein trägt.</p>
+  </section>
+
+  <section>
+    <h2><span class="lead-num sans">Cross-Discipline&nbsp;&nbsp;</span>Disziplinen, Netzwerk, Wertekanon</h2>
+    <p class="measure">Der Wert entsteht an der Schnittstelle — das Vorhaben orchestriert bewusst mehrere Felder und einen klaren Wertekanon.</p>
+    <p class="subhead">Disziplinen im Zusammenspiel</p>
+    <div class="pillrow">
+      <span class="pill">Ökologie / Sukzession</span>
+      <span class="pill">Fernerkundung</span>
+      <span class="pill">Ökonomie / Verwertung</span>
+      <span class="pill">Karbon-Accounting (Scope 1–3)</span>
+      <span class="pill">Design / Vermittlung</span>
+    </div>
+    <p class="subhead">Netzwerk</p>
+    <div class="pillrow">
+      <span class="pill net">TreesAI · Nature as Infrastructure</span>
+      <span class="pill net">O. Sonnentag · UdeM (Flüsse)</span>
+      <span class="pill net">AWI Potsdam</span>
+      <span class="pill net">LFE Eberswalde · PYROPHOB</span>
+    </div>
+    <ul class="kv">
+      <li><b class="sans">Vorurteilsfrei</b><span>Bewertet wird Funktion, nicht Herkunft.</span></li>
+      <li><b class="sans">Kontext vor Dogma</b><span>Derselbe Baum ist Retter oder Verdränger — je nach Fläche.</span></li>
+      <li><b class="sans">Ehrlich über Grenzen</b><span>Permanenz, Homogenisierung, schwächster Datenpunkt werden offen benannt.</span></li>
+      <li><b class="sans">Bewerten, nicht entscheiden</b><span>Das Werkzeug macht den Zielkonflikt sichtbar; entscheiden Mensch und Fläche.</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="lead-num sans">Scope&nbsp;&nbsp;</span>MVP und Vision, sauber getrennt</h2>
+    <div class="duo">
+      <div class="duo-col c-core">
+        <span class="duo-head">MVP — jetzt baubar</span>
+        <ul>
+          <li>Ein Anker: Brandfläche Jüterbog</li>
+          <li>Erholungs-Zeitkomposit aus offenem Sentinel-2</li>
+          <li>Ground-truth-gestützte Scorecard</li>
+          <li>Ohne Sonderdaten, ohne Institutszugang</li>
+        </ul>
+      </div>
+      <div class="duo-col c-amp">
+        <span class="duo-head">Vision — mit Verstärkung</span>
+        <ul>
+          <li>Mehrere Flächen, vergleichbar</li>
+          <li>Funktions-/MRV-geerdet (Flüsse, Sonnentag/AWI)</li>
+          <li>Kohlenstoff-Tracking nach GHG-Protocol-LSR</li>
+          <li>Optional: borealer Spiegel</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="measure honesty">
+    <h2>Redlichkeit — damit es kein Werbeprospekt wird</h2>
+    <ul>
+      <li><strong>„Leugner vs. Leugner" — die Nadel, nicht der Freibrief.</strong> „Ökosysteme haben sich schon immer verändert" spiegelt bewusst „das Klima hat sich schon immer verändert" — beide zerbrechen am Tempo. Das Argument sagt nicht <em>Wandel ist egal</em>, sondern: Weil der Wandel schnell ist, brauchen wir schnelle Resilienz.</li>
+      <li><strong>Kohlenstoff ist kein Freifahrtschein.</strong> Post-fire-Speicher sind reversibel (Reburn), und schnelle Biomasse ≠ dauerhafte Senke. Genau deshalb steht Permanenz im Konzept, nicht im Kleingedruckten.</li>
+      <li><strong>Homogenisierungs-Kosten.</strong> Wenige Gewinner (Generalisten) ersetzen viele Verlierer (Spezialisten). Grüner ist nicht automatisch vielfältiger.</li>
+      <li><strong>Der schwächste offene Datenpunkt.</strong> Die Neophyten-Feinkartierung gibt es nicht frei; Flux-Verfügbarkeit an der Fläche ist zu prüfen. Wird ausgewiesen, nicht kaschiert.</li>
+    </ul>
+  </section>
+
+  <footer class="sans">
+    <span>Zweierlei Neuland · Arbeitsstand Konzept · Aisu Studio</span>
+    <span>Quellen: PYROPHOB · Copernicus/Sentinel-2 · GHG Protocol LSR (2026) · TreesAI · Hobbs, „Novel Ecosystems"</span>
+  </footer>
+
+</div>
