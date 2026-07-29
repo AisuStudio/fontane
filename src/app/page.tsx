@@ -726,6 +726,18 @@ function drawLineRaster(
   ctx.restore();
 }
 
+// Trace image import limits. redraw() runs on every pointermove, so an
+// oversized photo is rasterized down ONCE at import time — drawImage from a
+// multi-thousand-pixel source on every frame visibly drags stroke latency.
+// The file-size cap just rejects obviously wrong picks (a print-resolution
+// scan, a camera RAW export) before the browser spends time decoding them.
+const TRACE_MAX_DIMENSION = 2048;
+const TRACE_MAX_FILE_BYTES = 20 * 1024 * 1024;
+// Formats every canvas-capable browser can decode natively. Notably absent:
+// HEIC/HEIF (iPhone default) — browsers can't decode it, so it fails in
+// img.onerror with the format hint below rather than silently.
+const TRACE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif,image/svg+xml";
+
 function strokeLassoPath(ctx: CanvasRenderingContext2D, points: [number, number][]) {
   if (points.length < 2) return;
   ctx.save();
@@ -743,6 +755,7 @@ function strokeLassoPath(ctx: CanvasRenderingContext2D, points: [number, number]
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fffInputRef = useRef<HTMLInputElement | null>(null);
+  const traceInputRef = useRef<HTMLInputElement | null>(null);
   const drawingRef = useRef(false);
   // Wall-clock start of the current drag gesture — the one piece of timing
   // info a completed Stroke's points don't carry themselves, needed for the
@@ -1328,6 +1341,24 @@ export default function Home() {
   // the mount-once pointer-handling effect below.
   const lineSpacingRef = useRef(lineSpacing);
 
+  // Trace image: a reference photo/scan drawn dimmed underneath the line
+  // raster in Free Draw so letterforms can be traced over it. Session-only
+  // on purpose — a decoded photo re-encoded as a data URL would routinely
+  // blow the ~5MB localStorage quota the strokes themselves live in. The
+  // pixels live in a ref (redraw() runs inside the mount-once pointer
+  // effect, same as lineSpacingRef); opacity/scale/offset each keep a small
+  // state mirror so the settings panel re-renders.
+  const traceImageRef = useRef<{ source: CanvasImageSource; width: number; height: number } | null>(null);
+  const [traceImageInfo, setTraceImageInfo] = useState<{ name: string; width: number; height: number } | null>(
+    null
+  );
+  const [traceOpacity, setTraceOpacity] = useState(40);
+  const traceOpacityRef = useRef(40);
+  const [traceScale, setTraceScale] = useState(100);
+  const traceScaleRef = useRef(100);
+  const [traceOffset, setTraceOffsetState] = useState({ x: 24, y: 24 });
+  const traceOffsetRef = useRef({ x: 24, y: 24 });
+
   // Lazy initializer, not useEffect + setGlyphs([]) then load: starting from an empty
   // array and loading afterward would let the save-on-change effect below fire once
   // with [] and clobber whatever was already in storage before the real data arrives.
@@ -1496,6 +1527,23 @@ export default function Home() {
       // spatial reference instead of content sliding under a static grid.
       ctx.save();
       ctx.translate(panOffsetRef.current.x, panOffsetRef.current.y);
+      // The trace image sits UNDER the line raster, not over it: the raster
+      // is the baseline reference the traced letterforms get aligned to, so
+      // its lines must stay visible on top of the photo.
+      const trace = traceImageRef.current;
+      if (trace) {
+        ctx.save();
+        ctx.globalAlpha = traceOpacityRef.current / 100;
+        const k = traceScaleRef.current / 100;
+        ctx.drawImage(
+          trace.source,
+          traceOffsetRef.current.x,
+          traceOffsetRef.current.y,
+          trace.width * k,
+          trace.height * k
+        );
+        ctx.restore();
+      }
       drawLineRaster(
         ctx,
         canvas.clientWidth,
@@ -3858,6 +3906,92 @@ export default function Home() {
     });
   }
 
+  function handleTraceImportClick() {
+    traceInputRef.current?.click();
+  }
+
+  function handleTraceImageChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file next time
+    if (!file) return;
+    if (file.size > TRACE_MAX_FILE_BYTES) {
+      alert("This image is larger than 20MB — export a smaller copy and try again.");
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      // An SVG without width/height attributes reports a 0×0 natural size in
+      // some browsers — substitute something visible instead of drawing a
+      // zero-area image nobody can find on the canvas.
+      let width = img.naturalWidth || 512;
+      let height = img.naturalHeight || 512;
+      let source: CanvasImageSource = img;
+      const maxSide = Math.max(width, height);
+      if (maxSide > TRACE_MAX_DIMENSION) {
+        const shrink = TRACE_MAX_DIMENSION / maxSide;
+        const off = document.createElement("canvas");
+        off.width = Math.round(width * shrink);
+        off.height = Math.round(height * shrink);
+        const offCtx = off.getContext("2d");
+        if (offCtx) {
+          offCtx.drawImage(img, 0, 0, off.width, off.height);
+          source = off;
+          width = off.width;
+          height = off.height;
+        }
+      }
+      traceImageRef.current = { source, width, height };
+      // Start scaled to fit the visible canvas and placed near its top-left
+      // corner (compensating any current pan), clamped to the offset
+      // sliders' range so the sliders can always reach wherever the image
+      // actually landed.
+      const canvas = canvasRef.current;
+      const fit = canvas
+        ? Math.min(1, (canvas.clientWidth * 0.9) / width, (canvas.clientHeight * 0.9) / height)
+        : 1;
+      const pct = Math.max(5, Math.round(fit * 100));
+      traceScaleRef.current = pct;
+      setTraceScale(pct);
+      const clamp = (v: number) => Math.max(-1000, Math.min(1000, Math.round(v)));
+      const offset = { x: clamp(24 - panOffsetRef.current.x), y: clamp(24 - panOffsetRef.current.y) };
+      traceOffsetRef.current = offset;
+      setTraceOffsetState(offset);
+      setTraceImageInfo({ name: file.name, width, height });
+      redrawRef.current();
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      alert("Could not load this image — use a PNG, JPEG, WebP, GIF or SVG file.");
+    };
+    img.src = url;
+  }
+
+  function removeTraceImage() {
+    traceImageRef.current = null;
+    setTraceImageInfo(null);
+    redrawRef.current();
+  }
+
+  function updateTraceOpacity(value: number) {
+    traceOpacityRef.current = value;
+    setTraceOpacity(value);
+    redrawRef.current();
+  }
+
+  function updateTraceScale(value: number) {
+    traceScaleRef.current = value;
+    setTraceScale(value);
+    redrawRef.current();
+  }
+
+  function updateTraceOffset(axis: "x" | "y", value: number) {
+    traceOffsetRef.current = { ...traceOffsetRef.current, [axis]: value };
+    setTraceOffsetState(traceOffsetRef.current);
+    redrawRef.current();
+  }
+
   // "Yes" saves via the existing Export FFF flow first, "No" skips straight
   // to clearing. Same reset as handleClear, plus metrics/settings back to
   // their defaults — Clear all only ever touched glyphs/strokes since it's
@@ -4699,6 +4833,14 @@ export default function Home() {
         style={{ display: "none" }}
       />
 
+      <input
+        ref={traceInputRef}
+        type="file"
+        accept={TRACE_ACCEPT}
+        onChange={handleTraceImageChange}
+        style={{ display: "none" }}
+      />
+
       <div className={styles.body}>
         <main className={styles.main}>
 
@@ -5252,6 +5394,66 @@ export default function Home() {
                   />
                   <span className={styles.val}>{lineSpacing}</span>
                 </label>
+                {traceImageInfo && (
+                  <>
+                    <label className={styles.sliderRow}>
+                      <span>Trace opacity</span>
+                      <input
+                        type="range"
+                        min={5}
+                        max={100}
+                        step={5}
+                        value={traceOpacity}
+                        onChange={(e) => updateTraceOpacity(Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{traceOpacity}%</span>
+                    </label>
+                    <label className={styles.sliderRow}>
+                      <span>Trace scale</span>
+                      <input
+                        type="range"
+                        min={5}
+                        max={400}
+                        step={5}
+                        value={traceScale}
+                        onChange={(e) => updateTraceScale(Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{traceScale}%</span>
+                    </label>
+                    <label className={styles.sliderRow}>
+                      <span>Trace X</span>
+                      <input
+                        type="range"
+                        min={-1000}
+                        max={1000}
+                        step={5}
+                        value={traceOffset.x}
+                        onChange={(e) => updateTraceOffset("x", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{traceOffset.x}</span>
+                    </label>
+                    <label className={styles.sliderRow}>
+                      <span>Trace Y</span>
+                      <input
+                        type="range"
+                        min={-1000}
+                        max={1000}
+                        step={5}
+                        value={traceOffset.y}
+                        onChange={(e) => updateTraceOffset("y", Number(e.target.value))}
+                      />
+                      <span className={styles.val}>{traceOffset.y}</span>
+                    </label>
+                  </>
+                )}
+                <button type="button" className={styles.clearBtn} onClick={handleTraceImportClick}>
+                  {traceImageInfo ? "Replace trace image" : "Import trace image"}
+                </button>
+                {traceImageInfo && (
+                  <button type="button" className={styles.clearBtn} onClick={removeTraceImage}>
+                    Remove trace image
+                  </button>
+                )}
               </div>
             </SettingsSection>
           )}
