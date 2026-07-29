@@ -28,7 +28,7 @@ export type StrokeSettings = {
 };
 
 export const DEFAULT_SETTINGS: StrokeSettings = {
-  mode: "dynamic",
+  mode: "mono",
   size: 20,
   thinning: 0.7,
   smoothing: 0.5,
