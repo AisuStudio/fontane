@@ -6,6 +6,7 @@ import { outlineToPath, outlineToSharpPath, type PathCommand } from "@/lib/conto
 import type { Stroke, StrokePoint } from "@/lib/strokes";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
+import MarketplaceNav from "../marketplace/MarketplaceNav";
 
 // How many not-yet-covered characters go on the line at once — still "a few
 // words" pacing (see the /writer plan), just driven by the real character
@@ -367,13 +368,22 @@ export default function Writer() {
   // Lazy initializer so this only touches localStorage once, client-side —
   // same pattern as loadGlyphs()/loadSettings() elsewhere in the app.
   const [coveredChars, setCoveredChars] = useState<Set<string>>(() => loadCoveredChars());
+  // Free-text override of the auto-generated batch below — the built-in
+  // CHARACTER_SETS are Latin/Cyrillic/Greek/etc. coverage lists, so a script
+  // or language outside all of them (or just a specific pangram someone
+  // wants to practice) had no way in before this. Empty means "use the
+  // automatic character-set batch", same as it always has.
+  const [customText, setCustomText] = useState("");
 
   const selectedChars = [...new Set(CHARACTER_SETS.filter((s) => selectedSetIds.includes(s.id)).flatMap((s) => s.chars))];
   const remainingChars = selectedChars.filter((c) => !coveredChars.has(c));
   const currentBatch = remainingChars.slice(0, BATCH_SIZE);
-  const text = currentBatch.join(" ");
+  const autoText = currentBatch.join(" ");
+  const text = customText.trim() ? customText : autoText;
   const letters = lettersOf(text);
-  const allDone = selectedChars.length > 0 && remainingChars.length === 0;
+  // Custom text has nothing to do with CHARACTER_SETS coverage, so it's
+  // never "done" — only the automatic batch can exhaust itself.
+  const allDone = !customText.trim() && selectedChars.length > 0 && remainingChars.length === 0;
   const pen: PenOptions = { size: penSize, mode: penMode, thinning };
   const penRef = useRef(pen);
   penRef.current = pen;
@@ -532,12 +542,39 @@ export default function Writer() {
 
   return (
     <div style={{ maxWidth: 1000, margin: "0 auto", padding: "40px 24px", fontFamily: "system-ui, sans-serif", color: "#2a2822" }}>
+      <MarketplaceNav />
       <h1 style={{ fontSize: 16, fontWeight: 500, color: "#6b675c", marginBottom: 4 }}>writer — Segmentierungs-Prototyp</h1>
       <p style={{ fontSize: 14, color: "#6b675c", maxWidth: 640, lineHeight: 1.5 }}>
         Schreib den Text oben mit Stylus oder Maus auf der Linie ab — wie eine Abschreibübung, keine Ausfüll-Kästchen.
         Danach gruppiert ein simpler Lücken-Abgleich (die größten Abstände zwischen Strichen, keine Erkennung, kein OCR)
         die Striche in {letters.length} Zeichen, weil die Zeichenfolge ja vorgegeben ist.
       </p>
+
+      <div style={{ marginTop: 16, maxWidth: 640 }}>
+        <label htmlFor="customText" style={{ display: "block", fontSize: 13, color: "#6b675c", marginBottom: 6 }}>
+          Eigener Text zum Abschreiben{" "}
+          <span style={{ color: "#a89f8c" }}>
+            (überschreibt die automatische Zeichensatz-Abfrage unten — für Sprachen/Zeichen außerhalb der eingebauten Sets)
+          </span>
+        </label>
+        <input
+          id="customText"
+          type="text"
+          value={customText}
+          onChange={(e) => setCustomText(e.target.value)}
+          placeholder="Leer lassen für die automatische Zeichensatz-Abfrage"
+          spellCheck={false}
+          style={{
+            width: "100%",
+            fontSize: 14,
+            padding: "8px 10px",
+            borderRadius: 6,
+            border: "1px solid #ddd6c7",
+            color: "#2a2822",
+            fontFamily: "inherit",
+          }}
+        />
+      </div>
 
       <div style={{ marginTop: 20, display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
         {/* Native <details>/<summary> — a real dropdown with zero open/close

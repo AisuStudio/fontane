@@ -99,6 +99,10 @@
 }
 
 .dropdownItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-sm);
   text-align: left;
   font-family: var(--font-sans);
   font-size: 12px;
@@ -109,6 +113,16 @@
   color: var(--color-text);
   cursor: pointer;
   white-space: nowrap;
+}
+
+/* A file-format hint (e.g. "Fontane Font File" next to Import/Export FFF) —
+   FFF isn't a format anyone already knows by its initials, unlike JSON/OTF/SVG. */
+.dropdownItemHint {
+  font-family: var(--font-sans);
+  font-size: 8px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-hazelnut);
 }
 
 .dropdownItem:hover:not(:disabled) {

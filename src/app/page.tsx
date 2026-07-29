@@ -363,6 +363,55 @@ function NibPreview({ nib }: { nib: Nib }) {
   );
 }
 
+// Same idea as NibPreview, generalized to the other applicator: a fixed
+// skeleton run through outlineFor with the CURRENT settings, so Free/Nib/
+// Stipple, Mono/Dynamic, and every one of that brush's own parameters render
+// as one picture instead of a mental model built from slider readouts. Two
+// humps rather than a straight line or a single curve — a nib's width
+// depends on travel direction, so a one-directional sample would only ever
+// show one side of its contrast, and a scatter brush's spacing/jitter needs
+// more than a few px of path to read as a pattern at all.
+const STROKE_PREVIEW_WIDTH = 200;
+const STROKE_PREVIEW_HEIGHT = 60;
+
+function strokePreviewSkeleton(): StrokePoint[] {
+  const points: StrokePoint[] = [];
+  const n = 48;
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const x = 8 + t * (STROKE_PREVIEW_WIDTH - 16);
+    const y = STROKE_PREVIEW_HEIGHT / 2 + Math.sin(t * Math.PI * 2) * (STROKE_PREVIEW_HEIGHT / 2 - 10);
+    // Ramps 0.25 -> 1 -> 0.25 — a natural pen lift at both ends, so Dynamic
+    // mode's taper (and Mono's deliberate lack of one) is visible without
+    // needing a real drawn stroke to compare against.
+    const pressure = Math.sin(t * Math.PI) * 0.75 + 0.25;
+    points.push([x, y, pressure]);
+  }
+  return points;
+}
+// Computed once at module scope: the skeleton itself never changes, only
+// what's applied to it.
+const STROKE_PREVIEW_SKELETON = strokePreviewSkeleton();
+
+function StrokePreview({ settings }: { settings: StrokeSettings }) {
+  const out = outlineFor(STROKE_PREVIEW_SKELETON, settings, undefined, "stroke-preview");
+  const d = out.polygons
+    .filter((polygon) => polygon.length >= 3)
+    .map((polygon) => pathToSvgD(out.smooth ? outlineToPath(polygon) : outlineToSharpPath(polygon)))
+    .join(" ");
+  return (
+    <svg
+      viewBox={`0 0 ${STROKE_PREVIEW_WIDTH} ${STROKE_PREVIEW_HEIGHT}`}
+      width="100%"
+      height={STROKE_PREVIEW_HEIGHT}
+      role="img"
+      aria-label="Preview of the current stroke settings"
+    >
+      <path d={d} fill={COLOR_SELECTED} fillRule="nonzero" />
+    </svg>
+  );
+}
+
 // Lowercase letters that dip below the baseline (their body still sits in
 // the x-height band, only the tail extends to the descender line) vs. ones
 // that reach the ascender line — used to pick which pair of guide lines a
@@ -4326,10 +4375,12 @@ export default function Home() {
                 New File
               </button>
               <button type="button" role="menuitem" className={styles.dropdownItem} onClick={() => { handleImportFffClick(); setOpenMenu(null); }}>
-                Import FFF
+                <span>Import FFF</span>
+                <span className={styles.dropdownItemHint}>Fontane Font File</span>
               </button>
               <button type="button" role="menuitem" className={styles.dropdownItem} onClick={() => { handleDownloadFff(); setOpenMenu(null); }}>
-                Export FFF
+                <span>Export FFF</span>
+                <span className={styles.dropdownItemHint}>Fontane Font File</span>
               </button>
               <button type="button" role="menuitem" className={styles.dropdownItem} onClick={() => { handleDownloadJson(); setOpenMenu(null); }}>
                 Export JSON
@@ -5601,6 +5652,7 @@ export default function Home() {
           {showStrokeControls && STROKE_TOOLS.has(drawTool) && drawTool !== "calligraphy" && (
             <SettingsSection id="stroke" title="Stroke" defaultOpen>
               <div className={styles.sliders}>
+                <StrokePreview settings={settings} />
                 {/* Which applicator turns the skeleton into ink. Everything
                     below this toggle is that brush's own parameter set — the
                     three have almost nothing in common beyond Size, so showing
