@@ -45,6 +45,7 @@ const jsonLd = {
     "Druckempfindliches Freihandzeichnen mit Apple Pencil, Wacom oder Maus",
     "Kalligrafie-Werkzeug: eine Breitfeder mit fester Größe/Ovalität/Winkel, Strichbreite aus der Zugrichtung statt aus dem Druck",
     "Grid-Ansicht mit Führungslinien pro Zeichen (Oberlänge, x-Höhe, Grundlinie, Unterlänge) und verstellbaren Seitenabständen, mit einem Lock-Bearings-Schalter, der verhindert, dass Zeichnen über einem Abstand ihn verschiebt",
+    "Vorlagen-Buchstabe: eine optionale, blasse Comic-Sans-Vorlage in jeder Grid-Zelle zur Orientierung, passend zu den Führungslinien der Zelle skaliert, die verschwindet, sobald man mit dem eigenen Entwurf in dieser Zelle zu zeichnen beginnt",
     "Illustrator-artige Vektorstift-Familie: Stift, Anker hinzufügen, Anker löschen und Anker umwandeln auf vertrauten Kürzeln (P, +, -, C)",
     "Weiche Ankerpunkte mit tangentenstetigen Griffen — das Ziehen eines Griffs hält den gegenüberliegenden auf gleicher Länge ausgerichtet, Alt bricht das Paar, Doppelklick schaltet zwischen weich/eckig um",
     "Gehaltene Tasten wie bei einem Desktop-Stiftwerkzeug: Cmd für kurzzeitige Direktauswahl, Shift für 45-Grad-Beschränkung, Leertaste zum Verschieben, Esc/Enter beendet einen Pfad — mit kontextbezogenen Stift-Cursorn für Hinzufügen, Schließen und Fortsetzen",
@@ -88,7 +89,7 @@ const SECTIONS: Section[] = [
       {
         name: "Grid-Ansicht",
         description:
-          "Eine Zelle pro Zeichen, mit Ober-, x-Höhen-, Grund- und Unterlängen-Linien sowie verschiebbaren Seitenabständen — der systematische Weg, ein ganzes Alphabet zu zeichnen. Ein Lock-Bearings-Schalter fixiert die Abstände, damit Zeichnen darüber sie nicht versehentlich verschiebt.",
+          "Eine Zelle pro Zeichen, mit Ober-, x-Höhen-, Grund- und Unterlängen-Linien sowie verschiebbaren Seitenabständen — der systematische Weg, ein ganzes Alphabet zu zeichnen. Ein Lock-Bearings-Schalter fixiert die Abstände, damit Zeichnen darüber sie nicht versehentlich verschiebt. Ein Vorlagen-Buchstabe-Schalter zeigt eine blasse Comic-Sans-Vorlage als Orientierungshilfe, passend zu den Führungslinien der Zelle skaliert — sie verschwindet, sobald man mit dem eigenen Entwurf in dieser Zelle zu zeichnen beginnt.",
       },
       {
         name: "Mono-Linie & dynamische Striche",

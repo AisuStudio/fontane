@@ -1086,6 +1086,21 @@ export default function Home() {
     window.localStorage.setItem("fontane.lockBearings.v1", String(value));
   }
 
+  // Faint Comic-Sans backdrop letterform behind each Grid cell's guides — an
+  // orientation aid for anyone unsure of a character's basic anatomy before
+  // drawing their own design over it (see src/lib/referenceGlyph.ts). Defaults
+  // on: unlike lockBearings, there's no accident this prevents, so there's no
+  // reason to make new users opt in before they even know it exists.
+  const [showReferenceGlyph, setShowReferenceGlyph] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem("fontane.showReferenceGlyph.v1") !== "false";
+  });
+
+  function updateShowReferenceGlyph(value: boolean) {
+    setShowReferenceGlyph(value);
+    window.localStorage.setItem("fontane.showReferenceGlyph.v1", String(value));
+  }
+
   // Each GridCell's own actual rendered size, keyed by letter — the label
   // bar under the canvas eats some of the grid row's nominal height (see
   // GridCell's onResize), so cellWidth/cellHeightPx alone don't match what a
@@ -5030,6 +5045,7 @@ export default function Home() {
                   rightBearing={glyph?.rightBearing}
                   onBearingsChange={(left, right) => handleBearingsChange(slot, left, right)}
                   lockBearings={lockBearings}
+                  showReferenceGlyph={showReferenceGlyph}
                   onResize={(width, height) => handleCellResize(cellKey, width, height)}
                   widthPx={effectiveWidthPx}
                   heightPx={cellHeightPx}
@@ -5309,6 +5325,16 @@ export default function Home() {
                       onChange={(e) => updateKeepProportions(e.target.checked)}
                     />{" "}
                     Keep Proportions
+                  </span>
+                </label>
+                <label className={styles.sliderRow}>
+                  <span>
+                    <input
+                      type="checkbox"
+                      checked={showReferenceGlyph}
+                      onChange={(e) => updateShowReferenceGlyph(e.target.checked)}
+                    />{" "}
+                    Reference Letterform
                   </span>
                 </label>
               </div>

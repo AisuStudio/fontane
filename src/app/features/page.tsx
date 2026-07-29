@@ -45,6 +45,7 @@ const jsonLd = {
     "Pressure-sensitive freehand drawing with Apple Pencil, Wacom, or a mouse",
     "Calligraphy tool: a broad-nib pen with fixed size/oval/angle, width from stroke direction rather than pressure",
     "Grid View with per-character guides (ascender, x-height, baseline, descender) and adjustable side bearings, with a Lock Bearings toggle so drawing over a bearing draws instead of dragging it",
+    "Reference Letterform: an optional faint Comic Sans backdrop in each Grid cell for orientation, sized to that cell's own guides, which disappears the instant you start drawing your own design there",
     "Illustrator-style vector pen family: Pen, Add Anchor, Delete Anchor, and Convert Anchor tools on familiar shortcuts (P, +, -, C)",
     "Smooth anchor points with tangent-continuity handles — dragging one handle keeps the opposite one aligned at its own length, Alt breaks the pair, double-click toggles smooth/corner",
     "Held-key modifiers like a desktop pen tool: Cmd for momentary direct selection, Shift for 45-degree constraints, Space to pan, Esc/Enter to end a path — with context-aware pen cursors for add, close, and continue",
@@ -88,7 +89,7 @@ const SECTIONS: Section[] = [
       {
         name: "Grid View",
         description:
-          "One cell per character, with ascender, x-height, baseline, and descender guides plus draggable side bearings — the systematic way to draw a full alphabet. A Lock Bearings toggle freezes the bearings so drawing over one draws instead of dragging it.",
+          "One cell per character, with ascender, x-height, baseline, and descender guides plus draggable side bearings — the systematic way to draw a full alphabet. A Lock Bearings toggle freezes the bearings so drawing over one draws instead of dragging it. A Reference Letterform toggle shows a faint Comic Sans backdrop as an orientation guide, sized to that cell's own guides — it disappears the instant you start drawing your own design in that cell.",
       },
       {
         name: "Mono line & Dynamic strokes",

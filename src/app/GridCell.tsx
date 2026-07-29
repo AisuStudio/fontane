@@ -9,6 +9,7 @@ import { simplifyStrokeIndices } from "@/lib/simplify";
 import type { StrokeKind, StrokePoint } from "@/lib/strokes";
 import { calligraphyOutline, type Nib } from "@/lib/calligraphy";
 import type { Metrics } from "@/lib/metrics";
+import { drawReferenceGlyph } from "@/lib/referenceGlyph";
 import { unicodeFor } from "@/lib/glyphs";
 import { setClipboard, getClipboard, type ClipboardStroke } from "@/lib/clipboard";
 import {
@@ -502,6 +503,10 @@ type Props = {
   // owns the toggle), since the whole point is drawing across many cells
   // without having to think about where the bearings sit in each one.
   lockBearings?: boolean;
+  // Faint backdrop letterform (Comic Sans) behind the guides/ink, sized off
+  // this cell's own metrics — an orientation aid, not part of the glyph
+  // itself; never persisted, never exported. See src/lib/referenceGlyph.ts.
+  showReferenceGlyph?: boolean;
   // Reports the canvas's own actual CSS pixel size (not the grid row's
   // nominal height) — the label bar underneath the letter takes some of
   // that row's height for itself, so the canvas is always a bit shorter
@@ -545,6 +550,7 @@ export default function GridCell({
   rightBearing = DEFAULT_RIGHT_BEARING,
   onBearingsChange,
   lockBearings = false,
+  showReferenceGlyph = false,
   onResize,
   widthPx,
   heightPx,
@@ -567,6 +573,7 @@ export default function GridCell({
   const bearingsRef = useRef({ leftBearing, rightBearing });
   const onBearingsChangeRef = useRef(onBearingsChange);
   const lockBearingsRef = useRef(lockBearings);
+  const showReferenceGlyphRef = useRef(showReferenceGlyph);
   const onResizeRef = useRef(onResize);
   const draggingRef = useRef<"left" | "right" | null>(null);
   const redrawRef = useRef<() => void>(() => {});
@@ -651,6 +658,7 @@ export default function GridCell({
   }
   onBearingsChangeRef.current = onBearingsChange;
   lockBearingsRef.current = lockBearings;
+  showReferenceGlyphRef.current = showReferenceGlyph;
   onResizeRef.current = onResize;
   cellDimsRef.current = { width: widthPx, height: heightPx };
   // Same clobber-guard, generalized: don't resync the working stroke data
@@ -713,6 +721,23 @@ export default function GridCell({
         bearingsRef.current.rightBearing,
         lockBearingsRef.current
       );
+      // Hidden the moment the cell has any ink of its own — mid-gesture
+      // (pointsRef, before the stroke even commits) as well as at rest — so
+      // it never sits underneath, or is mistaken for part of, what someone
+      // actually drew.
+      const cellHasInk =
+        pointsRef.current.length > 0 || strokesRef.current.length > 0 || vectorShapesRef.current.length > 0;
+      if (showReferenceGlyphRef.current && !cellHasInk) {
+        drawReferenceGlyph(
+          ctx,
+          canvas.clientWidth,
+          canvas.clientHeight,
+          metricsRef.current,
+          bearingsRef.current.leftBearing,
+          bearingsRef.current.rightBearing,
+          label
+        );
+      }
       for (const s of strokesRef.current) {
         const color =
           s.id === editingStrokeIdRef.current || selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
@@ -1735,11 +1760,15 @@ export default function GridCell({
     // the strokesRef/vectorShapesRef sync guards above.
     if (editingStrokeIdRef.current !== null || transformStartRef.current !== null) return;
     if (editingShapeIdRef.current !== null) return;
+    if (drawingRef.current) return;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawGuides(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing, lockBearings);
+    if (showReferenceGlyph && strokes.length === 0 && vectorShapes.length === 0) {
+      drawReferenceGlyph(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing, label);
+    }
     for (const s of strokes) {
       const color = selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
       fillOutline(ctx, strokeOutline(s, strokeOptions, nib), color);
@@ -1748,7 +1777,7 @@ export default function GridCell({
     // editingShapeIdRef is guaranteed null by the guard above, so this only
     // ever draws the resting state (every shape's outline, no handles).
     if (tool === "vector") drawVectorAffordances(ctx, vectorShapes, null);
-  }, [strokes, vectorShapes, tool, metrics, leftBearing, rightBearing, lockBearings, strokeOptions, nib]);
+  }, [strokes, vectorShapes, tool, metrics, leftBearing, rightBearing, lockBearings, strokeOptions, nib, showReferenceGlyph, label]);
 
   const unicode = unicodeFor(label);
 
