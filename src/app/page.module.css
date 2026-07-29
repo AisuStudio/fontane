@@ -462,6 +462,41 @@
   overflow: hidden;
 }
 
+/* The Grid/Sketcher/Writer/Typer view switcher — tabs above the canvas
+   itself now, not a 3-way toggle buried in the settings sidebar, so which
+   view is active reads as part of the workspace instead of a setting. */
+.viewTabs {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: var(--sp-sm) var(--sp-sm) 0;
+}
+
+.viewTab {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 400;
+  padding: 6px 16px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--color-hazelnut);
+  color: var(--color-vanilla);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.viewTab:hover:not(.viewTabActive) {
+  color: var(--color-blueberry);
+}
+
+.viewTabActive {
+  background: var(--color-vanilla);
+  color: var(--color-blueberry);
+  font-weight: 700;
+  cursor: default;
+}
+
 .canvasWrap {
   position: relative;
   flex: 1;

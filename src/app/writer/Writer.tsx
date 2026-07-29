@@ -407,6 +407,28 @@ export default function Writer() {
     if (phase === "draw") redraw();
   }, [phase, redraw]);
 
+  // Cmd/Ctrl+Z undoes the last stroke — the PC half of "Undo must work on
+  // PC and tablets"; the on-screen Undo button below (next to Reset) is the
+  // tablet half, since a stylus-only device has no Cmd/Ctrl key to press.
+  // Ignored while a text input has focus (the custom-text field above) so
+  // the browser's own native undo works there instead of being hijacked.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (phase !== "draw") return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (strokesRef.current.length === 0) return;
+        strokesRef.current = strokesRef.current.slice(0, -1);
+        setStrokeCount(strokesRef.current.length);
+        redraw();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [phase, redraw]);
+
   // Pen settings affect already-committed strokes too (same "live setting,
   // not baked in" convention as the main app's strokeOutline) — redraw
   // whenever any of them change so what's on screen always matches the
@@ -482,6 +504,18 @@ export default function Writer() {
     setGroups([]);
     setLabels([]);
     setPhase("draw");
+  }
+
+  // Removes the single most recent stroke — repeatable (each call just pops
+  // the current last element), so it doubles as "undo everything" without
+  // needing a separate history stack. Only meaningful in "draw": once
+  // segmentByGaps has run, undoing a stroke wouldn't touch the groups/labels
+  // already on screen, which would be confusing rather than useful.
+  function handleUndo() {
+    if (phase !== "draw" || strokesRef.current.length === 0) return;
+    strokesRef.current = strokesRef.current.slice(0, -1);
+    setStrokeCount(strokesRef.current.length);
+    redraw();
   }
 
   function handleLabelChange(index: number, next: string) {
@@ -695,6 +729,22 @@ export default function Writer() {
               }}
             >
               Auswerten
+            </button>
+            <button
+              type="button"
+              onClick={handleUndo}
+              disabled={strokeCount === 0}
+              title="Letzten Strich rückgängig machen (Cmd/Ctrl+Z)"
+              style={{
+                padding: "8px 16px",
+                borderRadius: 6,
+                border: "1px solid #ddd6c7",
+                background: "#fff",
+                color: strokeCount === 0 ? "#c9c3b4" : "#2a2822",
+                cursor: strokeCount === 0 ? "default" : "pointer",
+              }}
+            >
+              Undo
             </button>
             <button
               type="button"

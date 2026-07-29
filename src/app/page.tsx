@@ -235,8 +235,8 @@ type ViewDef = { key: string; label: string; topMode: TopMode; drawStyle?: DrawS
 // duplicated what File already does and confused "view" with "action".
 const VIEW_DEFS: ViewDef[] = [
   { key: "grid", label: "Grid View", topMode: "draw", drawStyle: "grid" },
-  { key: "free", label: "Free Draw View", topMode: "draw", drawStyle: "free" },
-  { key: "editor", label: "Editor View", topMode: "draw", drawStyle: "editor" },
+  { key: "free", label: "Sketcher", topMode: "draw", drawStyle: "free" },
+  { key: "editor", label: "Typer", topMode: "draw", drawStyle: "editor" },
 ];
 
 // The sidebar's Brush section, in the order they generalize: the envelope
@@ -4910,6 +4910,32 @@ export default function Home() {
       <div className={styles.body}>
         <main className={styles.main}>
 
+      {topMode === "draw" && (
+        <div className={styles.viewTabs} role="tablist" aria-label="View">
+          {VIEW_DEFS.map((v) => {
+            const active = topMode === v.topMode && (!v.drawStyle || drawStyle === v.drawStyle);
+            return (
+              <button
+                key={v.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={`${styles.viewTab} ${active ? styles.viewTabActive : ""}`}
+                onClick={() => selectView(v)}
+              >
+                {v.label}
+              </button>
+            );
+          })}
+          {/* Not a ViewDef/selectView entry — Writer is a separate route
+              (/writer), not a topMode/drawStyle switch within this page —
+              same reasoning as the View menu's own Writer link above. */}
+          <Link href="/writer" role="tab" aria-selected={false} className={styles.viewTab}>
+            Writer (beta)
+          </Link>
+        </div>
+      )}
+
       {topMode === "draw" && drawStyle === "free" && drawTool === "assign" && glyphs.length > 0 && (
         <div className={styles.glyphListWrap}>
           <div className={styles.glyphListHeader}>
@@ -4949,7 +4975,7 @@ export default function Home() {
         {topMode === "draw" && drawStyle === "free" && !freeDrawIntroDismissed && (
           <div className={styles.introOverlay}>
             <div className={styles.introCard}>
-              <h2 className={styles.introTitle}>The Free Draw Editor</h2>
+              <h2 className={styles.introTitle}>The Sketcher</h2>
               <p className={styles.introText}>
                 Here you can write freely, select and assign singly letters, numbers or other glyphs. You can also
                 assign ligatures and alternate letters.
@@ -5166,23 +5192,6 @@ export default function Home() {
         </main>
 
         <aside className={styles.settingsPanel} data-chrome-menu>
-          <div className={styles.modeToggle} role="radiogroup" aria-label="View">
-            {VIEW_DEFS.map((v) => {
-              const active = topMode === v.topMode && (!v.drawStyle || drawStyle === v.drawStyle);
-              return (
-                <button
-                  key={v.key}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  className={`${styles.modeBtn} ${active ? styles.modeBtnActive : ""}`}
-                  onClick={() => selectView(v)}
-                >
-                  {v.label.replace(" View", "")}
-                </button>
-              );
-            })}
-          </div>
           <div className={styles.settingsPanelLabel}>Settings</div>
           {/* Glyphs' Info box, as a palette section: while a pen-family tool
               is active, the current path's vitals live here — fed by the
@@ -5989,7 +5998,7 @@ export default function Home() {
         <div className={styles.statusBar}>
           <span className={styles.hudItem}>
             <span className={styles.hudLabel}>mode</span>
-            {drawStyle === "free" ? "Free" : drawStyle === "grid" ? "Grid" : "Editor"}
+            {drawStyle === "free" ? "Sketcher" : drawStyle === "grid" ? "Grid" : "Typer"}
           </span>
           <span className={styles.hudItem}>
             <span className={styles.hudLabel}>pointerType</span>
