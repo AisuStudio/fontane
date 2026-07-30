@@ -5703,7 +5703,7 @@ export default function Home() {
                   <span>Angle</span>
                   <input
                     type="range"
-                    min={0}
+                    min={-180}
                     max={180}
                     step={1}
                     value={settings.nibAngle}
@@ -5823,7 +5823,7 @@ export default function Home() {
                       <span>Nib angle</span>
                       <input
                         type="range"
-                        min={0}
+                        min={-180}
                         max={180}
                         step={1}
                         value={settings.brush.nib.angle}

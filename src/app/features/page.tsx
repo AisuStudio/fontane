@@ -4,7 +4,7 @@ import PageviewTracker from "../PageviewTracker";
 import { hreflangPaths } from "@/lib/i18n";
 
 const description =
-  "Every feature of Fontane.Studio: pressure-sensitive hand-lettering capture, an Illustrator-grade Bezier pen with smooth anchors and held-key modifiers, Grid and Free drawing, ligatures and alternates, copy/paste across views, and instant OTF export — all running in the browser, free.";
+  "Every feature of Fontane.Studio: pressure-sensitive hand-lettering capture, an Illustrator-grade Bezier pen with smooth anchors and held-key modifiers, Grid View and Sketcher drawing, ligatures and alternates, copy/paste across views, and instant OTF export — all running in the browser, free.";
 
 export const metadata: Metadata = {
   title: "Features — Fontane.Studio",
@@ -45,6 +45,7 @@ const jsonLd = {
     "Calligraphy tool: a broad-nib pen with fixed size/oval/angle, width from stroke direction rather than pressure",
     "Grid View with per-character guides (ascender, x-height, baseline, descender) and adjustable side bearings, with a Lock Bearings toggle so drawing over a bearing draws instead of dragging it",
     "Reference Letterform: an optional faint Comic Sans backdrop in each Grid cell for orientation, sized to that cell's own guides, which disappears the instant you start drawing your own design there",
+    "Stroke preview: a live sample stroke rendered with your current brush (Free/Nib/Stipple) and Mono/Dynamic settings, so the whole Stroke panel reads as one picture instead of slider values",
     "Illustrator-style vector pen family: Pen, Add Anchor, Delete Anchor, and Convert Anchor tools on familiar shortcuts (P, +, -, C)",
     "Smooth anchor points with tangent-continuity handles — dragging one handle keeps the opposite one aligned at its own length, Alt breaks the pair, double-click toggles smooth/corner",
     "Held-key modifiers like a desktop pen tool: Cmd for momentary direct selection, Shift for 45-degree constraints, Space to pan, Esc/Enter to end a path — with context-aware pen cursors for add, close, and continue",
@@ -55,10 +56,10 @@ const jsonLd = {
     "Character set library: Latin Basic, Central European and Western European accents, Cyrillic, Greek, punctuation, and currency/math symbols",
     "Ligatures export with a real, automatic OpenType liga substitution — type the letters and the ligature triggers on its own in apps that respect the feature",
     "Stylistic alternates export as their own named glyphs for manual selection in a glyph panel — and if a letter repeats back to back, a real OpenType calt rule automatically swaps in its alternate so it doesn't stamp identically twice",
-    "Copy and paste strokes and vector shapes within Free Draw, within Grid, and between the two",
+    "Copy and paste strokes and vector shapes within Sketcher, within Grid, and between the two",
     "Move, rotate, and scale tools for reshaping and repositioning drawn letters",
     "Illustrator-style momentary Select: hold Cmd (or Ctrl) while Draw, Brush, Calligraphy, or Eraser is active to lasso-select strokes, release to keep drawing with the same tool",
-    "Editor view to type live preview text using your own tagged glyphs",
+    "Typer to type live preview text using your own tagged glyphs",
     "Animate mode: CSS-driven text animations exportable as a self-contained HTML embed",
     "Instant OTF font export, generated entirely client-side, no upload required",
     "Weight family export: Light, Regular, and Bold as three independent OTF files sharing one family name",
@@ -69,7 +70,7 @@ const jsonLd = {
     "Provenance verification gate that checks a font was actually hand-drawn before it can be published",
     "No cookies, no third-party trackers, GDPR-safe anonymous analytics",
     "Installable as a Progressive Web App, works entirely in the browser",
-    "Writer (beta): copy a known reference text with the stylus and Fontane segments it into individual characters automatically — no OCR, no handwriting recognition, just position against the known sequence",
+    "Writer (beta): copy a known reference text with the stylus and Fontane segments it into individual characters automatically — no OCR, no handwriting recognition, just position against the known sequence; the reference text is itself an editable field, for scripts and languages outside the built-in character sets, and Undo (Cmd/Ctrl+Z, plus an on-screen button for touch/tablet) removes the last stroke",
   ],
 };
 
@@ -81,7 +82,7 @@ const SECTIONS: Section[] = [
     title: "Draw & capture",
     features: [
       {
-        name: "Free Draw",
+        name: "Sketcher",
         description:
           "A freeform canvas for sketching letters exactly as you would on paper, with real pressure-sensitive stroke width from Apple Pencil, Wacom, or a mouse.",
       },
@@ -92,7 +93,8 @@ const SECTIONS: Section[] = [
       },
       {
         name: "Mono line & Dynamic strokes",
-        description: "Switch between constant-width ink and pressure-responsive thickness, with live size/thinning/smoothing/streamline controls.",
+        description:
+          "Switch between constant-width ink and pressure-responsive thickness, with live size/thinning/smoothing/streamline controls and a live stroke preview showing exactly what the current brush and settings produce.",
       },
       {
         name: "Swappable brushes",
@@ -107,7 +109,7 @@ const SECTIONS: Section[] = [
       {
         name: "Writer (beta)",
         description:
-          "Copy a printed reference line with the stylus instead of drawing letter by letter — because the text is already known, Fontane only has to work out where one letter ends and the next begins (the biggest gaps between strokes), not what each one is. No OCR, no handwriting recognition, no server round-trip. Queue up whole character sets (Latin Basic, Cyrillic, punctuation, and more) and track coverage as you go.",
+          "Copy a printed reference line with the stylus instead of drawing letter by letter — because the text is already known, Fontane only has to work out where one letter ends and the next begins (the biggest gaps between strokes), not what each one is. No OCR, no handwriting recognition, no server round-trip. Queue up whole character sets (Latin Basic, Cyrillic, punctuation, and more) and track coverage as you go, or type your own reference text for a script or language outside the built-in sets. Undo (Cmd/Ctrl+Z, or the on-screen button on touch/tablet) removes the last stroke.",
       },
     ],
   },
@@ -117,7 +119,7 @@ const SECTIONS: Section[] = [
       {
         name: "Vector pen family",
         description:
-          "A true Bezier pen with the full Illustrator toolset — Pen (P), Add Anchor (+, inserts without changing the curve), Delete Anchor (-), and Convert Anchor (C) — working in Free Draw and directly inside Grid cells, where shapes auto-tag to the cell's character.",
+          "A true Bezier pen with the full Illustrator toolset — Pen (P), Add Anchor (+, inserts without changing the curve), Delete Anchor (-), and Convert Anchor (C) — working in Sketcher and directly inside Grid cells, where shapes auto-tag to the cell's character.",
       },
       {
         name: "Smooth anchors & held-key modifiers",
@@ -164,7 +166,7 @@ const SECTIONS: Section[] = [
       {
         name: "Copy & paste",
         description:
-          "Duplicate strokes and shapes within Free Draw, within Grid, or across the two — paste into a different Grid cell and it's automatically fitted to size.",
+          "Duplicate strokes and shapes within Sketcher, within Grid, or across the two — paste into a different Grid cell and it's automatically fitted to size.",
       },
       {
         name: "Undo/redo",
@@ -181,7 +183,7 @@ const SECTIONS: Section[] = [
     title: "Compose & preview",
     features: [
       {
-        name: "Editor view",
+        name: "Typer",
         description: "Type freely using your own already-tagged glyphs to see how your in-progress font reads as real text.",
       },
       {
@@ -251,8 +253,8 @@ export default function FeaturesPage() {
       style={{
         minHeight: "100vh",
         position: "relative",
-        background: "#eae8e0",
-        color: "#1f1934",
+        background: "var(--color-vanilla)",
+        color: "var(--color-blueberry)",
         fontFamily: "var(--font-sans)",
         padding: "48px 24px",
         display: "flex",
@@ -267,7 +269,7 @@ export default function FeaturesPage() {
         <MarketplaceNav slug="features" current="en" />
 
         <h1 style={{ fontSize: 28, marginBottom: 8 }}>Features</h1>
-        <p style={{ marginBottom: 40, fontSize: 14, lineHeight: 1.7, opacity: 0.75 }}>
+        <p style={{ marginBottom: 40, fontSize: 14, lineHeight: 1.7, color: "var(--color-hazelnut)" }}>
           Everything Fontane.Studio can do today, running entirely in your browser — from a first pressure-sensitive
           sketch to a finished, exportable font.
         </p>
@@ -279,7 +281,7 @@ export default function FeaturesPage() {
                 fontSize: 18,
                 marginBottom: 16,
                 paddingBottom: 8,
-                borderBottom: "1px solid rgba(31,25,52,0.15)",
+                borderBottom: "1px solid var(--color-cappuccino)",
               }}
             >
               {section.title}
@@ -287,7 +289,7 @@ export default function FeaturesPage() {
             {section.features.map((f) => (
               <div key={f.name} style={{ marginBottom: 16 }}>
                 <h3 style={{ fontSize: 15, marginBottom: 4 }}>{f.name}</h3>
-                <p style={{ fontSize: 14, lineHeight: 1.7, opacity: 0.85 }}>{f.description}</p>
+                <p style={{ fontSize: 14, lineHeight: 1.7, color: "var(--color-hazelnut)" }}>{f.description}</p>
               </div>
             ))}
           </section>
