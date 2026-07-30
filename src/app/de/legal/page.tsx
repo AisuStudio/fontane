@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import PageviewTracker from "../../PageviewTracker";
-import LanguageSwitcher from "../../LanguageSwitcher";
+import MarketplaceNav from "../../marketplace/MarketplaceNav";
 import { hreflangPaths, localizedPath } from "@/lib/i18n";
 
 export const metadata: Metadata = {
@@ -19,19 +19,19 @@ export default function LegalPageDE() {
     <div
       style={{
         minHeight: "100vh",
+        position: "relative",
         background: "#eae8e0",
         color: "#1f1934",
-        fontFamily: "monospace",
+        fontFamily: "var(--font-sans)",
         padding: "48px 24px",
         display: "flex",
         justifyContent: "center",
       }}
     >
       <div style={{ maxWidth: 720, width: "100%" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <h1 style={{ fontSize: 28, marginBottom: 8 }}>Impressum &amp; Datenschutz</h1>
-          <LanguageSwitcher slug="legal" current="de" />
-        </div>
+        <MarketplaceNav slug="legal" current="de" />
+
+        <h1 style={{ fontSize: 28, marginBottom: 8 }}>Impressum &amp; Datenschutz</h1>
         <p style={{ marginBottom: 32, fontSize: 13, lineHeight: 1.6, opacity: 0.7, fontStyle: "italic" }}>
           Vorläufige Übersetzung, noch nicht rechtlich geprüft. Im Zweifel oder bei Abweichungen gilt die{" "}
           <Link href="/legal" style={{ color: "#1f1934" }}>

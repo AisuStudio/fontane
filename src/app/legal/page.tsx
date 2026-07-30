@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import PageviewTracker from "../PageviewTracker";
-import LanguageSwitcher from "../LanguageSwitcher";
+import MarketplaceNav from "../marketplace/MarketplaceNav";
 import { hreflangPaths } from "@/lib/i18n";
 
 export const metadata: Metadata = {
@@ -18,19 +18,19 @@ export default function LegalPage() {
     <div
       style={{
         minHeight: "100vh",
+        position: "relative",
         background: "#eae8e0",
         color: "#1f1934",
-        fontFamily: "monospace",
+        fontFamily: "var(--font-sans)",
         padding: "48px 24px",
         display: "flex",
         justifyContent: "center",
       }}
     >
       <div style={{ maxWidth: 720, width: "100%" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 32 }}>
-          <h1 style={{ fontSize: 28 }}>Imprint &amp; Privacy</h1>
-          <LanguageSwitcher slug="legal" current="en" />
-        </div>
+        <MarketplaceNav slug="legal" current="en" />
+
+        <h1 style={{ fontSize: 28, marginBottom: 32 }}>Imprint &amp; Privacy</h1>
 
         <h2 style={{ fontSize: 18, marginBottom: 12 }}>Imprint</h2>
         <p style={{ marginBottom: 40, fontSize: 14, lineHeight: 1.7 }}>

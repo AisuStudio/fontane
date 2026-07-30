@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import MarketplaceNav from "../marketplace/MarketplaceNav";
 import PageviewTracker from "../PageviewTracker";
-import LanguageSwitcher from "../LanguageSwitcher";
 import { hreflangPaths } from "@/lib/i18n";
 
 const description =
@@ -251,9 +250,10 @@ export default function FeaturesPage() {
     <div
       style={{
         minHeight: "100vh",
+        position: "relative",
         background: "#eae8e0",
         color: "#1f1934",
-        fontFamily: "monospace",
+        fontFamily: "var(--font-sans)",
         padding: "48px 24px",
         display: "flex",
         justifyContent: "center",
@@ -264,12 +264,9 @@ export default function FeaturesPage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
       />
       <div style={{ maxWidth: 720, width: "100%" }}>
-        <MarketplaceNav />
+        <MarketplaceNav slug="features" current="en" />
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <h1 style={{ fontSize: 28, marginBottom: 8 }}>Features</h1>
-          <LanguageSwitcher slug="features" current="en" />
-        </div>
+        <h1 style={{ fontSize: 28, marginBottom: 8 }}>Features</h1>
         <p style={{ marginBottom: 40, fontSize: 14, lineHeight: 1.7, opacity: 0.75 }}>
           Everything Fontane.Studio can do today, running entirely in your browser — from a first pressure-sensitive
           sketch to a finished, exportable font.

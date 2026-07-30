@@ -50,9 +50,10 @@ export default async function FontOverviewPage({
     <div
       style={{
         minHeight: "100vh",
+        position: "relative",
         background: "#eae8e0",
         color: "#1f1934",
-        fontFamily: "monospace",
+        fontFamily: "var(--font-sans)",
         padding: "48px 24px",
         display: "flex",
         justifyContent: "center",
@@ -60,7 +61,7 @@ export default async function FontOverviewPage({
     >
       <PageviewTracker page="marketplace-listing" />
       <div style={{ maxWidth: 720, width: "100%" }}>
-        <MarketplaceNav />
+        <MarketplaceNav slug="marketplace" current="en" />
         <h1 style={{ fontSize: 32, margin: "12px 0 4px" }}>{font.display_name}</h1>
         <p style={{ opacity: 0.6, marginBottom: font.author_name ? 4 : 32, fontSize: 14 }}>
           {font.glyph_count} glyphs · {font.download_count} downloads · published {new Date(font.created_at).toLocaleDateString()}

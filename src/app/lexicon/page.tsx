@@ -178,6 +178,7 @@ export default function LexiconPage() {
     <div
       style={{
         minHeight: "100vh",
+        position: "relative",
         background: "#eae8e0",
         color: "#1f1934",
         fontFamily: "var(--font-sans)",
@@ -188,7 +189,7 @@ export default function LexiconPage() {
       }}
     >
       <div style={{ maxWidth: 720, width: "100%" }}>
-        <MarketplaceNav />
+        <MarketplaceNav slug="lexicon" current="en" />
 
         <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>Type Lexicon</h1>
         <p style={{ marginBottom: 40, fontSize: 14, fontWeight: 400, lineHeight: 1.7, opacity: 0.75 }}>

@@ -37,9 +37,10 @@ export default async function MarketplacePage() {
     <div
       style={{
         minHeight: "100vh",
+        position: "relative",
         background: "#eae8e0",
         color: "#1f1934",
-        fontFamily: "monospace",
+        fontFamily: "var(--font-sans)",
         padding: "48px 24px",
         display: "flex",
         justifyContent: "center",
@@ -47,7 +48,7 @@ export default async function MarketplacePage() {
     >
       <PageviewTracker />
       <div style={{ maxWidth: 720, width: "100%" }}>
-        <MarketplaceNav />
+        <MarketplaceNav slug="marketplace" current="en" />
         <h1 style={{ fontSize: 28, marginBottom: 4 }}>Marketplace</h1>
         <p style={{ opacity: 0.6, marginBottom: 32, fontSize: 14 }}>
           Fonts published with Fontane.Studio — free to download, unrestricted use.

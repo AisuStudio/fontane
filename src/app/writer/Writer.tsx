@@ -575,8 +575,17 @@ export default function Writer() {
   }
 
   return (
-    <div style={{ maxWidth: 1000, margin: "0 auto", padding: "40px 24px", fontFamily: "system-ui, sans-serif", color: "#2a2822" }}>
-      <MarketplaceNav />
+    <div
+      style={{
+        maxWidth: 1000,
+        margin: "0 auto",
+        padding: "40px 24px",
+        position: "relative",
+        fontFamily: "system-ui, sans-serif",
+        color: "#2a2822",
+      }}
+    >
+      <MarketplaceNav slug="writer" current="en" />
       <h1 style={{ fontSize: 16, fontWeight: 500, color: "#6b675c", marginBottom: 4 }}>writer — Segmentierungs-Prototyp</h1>
       <p style={{ fontSize: 14, color: "#6b675c", maxWidth: 640, lineHeight: 1.5 }}>
         Schreib den Text oben mit Stylus oder Maus auf der Linie ab — wie eine Abschreibübung, keine Ausfüll-Kästchen.
