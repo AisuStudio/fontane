@@ -284,12 +284,42 @@
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-lg);
-  padding: var(--sp-lg);
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--color-blueberry);
   color: var(--color-vanilla);
   border-left: 1px solid var(--color-blueberry);
+}
+
+.settingsPanelCollapsed {
+  width: 32px;
+}
+
+.settingsPanelToggle {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: var(--sp-sm);
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--color-vanilla);
+  cursor: pointer;
+  display: flex;
+}
+
+.settingsPanelBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-lg);
+  padding: 0 var(--sp-lg) var(--sp-lg);
+  overflow-y: auto;
+  /* Keeps content laid out at its normal width while the aside itself
+     shrinks to 32px — .settingsPanel's own overflow:hidden clips it, so
+     nothing needs to reflow or wrap during the collapse. */
+  min-width: 280px;
+}
+
+.settingsPanelCollapsed .settingsPanelBody {
+  display: none;
 }
 
 .settingsPanelLabel {
@@ -478,7 +508,9 @@
   font-weight: 400;
   padding: 6px 16px;
   border: 0;
-  border-radius: 6px;
+  /* Top corners only — the tab reads as attached to the artboard below it,
+     folder-tab style, rather than a floating pill button. */
+  border-radius: 6px 6px 0 0;
   background: var(--color-hazelnut);
   color: var(--color-vanilla);
   cursor: pointer;
@@ -588,6 +620,34 @@
 .introActions {
   display: flex;
   justify-content: flex-end;
+}
+
+.coachStepCount {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  margin-bottom: var(--sp-sm);
+}
+
+.coachActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--sp-md);
+}
+
+.coachSkip {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--color-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
 }
 
 .canvas {
@@ -953,13 +1013,6 @@
   outline: none;
 }
 
-.charsetToggle {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-md);
-  flex: 1;
-}
-
 .charsetOption {
   display: inline-flex;
   align-items: center;
@@ -1041,19 +1094,6 @@
   padding: 40px;
 }
 
-.gridSetupOverlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* Unlike .introOverlay (Free Draw's peek-through card), this one dims the
-     grid underneath — a hard gate, not an optional tip, so it should read
-     as genuinely blocking rather than just floating on top. */
-  background: rgba(31, 25, 52, 0.55);
-  z-index: 6;
-}
-
 .gridCell {
   /* Width and height are both explicit inline styles from page.tsx (the
      global Cell size/Width sliders, or a glyph's own widthRatio override —
@@ -1126,6 +1166,31 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* First-run onboarding: the one empty cell the user should draw in first.
+   Outline (not box-shadow) because it isn't clipped by this element's own
+   overflow:hidden — a box-shadow painted on the same box would risk being
+   cut off depending on stacking, outline never is. */
+.gridCellFirstStep {
+  outline: 2px solid var(--color-grape);
+  outline-offset: 2px;
+}
+
+.gridCellHintBubble {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  right: 4px;
+  z-index: 3;
+  padding: 4px 6px;
+  background: var(--color-grape);
+  color: var(--color-vanilla);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  line-height: 1.3;
+  border-radius: 4px;
+  pointer-events: none;
 }
 
 .modalBackdrop {

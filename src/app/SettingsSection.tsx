@@ -17,9 +17,13 @@ type Props = {
   title: string;
   defaultOpen?: boolean;
   children: ReactNode;
+  // Lets CoachMarks find this header via document.querySelector, and force
+  // it open while a tour step targets it — optional, only sections the tour
+  // actually visits set one.
+  tourId?: string;
 };
 
-export default function SettingsSection({ id, title, defaultOpen, children }: Props) {
+export default function SettingsSection({ id, title, defaultOpen, children, tourId }: Props) {
   // Lazy init straight from localStorage (uiPrefs.ts) — the stored value
   // wins over defaultOpen, so a section the user closed stays closed.
   const [open, setOpen] = useState(() => loadSectionOpen(id, defaultOpen ?? true));
@@ -32,7 +36,13 @@ export default function SettingsSection({ id, title, defaultOpen, children }: Pr
 
   return (
     <div>
-      <button type="button" className={styles.sectionHeader} onClick={toggle} aria-expanded={open}>
+      <button
+        type="button"
+        className={styles.sectionHeader}
+        onClick={toggle}
+        aria-expanded={open}
+        data-tour={tourId}
+      >
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         {title}
       </button>

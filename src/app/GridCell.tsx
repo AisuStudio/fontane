@@ -531,6 +531,13 @@ type Props = {
   // Double-clicking the handle clears the glyph's own override so it goes
   // back to following the global Width slider.
   onWidthReset?: () => void;
+  // First-run onboarding only — page.tsx sets this on exactly one empty
+  // cell (the first slot with no glyph yet) while the whole project has
+  // zero glyphs. Purely presentational: an outline (outline isn't clipped
+  // by this cell's own overflow:hidden, unlike box-shadow would risk being)
+  // plus a small callout. Disappears on its own once any glyph exists
+  // anywhere, since the parent stops passing it — no dismiss state needed.
+  firstStepHint?: string;
 };
 
 export default function GridCell({
@@ -556,6 +563,7 @@ export default function GridCell({
   heightPx,
   onWidthCommit,
   onWidthReset,
+  firstStepHint,
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1834,7 +1842,12 @@ export default function GridCell({
   }
 
   return (
-    <div className={styles.gridCell} ref={wrapperRef} style={{ width: widthPx, height: heightPx }}>
+    <div
+      className={`${styles.gridCell} ${firstStepHint ? styles.gridCellFirstStep : ""}`}
+      ref={wrapperRef}
+      style={{ width: widthPx, height: heightPx }}
+    >
+      {firstStepHint && <div className={styles.gridCellHintBubble}>{firstStepHint}</div>}
       <canvas ref={canvasRef} className={styles.gridCellCanvas} tabIndex={-1} style={{ outline: "none" }} />
       <div className={styles.gridCellLabelBar}>
         <span className={styles.gridCellLabelChar}>{label}</span>

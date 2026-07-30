@@ -55,6 +55,7 @@ import { downloadSkeletonSvg } from "@/lib/exportSkeleton";
 import { saveFile } from "@/lib/saveFile";
 import { loadMetrics, saveMetrics, DEFAULT_METRICS, type Metrics } from "@/lib/metrics";
 import { loadSettings, saveSettings, DEFAULT_SETTINGS, type StrokeSettings } from "@/lib/settings";
+import { loadSectionOpen, saveSectionOpen } from "@/lib/uiPrefs";
 import { downloadProjectFile, parseProjectFile, applyProjectFile, buildProjectFile } from "@/lib/projectFile";
 import { getStoredCode, setStoredCode, clearStoredCode } from "@/lib/cloudCode";
 import { layoutText } from "@/lib/layoutText";
@@ -77,8 +78,11 @@ import {
   CirclePlus,
   CircleMinus,
   Spline,
+  PanelRightClose,
+  PanelRightOpen,
 } from "lucide-react";
 import GridCell, { DEFAULT_LEFT_BEARING, DEFAULT_RIGHT_BEARING, type CellTool } from "./GridCell";
+import CoachMarks from "./CoachMarks";
 import SettingsSection from "./SettingsSection";
 import BetaBadge from "./BetaBadge";
 import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
@@ -1457,6 +1461,21 @@ export default function Home() {
     ...taggedSlots,
     ...extraGridSlots,
   ];
+  // First-run onboarding: with a totally empty project, the very first Grid
+  // slot gets a highlight + hint bubble (see GridCell's firstStepHint) so
+  // there's an obvious place to draw instead of 50+ equally-blank cells.
+  // Naturally stops applying the moment any glyph exists anywhere — no
+  // separate dismiss flag to maintain. Gated on firstStepReady for the same
+  // reason the old character-set gate needed gridSetupGateReady: `glyphs`
+  // loads from localStorage, empty on the server but already populated by
+  // the client's first render, so reading glyphs.length directly here would
+  // hydration-mismatch on any project that already has glyphs.
+  const [firstStepReady, setFirstStepReady] = useState(false);
+  useEffect(() => setFirstStepReady(true), []);
+  const firstStepCellKey =
+    firstStepReady && glyphs.length === 0 && gridSlots.length > 0
+      ? `${gridSlots[0].kind}:${gridSlots[0].name}`
+      : null;
   const taggedIdsRef = useRef<Set<string>>(new Set());
   const taggedIdsVectorRef = useRef<Set<string>>(new Set());
   // Shapes whose owning glyph has no strokes at all — those ARE the letter and
@@ -1490,6 +1509,47 @@ export default function Home() {
   // always starts collapsed, same as any other "peek, then expand" panel.
   const [glyphListExpanded, setGlyphListExpanded] = useState(false);
 
+  // Whole-panel collapse, separate from each SettingsSection's own
+  // open/closed state — reuses the same id-→boolean store (uiPrefs.ts) under
+  // its own key, so it persists across reloads exactly like a section would,
+  // without uiPrefs needing to know panel-level collapse is a different kind
+  // of thing.
+  const [settingsPanelOpen, setSettingsPanelOpen] = useState(() => loadSectionOpen("settingsPanel", true));
+  function toggleSettingsPanel() {
+    const next = !settingsPanelOpen;
+    setSettingsPanelOpen(next);
+    saveSectionOpen("settingsPanel", next);
+  }
+  // Same hydration guard as firstStepReady/gridSetupGateReady used to need:
+  // the server always renders the true fallback (no localStorage), so
+  // anyone who has actually collapsed the panel would otherwise mismatch on
+  // reload. Rendering stays "open" for one tick, then snaps to the real
+  // value once mounted — a tiny flash beats a console error every reload.
+  const [panelReady, setPanelReady] = useState(false);
+  useEffect(() => setPanelReady(true), []);
+  const displaySettingsPanelOpen = panelReady ? settingsPanelOpen : true;
+
+  // Coach marks tour: starts false on every render (server and client
+  // alike, so no hydration guard needed here — nothing reads localStorage
+  // until the effect below runs, client-only, after mount). Auto-launches
+  // once, the very first time anyone lands on Grid with nothing drawn yet;
+  // "Show tour again" in the View menu (see startTour) can always bring it
+  // back regardless of that flag.
+  const [tourActive, setTourActive] = useState(false);
+  useEffect(() => {
+    const seen = window.localStorage.getItem("fontane.seenCoachTour.v1") === "true";
+    if (!seen && topMode === "draw" && drawStyle === "grid") setTourActive(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  function finishTour() {
+    setTourActive(false);
+    window.localStorage.setItem("fontane.seenCoachTour.v1", "true");
+  }
+  function startTour() {
+    setTourActive(true);
+    setOpenMenu(null);
+  }
+
   // Shown once, the first time Free Draw is ever opened — dismissed
   // permanently via localStorage, same pattern as every other one-time flag
   // in this file (not a real "first session" check, just "has Start ever
@@ -1503,24 +1563,6 @@ export default function Home() {
     setFreeDrawIntroDismissed(true);
     window.localStorage.setItem("fontane.seenFreeDrawIntro.v1", "true");
   }
-
-  // Unlike freeDrawIntroDismissed, deliberately NOT a permanent localStorage
-  // flag — a hard gate, not a one-time tip. Session-only: dismissing it lets
-  // you draw for the rest of this session, but an empty project (glyphs.length
-  // === 0) shows it again on the next load. Once any glyph exists, the
-  // project is no longer "empty" and this never shows again regardless —
-  // same idea as choosing an encoding before a new font file in Glyphs.
-  const [gridSetupDismissed, setGridSetupDismissed] = useState(false);
-  // The gate's own condition reads `glyphs`, which is loaded from
-  // localStorage — empty on the server, but already populated by the time
-  // the client's first render runs, so gating on glyphs.length directly
-  // would render a whole extra subtree server vs. client and hard-fail
-  // hydration (unlike the width handle's style-only mismatch, this is a
-  // structural one that can't be patched up). Deferring to a flag that only
-  // flips true in an effect keeps the first client render identical to the
-  // server's, then reveals the gate a tick later if it's actually needed.
-  const [gridSetupGateReady, setGridSetupGateReady] = useState(false);
-  useEffect(() => setGridSetupGateReady(true), []);
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const selectedIdsRef = useRef<Set<string>>(new Set());
@@ -4486,6 +4528,9 @@ export default function Home() {
               <Link href="/writer" role="menuitem" className={styles.dropdownItem} onClick={() => setOpenMenu(null)}>
                 Writer (BETA)
               </Link>
+              <button type="button" role="menuitem" className={styles.dropdownItem} onClick={startTour}>
+                Show tour again
+              </button>
             </div>
           )}
         </div>
@@ -4638,6 +4683,7 @@ export default function Home() {
               aria-haspopup="menu"
               aria-expanded={openMenu === "charset"}
               onClick={() => setOpenMenu((m) => (m === "charset" ? null : "charset"))}
+              data-tour="charsets"
             >
               Character Sets
             </button>
@@ -4798,7 +4844,7 @@ export default function Home() {
       </div>
 
       {topMode === "draw" && drawStyle !== "editor" && (
-        <div className={styles.toolsViewsBar} data-chrome-menu>
+        <div className={styles.toolsViewsBar} data-chrome-menu data-tour="tools">
           <div className={styles.hBarGroup}>
             <span className={styles.hBarLabel}>Tools</span>
             {toolSlots.map((slot) => {
@@ -4911,7 +4957,7 @@ export default function Home() {
         <main className={styles.main}>
 
       {topMode === "draw" && (
-        <div className={styles.viewTabs} role="tablist" aria-label="View">
+        <div className={styles.viewTabs} role="tablist" aria-label="View" data-tour="view-tabs">
           {VIEW_DEFS.map((v) => {
             const active = topMode === v.topMode && (!v.drawStyle || drawStyle === v.drawStyle);
             return (
@@ -5018,7 +5064,7 @@ export default function Home() {
       </div>
 
       {topMode === "draw" && drawStyle === "grid" && (
-        <div className={styles.gridWrap}>
+        <div className={styles.gridWrap} data-tour="grid">
           <div className={styles.grid}>
             {gridSlots.map((slot) => {
               const { name, kind } = slot;
@@ -5128,39 +5174,17 @@ export default function Home() {
                   heightPx={cellHeightPx}
                   onWidthCommit={glyph ? (newWidthPx) => handleGlyphWidthChange(slot, newWidthPx) : undefined}
                   onWidthReset={() => handleGlyphWidthReset(slot)}
+                  firstStepHint={cellKey === firstStepCellKey ? "Draw your first letter here" : undefined}
                 />
               );
             })}
           </div>
-          {gridSetupGateReady && glyphs.length === 0 && !gridSetupDismissed && (
-            <div className={styles.gridSetupOverlay}>
-              <div className={styles.introCard}>
-                <h2 className={styles.introTitle}>Choose Your Character Sets</h2>
-                <p className={styles.introText}>
-                  Before you start drawing, pick which character sets belong in this Grid. You can still add or
-                  remove sets later from the Character Sets menu — this just decides what you see first.
-                </p>
-                <div className={styles.charsetToggle} style={{ marginBottom: 24 }}>
-                  {CHARACTER_SETS.map((set) => (
-                    <label key={set.id} className={styles.charsetOption}>
-                      <input type="checkbox" checked={activeSetIds.has(set.id)} onChange={() => toggleCharacterSet(set.id)} />
-                      {set.label}
-                    </label>
-                  ))}
-                </div>
-                <div className={styles.introActions}>
-                  <button
-                    type="button"
-                    className={styles.clearBtn}
-                    disabled={activeSetIds.size === 0}
-                    onClick={() => setGridSetupDismissed(true)}
-                  >
-                    Start
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* No more hard gate here before you can draw — Latin Basic is
+              already the active default, and the exact same picker lives in
+              the Character Sets menu for anyone who wants Cyrillic/Greek/
+              etc. from the start. Blocking every empty project behind a
+              full-screen "pick your charsets" modal was pure first-impression
+              friction with no upside the menu doesn't already cover. */}
         </div>
       )}
 
@@ -5191,7 +5215,24 @@ export default function Home() {
       )}
         </main>
 
-        <aside className={styles.settingsPanel} data-chrome-menu>
+        <aside
+          className={`${styles.settingsPanel} ${!displaySettingsPanelOpen ? styles.settingsPanelCollapsed : ""}`}
+          data-chrome-menu
+        >
+          {/* Whole-panel collapse (separate from each SettingsSection's own
+              open/closed state) — a pure CSS class toggle, content stays
+              mounted (display:none). Renders off displaySettingsPanelOpen,
+              not settingsPanelOpen directly — see panelReady above. */}
+          <button
+            type="button"
+            className={styles.settingsPanelToggle}
+            onClick={toggleSettingsPanel}
+            aria-expanded={displaySettingsPanelOpen}
+            title={displaySettingsPanelOpen ? "Collapse settings panel" : "Expand settings panel"}
+          >
+            {displaySettingsPanelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+          </button>
+          <div className={styles.settingsPanelBody} aria-hidden={!displaySettingsPanelOpen}>
           <div className={styles.settingsPanelLabel}>Settings</div>
           {/* Glyphs' Info box, as a palette section: while a pen-family tool
               is active, the current path's vitals live here — fed by the
@@ -5328,6 +5369,7 @@ export default function Home() {
           )}
           {topMode === "draw" && drawStyle === "grid" && (
             <>
+              <SettingsSection id="cellLayout" title="Cell" defaultOpen tourId="cell-settings">
               <div className={styles.sliders}>
                 {/* The label stays the same string in both states on purpose:
                     lockBearings is read from localStorage during the first render
@@ -5398,10 +5440,13 @@ export default function Home() {
                   </span>
                 </label>
               </div>
+              </SettingsSection>
               {/* Collapsed by default, Glyphs' Font Info parallel: the four
                   font metrics get set once early on and then mostly rest,
-                  unlike the cell-layout controls above them. */}
-              <SettingsSection id="metrics" title="Metrics" defaultOpen={false}>
+                  unlike the cell-layout controls above them (still open by
+                  default, unlike Metrics — just also collapsible now, for
+                  consistency with every other group in this panel). */}
+              <SettingsSection id="metrics" title="Metrics" defaultOpen={false} tourId="metrics">
                 <div className={styles.sliders}>
                   <label className={styles.sliderRow}>
                     <span>Ascender</span>
@@ -5574,6 +5619,7 @@ export default function Home() {
 
           {topMode === "draw" && drawStyle === "editor" && (
             <>
+              <SettingsSection id="text" title="Text" defaultOpen>
               <div className={styles.sliders}>
                 <label className={styles.sliderRow}>
                   <span>Size</span>
@@ -5598,6 +5644,7 @@ export default function Home() {
                   </span>
                 </label>
               </div>
+              </SettingsSection>
               {missingEditorGlyphs.length > 0 && (
                 <div className={styles.animateWarning}>missing glyphs: {missingEditorGlyphs.join(" ")}</div>
               )}
@@ -5610,9 +5657,12 @@ export default function Home() {
               design — width comes from the direction you move), and Size
               would read as one shared control while actually being two. The
               Brush toggle stays out too: a calligraphy stroke never goes
-              through an applicator (see outlineFor). */}
+              through an applicator (see outlineFor). Collapsed by default —
+              first thing a new user sees shouldn't be a wall of font-brush
+              jargon before their first stroke; the toggle still remembers
+              itself once opened, same as Metrics. */}
           {showStrokeControls && drawTool === "calligraphy" && (
-            <SettingsSection id="stroke" title="Stroke" defaultOpen>
+            <SettingsSection id="stroke" title="Stroke" defaultOpen={false} tourId="stroke">
               <div className={styles.sliders}>
                 <NibPreview nib={nibFor(settings)} />
                 <label className={styles.sliderRow}>
@@ -5657,9 +5707,10 @@ export default function Home() {
 
           {/* Stroke sliders only while a stroke-family tool is active (see
               STROKE_TOOLS) — with a vector or transform tool up they'd
-              promise an effect the tool can't deliver. */}
+              promise an effect the tool can't deliver. Collapsed by default,
+              same reasoning as the calligraphy variant above. */}
           {showStrokeControls && STROKE_TOOLS.has(drawTool) && drawTool !== "calligraphy" && (
-            <SettingsSection id="stroke" title="Stroke" defaultOpen>
+            <SettingsSection id="stroke" title="Stroke" defaultOpen={false} tourId="stroke">
               <div className={styles.sliders}>
                 <StrokePreview settings={settings} />
                 {/* Which applicator turns the skeleton into ink. Everything
@@ -5991,8 +6042,11 @@ export default function Home() {
               </div>
             </SettingsSection>
           )}
+          </div>
         </aside>
       </div>
+
+      {tourActive && <CoachMarks onFinish={finishTour} />}
 
       {topMode === "draw" && (
         <div className={styles.statusBar}>
