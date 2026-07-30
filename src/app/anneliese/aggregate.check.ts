@@ -42,6 +42,13 @@ const rows: EventRow[] = [
   row({ type: "duration", session_id: "s1", seconds: 120, page: "studio:grid", created_at: "2026-07-20T10:02:00.000Z" }),
   row({ type: "duration", session_id: "s1", seconds: 60, page: "studio:editor", created_at: "2026-07-20T10:03:00.000Z" }),
   row({ type: "export", session_id: "s1", format: "otf", bucket: "6-20", created_at: "2026-07-20T10:03:10.000Z" }),
+  // No session/page on purpose — a third 07-20 sample that only exercises
+  // buildBuckets()'s day-level median/max, without touching sessionFacts
+  // (needs session_id) or timeByView (needs page). Without a third sample,
+  // median() on an even-length array always equals the max (its upper-
+  // middle tie-break picks the larger of two) — this is what actually
+  // proves medianSeconds and maxSeconds aren't secretly the same number.
+  row({ type: "duration", session_id: null, page: null, seconds: 10, created_at: "2026-07-20T10:01:30.000Z" }),
 
   row({ session_id: "s2", device: "mobile", referrer: "www.google.com", created_at: "2026-07-21T10:00:00.000Z" }),
   row({ type: "tool_use", session_id: "s2", format: "pen", page: "studio:free", pointer: "touch", created_at: "2026-07-21T10:00:10.000Z" }),
@@ -91,12 +98,14 @@ eq("direct/referred pageviews", [o.directCount, o.referredCount], [3, 2]);
 eq("sessions coverage note", o.sessionsSince, "2026-07-20");
 eq("bucket count = 7 days", o.buckets.length, 7);
 eq("bucket totals", o.buckets.map((b) => b.total), [0, 1, 1, 1, 1, 1, 0]);
-// Median-seconds-per-day: 07-20 has two duration rows (60, 120) — median()
-// takes the upper-middle of an even-length sort, so [60,120] -> 120, not
-// the 90 a true average or lower-middle median would give. Every other day
-// with data has exactly one sample, so its "median" is just that sample.
-eq("bucket median seconds", o.buckets.map((b) => b.medianSeconds), [0, 0, 120, 8, 5, 3000, 0]);
-eq("bucket duration samples", o.buckets.map((b) => b.durationSamples), [0, 0, 2, 1, 1, 1, 0]);
+// Median/max-seconds-per-day: 07-20 has three duration rows (120, 60, 10) —
+// median() takes the middle of the sort ([10,60,120] -> 60), max takes the
+// largest (120), genuinely different numbers. Every other day with data
+// has exactly one sample, so both its "median" and "max" are just that
+// sample.
+eq("bucket median seconds", o.buckets.map((b) => b.medianSeconds), [0, 0, 60, 8, 5, 3000, 0]);
+eq("bucket max seconds", o.buckets.map((b) => b.maxSeconds), [0, 0, 120, 8, 5, 3000, 0]);
+eq("bucket duration samples", o.buckets.map((b) => b.durationSamples), [0, 0, 3, 1, 1, 1, 0]);
 
 // Device segment: desktop = s1, s3, s4. The legacy pageview and the
 // server-side download row must drop out, not be attributed to desktop.

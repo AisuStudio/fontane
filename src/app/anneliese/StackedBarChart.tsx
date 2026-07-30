@@ -26,14 +26,18 @@ const MUTED = "#89877f"; // axis/label ink
 // Not reused from the source palette (blue/violet/aqua/yellow/green above) —
 // this is a different kind of series (a line, not a stacked segment) and
 // needs to read as visually distinct at a glance, not like a sixth source.
+// Median is the solid, heavier line ("typical"); max is the same hue,
+// lighter and dashed ("the one big day"), rather than an unrelated color —
+// they're two readings of the same underlying thing, not two metrics.
 const MEDIAN_LINE_COLOR = "#c2410c"; // burnt orange
+const MAX_LINE_COLOR = "#ea9a6f"; // lighter burnt orange
 
 type Tooltip = { x: number; y: number; label: string; source: string; count: number };
-type MedianTooltip = { x: number; y: number; label: string; seconds: number; samples: number };
+type SecondsTooltip = { x: number; y: number; label: string; seconds: number; samples: number; kind: "median" | "max" };
 
 export default function StackedBarChart({ buckets, legend }: { buckets: Bucket[]; legend: { label: string; color: string }[] }) {
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
-  const [medianTooltip, setMedianTooltip] = useState<MedianTooltip | null>(null);
+  const [secondsTooltip, setSecondsTooltip] = useState<SecondsTooltip | null>(null);
 
   if (buckets.length === 0) {
     return <p style={{ opacity: 0.6 }}>no traffic in this range</p>;
@@ -54,33 +58,42 @@ export default function StackedBarChart({ buckets, legend }: { buckets: Bucket[]
   // Skip x labels if there are too many buckets to fit without collision.
   const labelStride = Math.ceil(buckets.length / 14);
 
-  // Median-seconds line, own right-hand scale — independent of niceMax
+  // Median/max-seconds lines, own right-hand scale — independent of niceMax
   // above, since seconds and visit counts have nothing to do with each
-  // other's range. Only buckets with at least one duration sample get a
-  // point; the line breaks (not dips to zero) across a bucket with none, so
-  // a quiet day reads as "no data" rather than "nobody stayed."
-  const maxSeconds = Math.max(1, ...buckets.map((b) => b.medianSeconds));
-  const secMagnitude = Math.pow(10, Math.floor(Math.log10(maxSeconds)));
-  const niceMaxSeconds = Math.ceil(maxSeconds / secMagnitude) * secMagnitude || 1;
-  const medianPoints = buckets.map((b, i) => ({
-    x: i * slotW + slotW / 2,
-    y: b.durationSamples > 0 ? plotH - (b.medianSeconds / niceMaxSeconds) * plotH : null,
-    bucket: b,
-  }));
-  // Consecutive runs of real points only — a null (no-data bucket) always
-  // ends the current run rather than being skipped-over, so the line never
-  // silently bridges a gap it has no data for.
-  const medianRuns: { x: number; y: number }[][] = [];
-  let currentRun: { x: number; y: number }[] = [];
-  for (const p of medianPoints) {
-    if (p.y == null) {
-      if (currentRun.length) medianRuns.push(currentRun);
-      currentRun = [];
-    } else {
-      currentRun.push({ x: p.x, y: p.y });
+  // other's range. Ceiling comes from maxSeconds (always >= medianSeconds),
+  // so the max line's peaks never clip. Only buckets with at least one
+  // duration sample get a point; each line breaks (not dips to zero)
+  // across a bucket with none, so a quiet day reads as "no data" rather
+  // than "nobody stayed."
+  const secondsCeiling = Math.max(1, ...buckets.map((b) => b.maxSeconds));
+  const secMagnitude = Math.pow(10, Math.floor(Math.log10(secondsCeiling)));
+  const niceMaxSeconds = Math.ceil(secondsCeiling / secMagnitude) * secMagnitude || 1;
+
+  function runsFor(pick: (b: Bucket) => number) {
+    const points = buckets.map((b, i) => ({
+      x: i * slotW + slotW / 2,
+      y: b.durationSamples > 0 ? plotH - (pick(b) / niceMaxSeconds) * plotH : null,
+      bucket: b,
+    }));
+    // Consecutive runs of real points only — a null (no-data bucket) always
+    // ends the current run rather than being skipped-over, so the line
+    // never silently bridges a gap it has no data for.
+    const runs: { x: number; y: number }[][] = [];
+    let current: { x: number; y: number }[] = [];
+    for (const p of points) {
+      if (p.y == null) {
+        if (current.length) runs.push(current);
+        current = [];
+      } else {
+        current.push({ x: p.x, y: p.y });
+      }
     }
+    if (current.length) runs.push(current);
+    return { points, runs };
   }
-  if (currentRun.length) medianRuns.push(currentRun);
+
+  const medianSeries = runsFor((b) => b.medianSeconds);
+  const maxSeries = runsFor((b) => b.maxSeconds);
 
   return (
     <div style={{ position: "relative" }}>
@@ -146,10 +159,11 @@ export default function StackedBarChart({ buckets, legend }: { buckets: Bucket[]
           );
         })}
 
-        {/* Right-hand axis for the median-seconds line — its own scale, on
-            purpose: 0 always sits on the same baseline as the left axis's 0,
-            but the ceiling means something completely different (seconds,
-            not visits), so no gridlines are shared between the two. */}
+        {/* Right-hand axis for the median/max-seconds lines — its own
+            scale, on purpose: 0 always sits on the same baseline as the
+            left axis's 0, but the ceiling means something completely
+            different (seconds, not visits), so no gridlines are shared
+            between the two. */}
         <text x={VIEW_W} y={12} fontSize={11} fill={MEDIAN_LINE_COLOR} textAnchor="end" fontFamily="monospace">
           {formatDuration(niceMaxSeconds)}
         </text>
@@ -157,7 +171,40 @@ export default function StackedBarChart({ buckets, legend }: { buckets: Bucket[]
           0s
         </text>
 
-        {medianRuns.map((run, ri) => (
+        {maxSeries.runs.map((run, ri) => (
+          <polyline
+            key={ri}
+            points={run.map((p) => `${p.x},${p.y}`).join(" ")}
+            fill="none"
+            stroke={MAX_LINE_COLOR}
+            strokeWidth={1.5}
+            strokeDasharray="4 3"
+          />
+        ))}
+        {maxSeries.points.map(
+          (p, i) =>
+            p.y != null && (
+              <circle
+                key={i}
+                cx={p.x}
+                cy={p.y}
+                r={3}
+                fill={MAX_LINE_COLOR}
+                style={{ cursor: "pointer" }}
+                tabIndex={0}
+                onMouseEnter={() =>
+                  setSecondsTooltip({ x: p.x, y: p.y!, label: p.bucket.label, seconds: p.bucket.maxSeconds, samples: p.bucket.durationSamples, kind: "max" })
+                }
+                onFocus={() =>
+                  setSecondsTooltip({ x: p.x, y: p.y!, label: p.bucket.label, seconds: p.bucket.maxSeconds, samples: p.bucket.durationSamples, kind: "max" })
+                }
+                onMouseLeave={() => setSecondsTooltip(null)}
+                onBlur={() => setSecondsTooltip(null)}
+              />
+            )
+        )}
+
+        {medianSeries.runs.map((run, ri) => (
           <polyline
             key={ri}
             points={run.map((p) => `${p.x},${p.y}`).join(" ")}
@@ -166,7 +213,7 @@ export default function StackedBarChart({ buckets, legend }: { buckets: Bucket[]
             strokeWidth={2}
           />
         ))}
-        {medianPoints.map(
+        {medianSeries.points.map(
           (p, i) =>
             p.y != null && (
               <circle
@@ -178,13 +225,13 @@ export default function StackedBarChart({ buckets, legend }: { buckets: Bucket[]
                 style={{ cursor: "pointer" }}
                 tabIndex={0}
                 onMouseEnter={() =>
-                  setMedianTooltip({ x: p.x, y: p.y!, label: p.bucket.label, seconds: p.bucket.medianSeconds, samples: p.bucket.durationSamples })
+                  setSecondsTooltip({ x: p.x, y: p.y!, label: p.bucket.label, seconds: p.bucket.medianSeconds, samples: p.bucket.durationSamples, kind: "median" })
                 }
                 onFocus={() =>
-                  setMedianTooltip({ x: p.x, y: p.y!, label: p.bucket.label, seconds: p.bucket.medianSeconds, samples: p.bucket.durationSamples })
+                  setSecondsTooltip({ x: p.x, y: p.y!, label: p.bucket.label, seconds: p.bucket.medianSeconds, samples: p.bucket.durationSamples, kind: "median" })
                 }
-                onMouseLeave={() => setMedianTooltip(null)}
-                onBlur={() => setMedianTooltip(null)}
+                onMouseLeave={() => setSecondsTooltip(null)}
+                onBlur={() => setSecondsTooltip(null)}
               />
             )
         )}
@@ -211,12 +258,12 @@ export default function StackedBarChart({ buckets, legend }: { buckets: Bucket[]
         </div>
       )}
 
-      {medianTooltip && (
+      {secondsTooltip && (
         <div
           style={{
             position: "absolute",
-            left: `${(medianTooltip.x / VIEW_W) * 100}%`,
-            top: `${(medianTooltip.y / VIEW_H) * 100}%`,
+            left: `${(secondsTooltip.x / VIEW_W) * 100}%`,
+            top: `${(secondsTooltip.y / VIEW_H) * 100}%`,
             transform: "translate(-50%, -100%)",
             background: "#1f1934",
             color: "#eae8e0",
@@ -228,9 +275,9 @@ export default function StackedBarChart({ buckets, legend }: { buckets: Bucket[]
             marginTop: -6,
           }}
         >
-          <strong>{formatDuration(medianTooltip.seconds)}</strong> median — {medianTooltip.label}{" "}
+          <strong>{formatDuration(secondsTooltip.seconds)}</strong> {secondsTooltip.kind} — {secondsTooltip.label}{" "}
           <span style={{ opacity: 0.7 }}>
-            ({medianTooltip.samples} sample{medianTooltip.samples === 1 ? "" : "s"})
+            ({secondsTooltip.samples} sample{secondsTooltip.samples === 1 ? "" : "s"})
           </span>
         </div>
       )}
@@ -244,10 +291,23 @@ export default function StackedBarChart({ buckets, legend }: { buckets: Bucket[]
             </div>
           ))}
           {buckets.some((b) => b.durationSamples > 0) && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 10, height: 2, background: MEDIAN_LINE_COLOR, display: "inline-block" }} />
-              median seconds/day (right axis)
-            </div>
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 10, height: 2, background: MEDIAN_LINE_COLOR, display: "inline-block" }} />
+                median seconds/day (right axis)
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span
+                  style={{
+                    width: 10,
+                    height: 2,
+                    backgroundImage: `repeating-linear-gradient(90deg, ${MAX_LINE_COLOR} 0 3px, transparent 3px 5px)`,
+                    display: "inline-block",
+                  }}
+                />
+                longest visit/day — the quiet-hour days the median hides
+              </div>
+            </>
           )}
         </div>
       )}

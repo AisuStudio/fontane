@@ -27,10 +27,11 @@ export type Bucket = {
   label: string;
   total: number;
   sources: SourceSlice[];
-  // Median of raw duration-row seconds falling on this bucket, and how many
-  // samples that median came from (0 renders as "no data" in the chart
-  // rather than a false zero — see StackedBarChart).
+  // Median and max of raw duration-row seconds falling on this bucket, and
+  // how many samples they came from (0 samples renders as "no data" in the
+  // chart rather than a false zero — see StackedBarChart).
   medianSeconds: number;
+  maxSeconds: number;
   durationSamples: number;
 };
 export type Ranked = { label: string; count: number };
@@ -267,12 +268,18 @@ function buildBuckets(pageviews: EventRow[], durationRows: EventRow[], range: Da
     const sources: SourceSlice[] = sourceOrder
       .map((label) => ({ label, count: bySource?.get(label) ?? 0, color: colorFor(label) }))
       .filter((s) => s.count > 0);
+    const daySeconds = secondsByBucket.get(key) ?? [];
     return {
       label: bucketLabel(key),
       total: sources.reduce((sum, s) => sum + s.count, 0),
       sources,
-      medianSeconds: median(secondsByBucket.get(key) ?? []),
-      durationSamples: secondsByBucket.get(key)?.length ?? 0,
+      medianSeconds: median(daySeconds),
+      // The longest single segment that day — most visits are a quick look
+      // around, but the median alone hides the rare day someone actually
+      // sat down and worked for a while. Same samples as medianSeconds, so
+      // it's 0 (not a real max) exactly when durationSamples is 0 too.
+      maxSeconds: daySeconds.length ? Math.max(...daySeconds) : 0,
+      durationSamples: daySeconds.length,
     };
   });
 
