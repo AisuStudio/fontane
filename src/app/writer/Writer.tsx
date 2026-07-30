@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { applyBrush } from "@/lib/brush";
 import { outlineToPath, outlineToSharpPath, type PathCommand } from "@/lib/contour";
 import type { Stroke, StrokePoint } from "@/lib/strokes";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
 import MarketplaceNav from "../marketplace/MarketplaceNav";
+import styles from "../page.module.css";
 
 // How many not-yet-covered characters go on the line at once — still "a few
 // words" pacing (see the /writer plan), just driven by the real character
@@ -575,17 +577,44 @@ export default function Writer() {
   }
 
   return (
-    <div
-      style={{
-        maxWidth: 1000,
-        margin: "0 auto",
-        padding: "40px 24px",
-        position: "relative",
-        fontFamily: "system-ui, sans-serif",
-        color: "#2a2822",
-      }}
-    >
-      <MarketplaceNav slug="writer" current="en" />
+    // Two levels, same shape as the other info pages (features, legal, ...):
+    // BetaBadge (rendered inside MarketplaceNav) is position:absolute and
+    // anchors to the nearest position:relative ancestor — that has to be
+    // THIS full-width outer div, not the maxWidth:1000 column below, or the
+    // badge ends up positioned relative to a narrow, centered box instead of
+    // the actual page corner (it did — visibly off-screen on anything
+    // narrower than ~1000px).
+    <div style={{ position: "relative" }}>
+      <div
+        style={{
+          maxWidth: 1000,
+          margin: "0 auto",
+          padding: "40px 24px",
+          fontFamily: "system-ui, sans-serif",
+          color: "#2a2822",
+        }}
+      >
+        <MarketplaceNav slug="writer" current="en" />
+
+        {/* Same view tabs the app itself shows above its canvas — Writer is
+            a separate route, not an SPA view switch, so Grid/Sketcher/Typer
+            deep-link back into "/" via the ?view= param page.tsx reads on
+            mount (see its useEffect near topMode/drawStyle). */}
+        <div className={styles.viewTabs} role="tablist" aria-label="View" style={{ marginBottom: 24 }}>
+          <Link href="/?view=grid" role="tab" aria-selected={false} className={styles.viewTab}>
+            Grid View
+          </Link>
+          <Link href="/?view=free" role="tab" aria-selected={false} className={styles.viewTab}>
+            Sketcher
+          </Link>
+          <Link href="/?view=editor" role="tab" aria-selected={false} className={styles.viewTab}>
+            Typer
+          </Link>
+          <span role="tab" aria-selected={true} className={`${styles.viewTab} ${styles.viewTabActive}`}>
+            Writer (beta)
+          </span>
+        </div>
+
       <h1 style={{ fontSize: 16, fontWeight: 500, color: "#6b675c", marginBottom: 4 }}>writer — Segmentierungs-Prototyp</h1>
       <p style={{ fontSize: 14, color: "#6b675c", maxWidth: 640, lineHeight: 1.5 }}>
         Schreib den Text oben mit Stylus oder Maus auf der Linie ab — wie eine Abschreibübung, keine Ausfüll-Kästchen.
@@ -820,6 +849,7 @@ export default function Writer() {
           </div>
         </>
       )}
+      </div>
     </div>
   );
 }

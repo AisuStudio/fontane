@@ -848,6 +848,25 @@ export default function Home() {
   const [topMode, setTopMode] = useState<TopMode>("draw");
   const [drawStyle, setDrawStyle] = useState<DrawStyle>("grid");
 
+  // ?view=free|editor|grid deep-links into a specific view on load — added
+  // so the Writer page's own view tabs (a separate route, not part of this
+  // SPA) can send you into Sketcher/Typer specifically instead of always
+  // landing on the Grid default. Read once on mount only (client-only, so no
+  // hydration concern — the very first render is identical either way, this
+  // just fires a state update a tick later like any other one-time effect
+  // here), then the param is stripped so a later reload doesn't re-force it
+  // over whatever view you've since switched to.
+  useEffect(() => {
+    const key = new URLSearchParams(window.location.search).get("view");
+    const match = VIEW_DEFS.find((v) => v.key === key);
+    if (!match) return;
+    setTopMode(match.topMode);
+    if (match.drawStyle) setDrawStyle(match.drawStyle);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("view");
+    window.history.replaceState(null, "", url);
+  }, []);
+
   // Menu bar dropdown (Fontane/File/Edit/View/Tools) — dismissed by the
   // outside-click listener below.
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
