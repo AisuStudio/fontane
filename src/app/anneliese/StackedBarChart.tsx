@@ -12,6 +12,12 @@ import { formatDuration } from "./filters";
 const VIEW_W = 900;
 const VIEW_H = 220;
 const AXIS_LABEL_H = 24; // reserved for the x-axis date labels
+// Reserved strip on the right for the median-seconds axis text ("3m 20s",
+// "0s") — without it, the last bucket sits flush against VIEW_W and its own
+// value label collides with the axis text sitting at the same edge. The
+// left (count) axis never needed this: its labels sit above their own
+// gridline with the plot's natural empty space to their right.
+const RIGHT_AXIS_W = 40;
 const BAR_MAX_W = 24;
 const SEGMENT_GAP = 2; // surface gap between stacked segments
 const AXIS_COLOR = "#c3c2b7"; // baseline/axis, one step off the cream surface
@@ -41,7 +47,8 @@ export default function StackedBarChart({ buckets, legend }: { buckets: Bucket[]
   const gridSteps = [0, niceMax * 0.25, niceMax * 0.5, niceMax * 0.75, niceMax];
 
   const plotH = VIEW_H - AXIS_LABEL_H;
-  const slotW = VIEW_W / buckets.length;
+  const plotW = VIEW_W - RIGHT_AXIS_W;
+  const slotW = plotW / buckets.length;
   const barW = Math.min(BAR_MAX_W, slotW * 0.7);
 
   // Skip x labels if there are too many buckets to fit without collision.
@@ -87,14 +94,14 @@ export default function StackedBarChart({ buckets, legend }: { buckets: Bucket[]
           const y = plotH - (v / niceMax) * plotH;
           return (
             <g key={v}>
-              <line x1={0} x2={VIEW_W} y1={y} y2={y} stroke={GRID_COLOR} strokeWidth={1} />
+              <line x1={0} x2={plotW} y1={y} y2={y} stroke={GRID_COLOR} strokeWidth={1} />
               <text x={0} y={y - 4} fontSize={11} fill={MUTED} fontFamily="monospace">
                 {Math.round(v)}
               </text>
             </g>
           );
         })}
-        <line x1={0} x2={VIEW_W} y1={plotH} y2={plotH} stroke={AXIS_COLOR} strokeWidth={1} />
+        <line x1={0} x2={plotW} y1={plotH} y2={plotH} stroke={AXIS_COLOR} strokeWidth={1} />
 
         {buckets.map((bucket, i) => {
           const barX = i * slotW + (slotW - barW) / 2;
