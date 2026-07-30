@@ -6091,6 +6091,10 @@ export default function Home() {
             ) : (
               <ol className={styles.modalList}>
                 <li>
+                  <strong>Guided tour</strong> — the first visit to Grid walks through the layout automatically;
+                  replay it anytime from View → Show tour again.
+                </li>
+                <li>
                   <strong>Draw</strong> — two ways to capture handwriting. <strong>Free</strong> is an open canvas:
                   sketch anywhere, at any size, in any order. <strong>Grid</strong> is one cell per character —
                   drawing into a cell both captures the stroke and tags it to that letter in one step, no separate
@@ -6102,10 +6106,9 @@ export default function Home() {
                   needed.
                 </li>
                 <li>
-                  <strong>Character Sets</strong> — starting Grid on an empty project asks you to pick which
-                  character sets to draw first (Latin Basic, Central European, Western European, Numbers,
-                  Punctuation, Symbols). That&apos;s just a starting point, not a commitment — add or remove sets
-                  anytime from the Character Sets menu, and cells for any newly added set appear right away.
+                  <strong>Character Sets</strong> — Grid starts on Latin Basic. Add Central European, Western
+                  European, Cyrillic, Greek, Numbers, Punctuation, or Symbols anytime from the Character Sets menu;
+                  cells for any newly added set appear right away.
                 </li>
                 <li>
                   <strong>The Free Draw workflow</strong> — write freely, select, and assign single letters,
