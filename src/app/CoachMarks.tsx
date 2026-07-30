@@ -1,7 +1,8 @@
 "use client";
 
-import { useLayoutEffect, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useState, type CSSProperties } from "react";
 import styles from "./page.module.css";
+import { trackTour } from "@/lib/analytics";
 
 type Placement = "bottom" | "left" | "center";
 
@@ -77,6 +78,14 @@ export default function CoachMarks({ onFinish }: { onFinish: () => void }) {
   const [rect, setRect] = useState<DOMRect | null>(null);
   const step = COACH_STEPS[index];
 
+  // One "started" per mounted tour instance — covers both the auto-launch
+  // and a deliberate "Show tour again", since either way this is the point
+  // a tour actually began.
+  useEffect(() => {
+    trackTour("started");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Re-measures on every step change (and window resize) rather than once —
   // a step's target can be a different size/position than the last one, and
   // the settings-panel headers move if the panel was just toggled.
@@ -106,10 +115,17 @@ export default function CoachMarks({ onFinish }: { onFinish: () => void }) {
 
   function next() {
     if (index < COACH_STEPS.length - 1) setIndex(index + 1);
-    else onFinish();
+    else {
+      trackTour("completed");
+      onFinish();
+    }
   }
   function back() {
     if (index > 0) setIndex(index - 1);
+  }
+  function skip() {
+    trackTour(`skipped:${index + 1}`);
+    onFinish();
   }
 
   // Classic spotlight trick: one box, sized to the target, whose shadow
@@ -199,7 +215,7 @@ export default function CoachMarks({ onFinish }: { onFinish: () => void }) {
         </h3>
         <p className={styles.introText}>{step.body}</p>
         <div className={styles.coachActions}>
-          <button type="button" className={styles.coachSkip} onClick={onFinish}>
+          <button type="button" className={styles.coachSkip} onClick={skip}>
             Skip
           </button>
           <div style={{ display: "flex", gap: 8 }}>

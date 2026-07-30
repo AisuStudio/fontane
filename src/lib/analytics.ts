@@ -170,3 +170,12 @@ export function trackGate(what: string) {
 export function trackError(where: string) {
   send({ type: "error", format: where });
 }
+
+// The coach marks tour's outcome: "started" once per tour instance
+// (auto-launch or a deliberate "Show tour again"), "completed" if Done was
+// reached, or "skipped:N" with the 1-based step it was skipped at. The step
+// number is exact, not bucketed — it's a UI position, not document content,
+// same precision level as trackToolUse's tool name.
+export function trackTour(what: string) {
+  send({ type: "tour", format: what });
+}

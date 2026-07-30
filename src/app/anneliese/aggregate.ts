@@ -428,6 +428,11 @@ export function computeDetail(input: { allRows: EventRow[]; filters: Filters }) 
     marketplaceDownloads: exportRows.filter((r) => r.format === "marketplace-download").length,
     gates: countBy(rows, (r) => (r.type === "gate" ? r.format : null)),
     errors: countBy(rows, (r) => (r.type === "error" ? r.format : null)),
+    tourStarted: rows.filter((r) => r.type === "tour" && r.format === "started").length,
+    tourCompleted: rows.filter((r) => r.type === "tour" && r.format === "completed").length,
+    tourSkips: countBy(rows, (r) =>
+      r.type === "tour" && r.format?.startsWith("skipped:") ? `step ${r.format.slice(8)}` : null
+    ),
     toolViewSince: coverageSince(allRows, (r) => r.type === "tool_use" && r.page != null, filters.from),
     pointerSince: coverageSince(allRows, (r) => r.pointer != null, filters.from),
     exportSizeSince: coverageSince(allRows, (r) => r.type === "export" && r.bucket != null, filters.from),

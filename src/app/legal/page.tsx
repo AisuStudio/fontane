@@ -105,6 +105,10 @@ export default function LegalPage() {
             an export failed, with a short label saying where. Never the code you typed, and never the contents
             of an error.
           </li>
+          <li>
+            <strong>Guided tour</strong> — that the first-time tour started, that it was completed, or the step
+            number (1–8) it was skipped at. Never anything about what you drew.
+          </li>
         </ul>
         <p style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7 }}>
           Your language is taken from the <code>Accept-Language</code> header your browser sends with the request

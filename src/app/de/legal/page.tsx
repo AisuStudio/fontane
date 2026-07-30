@@ -118,6 +118,11 @@ export default function LegalPageDE() {
             etwas wie ein Export fehlgeschlagen ist, mit einem kurzen Label zum Ort. Nie der eingegebene Code,
             und nie der Inhalt eines Fehlers.
           </li>
+          <li>
+            <strong>Geführte Tour</strong> — dass die Erststart-Tour begonnen wurde, dass sie komplett
+            durchlaufen wurde, oder bei welchem Schritt (1–8) sie abgebrochen wurde. Nie irgendetwas darüber,
+            was du gezeichnet hast.
+          </li>
         </ul>
         <p style={{ marginBottom: 16, fontSize: 14, lineHeight: 1.7 }}>
           Deine Sprache wird aus dem <code>Accept-Language</code>-Header entnommen, den dein Browser ohnehin mit

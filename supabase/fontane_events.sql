@@ -147,6 +147,15 @@ create index if not exists fontane_events_type_idx on fontane_events (type);
 -- /anneliese scopes every query to a date range, and the per-session metrics
 -- group by session_id within that range.
 create index if not exists fontane_events_created_at_idx on fontane_events (created_at);
+
+-- One more event type (2026-07-30), for the first-time coach marks tour:
+-- - tour: `format` is "started", "completed", or "skipped:N" (N = the
+--   1-based step it was abandoned at). Reuses the existing `format` column,
+--   same shape as gate/error. Answers whether the tour is actually helping
+--   or just something everyone dismisses immediately.
+alter table fontane_events drop constraint if exists fontane_events_type_check;
+alter table fontane_events add constraint fontane_events_type_check
+  check (type in ('pageview', 'duration', 'export', 'tool_use', 'undo', 'charset', 'gate', 'error', 'tour'));
 create index if not exists fontane_events_session_idx on fontane_events (session_id);
 
 -- service_role bypasses RLS but NOT plain SQL privileges — a table created

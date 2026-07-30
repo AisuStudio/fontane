@@ -175,6 +175,30 @@ export default async function AnnelieseDetailPage({
           </div>
         </div>
       </Section>
+
+      <Section
+        title="guided tour"
+        note="does the first-time tour help, or do people bail — started vs completed, and the step skips cluster at"
+      >
+        {stats.tourStarted === 0 ? (
+          <Empty>none</Empty>
+        ) : (
+          <>
+            <p style={{ fontSize: 13, marginBottom: stats.tourSkips.length > 0 ? 16 : 0 }}>
+              {stats.tourStarted} started, {stats.tourCompleted} completed{" "}
+              <span style={{ opacity: 0.6 }}>
+                (<Ratio n={stats.tourCompleted} of={stats.tourStarted} />)
+              </span>
+            </p>
+            {stats.tourSkips.length > 0 && (
+              <div>
+                <div style={{ opacity: 0.6, fontSize: 13, marginBottom: 8 }}>skipped at</div>
+                <BarTable rows={stats.tourSkips} />
+              </div>
+            )}
+          </>
+        )}
+      </Section>
     </Shell>
   );
 }

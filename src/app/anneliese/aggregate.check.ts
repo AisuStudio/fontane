@@ -60,6 +60,10 @@ const rows: EventRow[] = [
   row({ type: "charset", session_id: "s1", format: "latin-extended", bucket: "on", created_at: "2026-07-20T10:00:40.000Z" }),
   row({ type: "gate", session_id: "s3", format: "cloud-code", created_at: "2026-07-22T10:00:05.000Z" }),
   row({ type: "error", session_id: "s1", format: "export:otf", created_at: "2026-07-20T10:03:11.000Z" }),
+  row({ type: "tour", session_id: "s1", format: "started", created_at: "2026-07-20T10:00:01.000Z" }),
+  row({ type: "tour", session_id: "s1", format: "completed", created_at: "2026-07-20T10:00:45.000Z" }),
+  row({ type: "tour", session_id: "s2", format: "started", created_at: "2026-07-21T09:00:01.000Z" }),
+  row({ type: "tour", session_id: "s2", format: "skipped:3", created_at: "2026-07-21T09:00:10.000Z" }),
 ];
 
 const filters = { from: "2026-07-18", to: "2026-07-24", device: null };
@@ -105,6 +109,9 @@ eq("exports incl. server-side download", d.exports.map((e) => e.label).sort(), [
 eq("charsets", d.charsets, [{ label: "latin-extended", on: 1, off: 0 }]);
 eq("gates", d.gates, [{ label: "cloud-code", count: 1 }]);
 eq("errors", d.errors, [{ label: "export:otf", count: 1 }]);
+eq("tour started", d.tourStarted, 2);
+eq("tour completed", d.tourCompleted, 1);
+eq("tour skips", d.tourSkips, [{ label: "step 3", count: 1 }]);
 eq("time by view sorted by total", d.timeByView.map((t) => [t.view, t.totalSeconds]), [
   ["studio:free", 3008],
   ["studio:grid", 125],
