@@ -83,6 +83,7 @@ import {
 } from "lucide-react";
 import GridCell, { DEFAULT_LEFT_BEARING, DEFAULT_RIGHT_BEARING, type CellTool } from "./GridCell";
 import CoachMarks from "./CoachMarks";
+import Writer from "./writer/Writer";
 import SettingsSection from "./SettingsSection";
 import BetaBadge from "./BetaBadge";
 import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
@@ -105,7 +106,7 @@ import {
 // glyph per cell), and Editor (compose/preview text using already-tagged
 // glyphs — no drawing of its own yet).
 type TopMode = "draw" | "animate";
-type DrawStyle = "free" | "grid" | "editor";
+type DrawStyle = "free" | "grid" | "editor" | "writer";
 // Nudge and Assign only ever apply to Free — reshaping a Grid cell's
 // single-letter stroke via anchors, or lasso-tagging a stroke to a glyph,
 // isn't the point of the Grid/Editor views (Grid already tags a stroke to
@@ -241,6 +242,7 @@ const VIEW_DEFS: ViewDef[] = [
   { key: "grid", label: "Grid View", topMode: "draw", drawStyle: "grid" },
   { key: "free", label: "Sketcher", topMode: "draw", drawStyle: "free" },
   { key: "editor", label: "Typer", topMode: "draw", drawStyle: "editor" },
+  { key: "writer", label: "Writer (beta)", topMode: "draw", drawStyle: "writer" },
 ];
 
 // The sidebar's Brush section, in the order they generalize: the envelope
@@ -1267,9 +1269,10 @@ export default function Home() {
   const viewLabelRef = useRef("studio:grid");
   viewLabelRef.current = topMode === "draw" ? `studio:${drawStyle}` : `studio:${topMode}`;
   // Editor has no stroke settings/tools of its own yet (Phase 1 is
-  // read-only composition) — Free and Grid still get the full Pen/Eraser/
-  // Nudge + stroke-appearance controls.
-  const showStrokeControls = topMode === "draw" && drawStyle !== "editor";
+  // read-only composition), and Writer has its own separate pen-size
+  // control rather than the shared Draw/Vector/Brush toolbar — Free and
+  // Grid still get the full Pen/Eraser/Nudge + stroke-appearance controls.
+  const showStrokeControls = topMode === "draw" && drawStyle !== "editor" && drawStyle !== "writer";
 
   const [drawTool, setDrawTool] = useState<DrawTool>("pen");
   const drawToolRef = useRef(drawTool);
@@ -4539,14 +4542,6 @@ export default function Home() {
                   </button>
                 );
               })}
-              {/* Not a ViewDef/selectView entry on purpose — Writer is a
-                  separate route (/writer), not a topMode/drawStyle switch
-                  within this page, so it's a plain nav link rather than
-                  going through the topMode/drawStyle machinery the rest of
-                  this dropdown shares. */}
-              <Link href="/writer" role="menuitem" className={styles.dropdownItem} onClick={() => setOpenMenu(null)}>
-                Writer (BETA)
-              </Link>
               <button type="button" role="menuitem" className={styles.dropdownItem} onClick={startTour}>
                 Show tour again
               </button>
@@ -4862,7 +4857,7 @@ export default function Home() {
         </div>
       </div>
 
-      {topMode === "draw" && drawStyle !== "editor" && (
+      {topMode === "draw" && drawStyle !== "editor" && drawStyle !== "writer" && (
         <div className={styles.toolsViewsBar} data-chrome-menu data-tour="tools">
           <div className={styles.hBarGroup}>
             <span className={styles.hBarLabel}>Tools</span>
@@ -4992,12 +4987,6 @@ export default function Home() {
               </button>
             );
           })}
-          {/* Not a ViewDef/selectView entry — Writer is a separate route
-              (/writer), not a topMode/drawStyle switch within this page —
-              same reasoning as the View menu's own Writer link above. */}
-          <Link href="/writer" role="tab" aria-selected={false} className={styles.viewTab}>
-            Writer (beta)
-          </Link>
         </div>
       )}
 
@@ -5220,6 +5209,8 @@ export default function Home() {
           useLigatures={useLigatures}
         />
       )}
+
+      {topMode === "draw" && drawStyle === "writer" && <Writer />}
 
       {topMode === "animate" && (
         <AnimatePanel
@@ -6071,7 +6062,7 @@ export default function Home() {
         <div className={styles.statusBar}>
           <span className={styles.hudItem}>
             <span className={styles.hudLabel}>mode</span>
-            {drawStyle === "free" ? "Sketcher" : drawStyle === "grid" ? "Grid" : "Typer"}
+            {drawStyle === "free" ? "Sketcher" : drawStyle === "grid" ? "Grid" : drawStyle === "writer" ? "Writer" : "Typer"}
           </span>
           <span className={styles.hudItem}>
             <span className={styles.hudLabel}>pointerType</span>
