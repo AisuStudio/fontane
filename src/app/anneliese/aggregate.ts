@@ -23,7 +23,16 @@ const REFERRER_COLORS = ["#1baf7a", "#eda100", "#008300"]; // aqua, yellow, gree
 const MAX_NAMED_REFERRERS = REFERRER_COLORS.length;
 
 export type SourceSlice = { label: string; count: number; color: string };
-export type Bucket = { label: string; total: number; sources: SourceSlice[] };
+export type Bucket = {
+  label: string;
+  total: number;
+  sources: SourceSlice[];
+  // Median of raw duration-row seconds falling on this bucket, and how many
+  // samples that median came from (0 renders as "no data" in the chart
+  // rather than a false zero — see StackedBarChart).
+  medianSeconds: number;
+  durationSamples: number;
+};
 export type Ranked = { label: string; count: number };
 
 // One row of fontane_events, exactly as stored — see supabase/fontane_events.sql.
@@ -185,7 +194,7 @@ function histogram(values: number[]): Ranked[] {
   });
 }
 
-function buildBuckets(pageviews: EventRow[], range: DateRange) {
+function buildBuckets(pageviews: EventRow[], durationRows: EventRow[], range: DateRange) {
   const referrerTotals = new Map<string, number>();
   for (const r of pageviews) {
     if (!r.referrer) continue;
@@ -233,6 +242,22 @@ function buildBuckets(pageviews: EventRow[], range: DateRange) {
     countsByBucket.set(key, bySource);
   }
 
+  // Median of the raw duration-row seconds landing in each bucket — a
+  // segment-level sample, not the session-summed figure medianVisitSeconds
+  // uses elsewhere, same bucketOf() as the visitor counts above so the two
+  // series line up on the same x. Deliberately a per-bucket median, not a
+  // rolling one: this dashboard has few visitors/day, so some days will be a
+  // single sample — noisier, but an honest number beats a smoothed one that
+  // implies more data than exists.
+  const secondsByBucket = new Map<string, number[]>();
+  for (const r of durationRows) {
+    if (r.seconds == null) continue;
+    const key = bucketOf(r.created_at);
+    const list = secondsByBucket.get(key) ?? [];
+    list.push(r.seconds);
+    secondsByBucket.set(key, list);
+  }
+
   const sourceOrder = ["Direct", ...topReferrers, "Other"];
   const colorFor = (source: string) =>
     source === "Direct" ? DIRECT_COLOR : source === "Other" ? OTHER_COLOR : REFERRER_COLORS[topReferrers.indexOf(source)];
@@ -242,7 +267,13 @@ function buildBuckets(pageviews: EventRow[], range: DateRange) {
     const sources: SourceSlice[] = sourceOrder
       .map((label) => ({ label, count: bySource?.get(label) ?? 0, color: colorFor(label) }))
       .filter((s) => s.count > 0);
-    return { label: bucketLabel(key), total: sources.reduce((sum, s) => sum + s.count, 0), sources };
+    return {
+      label: bucketLabel(key),
+      total: sources.reduce((sum, s) => sum + s.count, 0),
+      sources,
+      medianSeconds: median(secondsByBucket.get(key) ?? []),
+      durationSamples: secondsByBucket.get(key)?.length ?? 0,
+    };
   });
 
   const legend = sourceOrder
@@ -301,6 +332,7 @@ export function computeOverview(input: {
   const rows = scope(allRows, filters.device);
   const prevRows = scope(prevAllRows, filters.device);
   const pageviews = rows.filter((r) => r.type === "pageview");
+  const durationRows = rows.filter((r) => r.type === "duration");
 
   const facts = sessionFacts(rows);
   const prevFacts = sessionFacts(prevRows);
@@ -326,7 +358,7 @@ export function computeOverview(input: {
     durationHistogram: histogram(visitSeconds),
     sessionsMeasured: visitSeconds.length,
     sources: sourceQuality(rows, facts),
-    ...buildBuckets(pageviews, filters),
+    ...buildBuckets(pageviews, durationRows, filters),
     directCount: pageviews.filter((r) => !r.referrer).length,
     referredCount: pageviews.filter((r) => r.referrer).length,
     topCountries: topN(countBy(pageviews, (r) => r.country), 6),

@@ -91,6 +91,12 @@ eq("direct/referred pageviews", [o.directCount, o.referredCount], [3, 2]);
 eq("sessions coverage note", o.sessionsSince, "2026-07-20");
 eq("bucket count = 7 days", o.buckets.length, 7);
 eq("bucket totals", o.buckets.map((b) => b.total), [0, 1, 1, 1, 1, 1, 0]);
+// Median-seconds-per-day: 07-20 has two duration rows (60, 120) — median()
+// takes the upper-middle of an even-length sort, so [60,120] -> 120, not
+// the 90 a true average or lower-middle median would give. Every other day
+// with data has exactly one sample, so its "median" is just that sample.
+eq("bucket median seconds", o.buckets.map((b) => b.medianSeconds), [0, 0, 120, 8, 5, 3000, 0]);
+eq("bucket duration samples", o.buckets.map((b) => b.durationSamples), [0, 0, 2, 1, 1, 1, 0]);
 
 // Device segment: desktop = s1, s3, s4. The legacy pageview and the
 // server-side download row must drop out, not be attributed to desktop.
