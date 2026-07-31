@@ -465,8 +465,12 @@ export function computeDetail(input: { allRows: EventRow[]; filters: Filters }) 
 
   // Median, not mean, per view: duration rows are heavy-tailed — a handful
   // of tabs left open for hours dragged the mean to 26m56s while the median
-  // sat at 31s. One row per visible segment (see lib/visitDuration.ts), so a
-  // visit that moves Grid → Free → Animate contributes to all three. Rows
+  // sat at 31s. Max is shown as its own column rather than folded into a
+  // cross-session sum ("total" used to be exactly that sum, and got
+  // misread as one session's length more than once — a view visited by 300
+  // short sessions could clear 11h combined without any single one passing
+  // 30 minutes). One row per visible segment (see lib/visitDuration.ts), so
+  // a visit that moves Grid → Free → Animate contributes to all three. Rows
   // predating per-view labels have page=NULL and are excluded rather than
   // lumped into a fake bucket.
   const durationsByView = new Map<string, number[]>();
@@ -480,10 +484,10 @@ export function computeDetail(input: { allRows: EventRow[]; filters: Filters }) 
     .map(([view, values]) => ({
       view,
       medianSeconds: median(values),
-      totalSeconds: values.reduce((a, b) => a + b, 0),
+      maxSeconds: values.length ? Math.max(...values) : 0,
       samples: values.length,
     }))
-    .sort((a, b) => b.totalSeconds - a.totalSeconds);
+    .sort((a, b) => b.maxSeconds - a.maxSeconds);
 
   const exportRows = rows.filter((r) => r.type === "export");
   const sizeCounts = countBy(exportRows, (r) => r.bucket);

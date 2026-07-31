@@ -130,9 +130,11 @@ eq("errors", d.errors, [{ label: "export:otf", count: 1 }]);
 eq("tour started", d.tourStarted, 2);
 eq("tour completed", d.tourCompleted, 1);
 eq("tour skips", d.tourSkips, [{ label: "step 3", count: 1 }]);
-eq("time by view sorted by total", d.timeByView.map((t) => [t.view, t.totalSeconds]), [
-  ["studio:free", 3008],
-  ["studio:grid", 125],
+// studio:free's two segments are 8 (s2) and 3000 (s4) -> max 3000; studio:grid's
+// are 120 (s1) and 5 (s3) -> max 120; studio:editor has just the one, 60.
+eq("time by view sorted by max segment", d.timeByView.map((t) => [t.view, t.maxSeconds]), [
+  ["studio:free", 3000],
+  ["studio:grid", 120],
   ["studio:editor", 60],
 ]);
 
