@@ -60,6 +60,60 @@ function normalizeReferrer(host: string): string {
   return host.replace(/^(www|m|mobile|l|lm|web)\./, "");
 }
 
+// Search engines and AI answer engines, folded into one "Search" source
+// instead of each fragmenting into its own top-referrer slot (google.com and
+// bing.com would otherwise each fight duckduckgo.com for one of only
+// MAX_NAMED_REFERRERS spots, pushing an actually-distinct referrer like a
+// blog post into "Other"). Matched by suffix so country-code variants
+// (google.de, google.co.uk, yahoo.co.jp, cn.bing.com) all count — no PII
+// involved, this only ever looks at the hostname document.referrer already
+// exposed, the same value normalizeReferrer already works on.
+const SEARCH_ENGINE_HOST_PATTERNS: RegExp[] = [
+  /(^|\.)google\.[a-z.]+$/i,
+  /(^|\.)bing\.com$/i,
+  /(^|\.)duckduckgo\.com$/i,
+  /(^|\.)yahoo\.[a-z.]+$/i,
+  /(^|\.)yandex\.[a-z.]+$/i,
+  /(^|\.)ya\.ru$/i,
+  /(^|\.)baidu\.com$/i,
+  /(^|\.)so\.com$/i,
+  /(^|\.)sogou\.com$/i,
+  /(^|\.)naver\.com$/i,
+  /(^|\.)seznam\.cz$/i,
+  /(^|\.)ecosia\.org$/i,
+  /(^|\.)qwant\.com$/i,
+  /(^|\.)startpage\.com$/i,
+  /(^|\.)brave\.com$/i,
+  /(^|\.)ask\.com$/i,
+  /(^|\.)aol\.com$/i,
+  /(^|\.)presearch\.com$/i,
+  /(^|\.)yep\.com$/i,
+  // AI answer engines, which act as a search entry point the same way —
+  // someone asked a question and landed here from the answer, not from
+  // browsing a link on some third-party page.
+  /(^|\.)chatgpt\.com$/i,
+  /(^|\.)openai\.com$/i,
+  /(^|\.)perplexity\.ai$/i,
+  /(^|\.)copilot\.microsoft\.com$/i,
+  /(^|\.)you\.com$/i,
+  /(^|\.)claude\.ai$/i,
+  /(^|\.)phind\.com$/i,
+  /(^|\.)meta\.ai$/i,
+];
+
+function isSearchEngineHost(host: string): boolean {
+  return SEARCH_ENGINE_HOST_PATTERNS.some((pattern) => pattern.test(host));
+}
+
+// The one place a raw referrer host becomes a chart/table label — every
+// caller below goes through this instead of normalizeReferrer directly, so
+// "Search" reaches the chart, the legend, and the source-quality table
+// identically (they match purely by label string, see StackedBarChart).
+function sourceLabel(host: string): string {
+  const normalized = normalizeReferrer(host);
+  return isSearchEngineHost(normalized) ? "Search" : normalized;
+}
+
 // The device segment can only be applied through the session: `device` is
 // recorded on pageview rows (it comes from the User-Agent), while a
 // tool_use or export row has no device of its own. Sessions are how the two
@@ -199,7 +253,7 @@ function buildBuckets(pageviews: EventRow[], durationRows: EventRow[], range: Da
   const referrerTotals = new Map<string, number>();
   for (const r of pageviews) {
     if (!r.referrer) continue;
-    const host = normalizeReferrer(r.referrer);
+    const host = sourceLabel(r.referrer);
     referrerTotals.set(host, (referrerTotals.get(host) ?? 0) + 1);
   }
   const topReferrers = [...referrerTotals.entries()]
@@ -236,7 +290,7 @@ function buildBuckets(pageviews: EventRow[], durationRows: EventRow[], range: Da
   const countsByBucket = new Map<string, Map<string, number>>(); // bucketKey -> sourceLabel -> count
   for (const r of pageviews) {
     const key = bucketOf(r.created_at);
-    const normalized = r.referrer ? normalizeReferrer(r.referrer) : null;
+    const normalized = r.referrer ? sourceLabel(r.referrer) : null;
     const source = !normalized ? "Direct" : topReferrers.includes(normalized) ? normalized : "Other";
     const bySource = countsByBucket.get(key) ?? new Map<string, number>();
     bySource.set(source, (bySource.get(source) ?? 0) + 1);
@@ -302,7 +356,7 @@ function sourceQuality(
   const bySession = new Map<string, string>(); // session -> source label
   for (const r of rows) {
     if (r.type !== "pageview" || !r.session_id || bySession.has(r.session_id)) continue;
-    bySession.set(r.session_id, r.referrer ? normalizeReferrer(r.referrer) : "Direct");
+    bySession.set(r.session_id, r.referrer ? sourceLabel(r.referrer) : "Direct");
   }
   const grouped = new Map<string, { sessions: number; drew: number; exported: number }>();
   for (const [session, source] of bySession) {

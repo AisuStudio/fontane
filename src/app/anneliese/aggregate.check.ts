@@ -86,12 +86,15 @@ eq("visits measured", o.sessionsMeasured, 4);
 eq("median time to first stroke", o.medianTimeToFirstTool, 20);
 // 5s and 8s both land in "< 10s"; 180s in "1–5m"; 3000s in "> 30m".
 eq("duration histogram", o.durationHistogram.map((b) => b.count), [2, 0, 1, 0, 1]);
+// s2's www.google.com and s3's google.com both fold into the "Search"
+// bucket now, same as before they folded into "google.com" — only the label
+// changed, the session/drew/exported counts are identical.
 eq(
   "source quality",
   o.sources,
   [
     { label: "Direct", sessions: 2, drew: 2, exported: 2 },
-    { label: "google.com", sessions: 2, drew: 1, exported: 0 },
+    { label: "Search", sessions: 2, drew: 1, exported: 0 },
   ]
 );
 eq("direct/referred pageviews", [o.directCount, o.referredCount], [3, 2]);
@@ -137,6 +140,25 @@ eq("time by view sorted by total", d.timeByView.map((t) => [t.view, t.totalSecon
 const none = computeOverview({ allRows: [], prevAllRows: [], allTimeVisits: 0, filters });
 eq("empty range activation", none.activation, null);
 eq("empty range median", none.medianVisitSeconds, 0);
+
+// Search engines AND AI answer engines fold into one "Search" source instead
+// of fragmenting the top-referrer slots; a genuine third-party referrer
+// keeps its own label right alongside it.
+const searchRows: EventRow[] = [
+  row({ session_id: "q1", referrer: "www.google.com", created_at: "2026-07-20T10:00:00.000Z" }),
+  row({ session_id: "q2", referrer: "bing.com", created_at: "2026-07-20T10:00:00.000Z" }),
+  row({ session_id: "q3", referrer: "chatgpt.com", created_at: "2026-07-20T10:00:00.000Z" }),
+  row({ session_id: "q4", referrer: "example-blog.com", created_at: "2026-07-20T10:00:00.000Z" }),
+];
+const searchOverview = computeOverview({ allRows: searchRows, prevAllRows: [], allTimeVisits: 0, filters });
+eq(
+  "search + AI-answer referrers collapse into one Search source",
+  searchOverview.sources,
+  [
+    { label: "Search", sessions: 3, drew: 0, exported: 0 },
+    { label: "example-blog.com", sessions: 1, drew: 0, exported: 0 },
+  ]
+);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nall checks passed");
 process.exit(failures ? 1 : 0);
