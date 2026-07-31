@@ -30,6 +30,7 @@ import {
   subtractOutlines,
   xorOutlines,
   flattenVectorShape,
+  vectorShapeStrokeOutline,
   cubicPoint,
   splitVectorSegment,
   type PathCommand,
@@ -42,6 +43,8 @@ import {
   alignOppositeHandle,
   constrainTo45,
   toggleAnchorSmooth,
+  shapeRenderMode,
+  shapeStrokeWidth,
   type VectorShape,
   type BezierAnchor,
   type BezierPoint,
@@ -692,27 +695,47 @@ function compileDocument(
       const glyphStrokes = g.strokeIds.map((id) => byId.get(id)).filter((s): s is Stroke => Boolean(s));
       // A brush can emit many polygons per stroke (one per stamp, for the
       // scatter brush) — they union in exactly like separately drawn strokes
-      // already did, so the overlap handling below is unchanged.
-      const strokesUnion = unionOutlines(glyphStrokes.flatMap((s) => strokeOutline(s, settings).polygons));
-      // Vector-tool shapes (only closed ones are real geometry) default to
-      // punching a hole in the glyph's strokes — see contour.ts's
-      // subtractOutlines. A glyph with vector shapes but no strokes has
-      // nothing to subtract FROM, so those become the letter itself.
-      // Either way the shapes are first combined with each other by the
-      // even-odd rule (xorOutlines), so a counter drawn inside an outline —
-      // the B/O/A case, and the only way to draw a closed letter in pure
-      // vector — stays a counter instead of being swallowed by a union.
-      const vectorOutlines = (g.vectorShapeIds ?? [])
-        .map((id) => shapesById.get(id))
-        .filter((s): s is VectorShape => Boolean(s && s.closed))
-        .map((s) => flattenVectorShape(s));
+      // already did, so the overlap handling below is unchanged. Stroke-mode
+      // Vector shapes (open or closed — see VectorShape.renderMode) union in
+      // right alongside them: they're precision-drawn ink, not a fill/punch.
+      const vectorShapesInGlyph = (g.vectorShapeIds ?? []).map((id) => shapesById.get(id));
+      const fillShapes = vectorShapesInGlyph.filter(
+        (s): s is VectorShape => Boolean(s && s.closed && shapeRenderMode(s) !== "stroke")
+      );
+      const strokeShapes = vectorShapesInGlyph.filter(
+        (s): s is VectorShape => Boolean(s && shapeRenderMode(s) === "stroke")
+      );
+      // A closed stroke shape's own outline is [outer ring, hole ring] (see
+      // vectorShapeStrokeOutline's subtractOutlines call) — folding both
+      // straight into one flat unionOutlines() list the way brush strokes'
+      // (hole-free) polygons already do would union the hole's area right
+      // back into the shape, since union only ever ADDS coverage and the
+      // hole ring sits entirely inside the outer one. Keeping each shape's
+      // first ring (outer) separate from the rest (holes) and subtracting
+      // the holes only at the end, after every positive contribution has
+      // unioned together, is what actually preserves them.
+      const strokeShapeOutlines = strokeShapes.map((s) => vectorShapeStrokeOutline(s, shapeStrokeWidth(s)));
+      const positiveInk = unionOutlines([
+        ...glyphStrokes.flatMap((s) => strokeOutline(s, settings).polygons),
+        ...strokeShapeOutlines.map((rings) => rings[0]).filter((r): r is [number, number][] => Boolean(r)),
+      ]);
+      const strokeShapeHoles = strokeShapeOutlines.flatMap((rings) => rings.slice(1));
+      const inkUnion = strokeShapeHoles.length > 0 ? subtractOutlines(positiveInk, strokeShapeHoles) : positiveInk;
+      // Fill-mode Vector shapes default to punching a hole in the glyph's ink
+      // — see contour.ts's subtractOutlines. A glyph with fill shapes but no
+      // other ink has nothing to subtract FROM, so those become the letter
+      // itself. Either way the fill shapes are first combined with each other
+      // by the even-odd rule (xorOutlines), so a counter drawn inside an
+      // outline — the B/O/A case, and the only way to draw a closed letter in
+      // pure vector — stays a counter instead of being swallowed by a union.
+      const vectorOutlines = fillShapes.map((s) => flattenVectorShape(s));
       let rings: [number, number][][];
       if (vectorOutlines.length === 0) {
-        rings = strokesUnion;
-      } else if (g.strokeIds.length === 0) {
+        rings = inkUnion;
+      } else if (inkUnion.length === 0) {
         rings = xorOutlines(vectorOutlines);
       } else {
-        rings = subtractOutlines(strokesUnion, xorOutlines(vectorOutlines));
+        rings = subtractOutlines(inkUnion, xorOutlines(vectorOutlines));
       }
       return {
         name: g.name,
@@ -1739,7 +1762,9 @@ export default function Home() {
       // one path filled "evenodd", so a counter drawn inside an outline stays
       // a counter instead of filling solid (the B/O/A case). An open,
       // still-being-drawn path has no fill yet, same as any other pen tool.
-      const closedShapes = vectorShapesRef.current.filter((s) => s.closed && s.anchors.length >= 2);
+      const closedShapes = vectorShapesRef.current.filter(
+        (s) => s.closed && s.anchors.length >= 2 && shapeRenderMode(s) !== "stroke"
+      );
       if (closedShapes.length > 0) {
         const fills: VectorShape[] = [];
         const punches: VectorShape[] = [];
@@ -1758,6 +1783,24 @@ export default function Home() {
         };
         paint(fills, false);
         paint(punches, true);
+      }
+      // Stroke-mode shapes (open or closed) are ink, not a fill/punch — same
+      // constant-width outline geometry the export path computes (see
+      // vectorShapeStrokeOutline), painted like an ordinary stroke. A closed
+      // shape's stroke is an outer ring PLUS an inner hole ring that must
+      // fill together as one evenodd path (not one fill() per ring, which
+      // would just paint the hole solid too) — same reasoning as the
+      // fill/punch pass above, just scoped to one shape at a time so two
+      // overlapping stroke shapes still ADD ink instead of cancelling it out.
+      for (const shape of vectorShapesRef.current) {
+        if (shape.anchors.length < 2 || shapeRenderMode(shape) !== "stroke") continue;
+        const polygons = vectorShapeStrokeOutline(shape, shapeStrokeWidth(shape)).filter((p) => p.length >= 3);
+        if (polygons.length === 0) continue;
+        const color = selectedIdsRef.current.has(shape.id) ? COLOR_SELECTED : COLOR_DEFAULT;
+        ctx.beginPath();
+        for (const polygon of polygons) applyPath(ctx, outlineToPath(polygon));
+        ctx.fillStyle = color;
+        ctx.fill("evenodd");
       }
       if (!LASSO_TOOLS.has(drawToolRef.current) && !cmdSelectRef.current && currentPointsRef.current.length > 0) {
         fillOutline(
@@ -3527,6 +3570,8 @@ export default function Home() {
       anchors: [{ x, y }],
       closed: false,
       createdAt: Date.now(),
+      renderMode: settingsRef.current.vectorRenderMode,
+      strokeWidth: settingsRef.current.vectorStrokeWidth,
     };
     vectorShapesRef.current = [...vectorShapesRef.current, newShape];
     editingShapeIdRef.current = newShape.id;
@@ -5227,6 +5272,8 @@ export default function Home() {
                   onStrokesChange={(updates) => handleGridStrokesChange(slot, updates, liveWidth, liveHeight)}
                   strokeOptions={optionsFor(settings)}
                   nib={nibFor(settings)}
+                  vectorRenderMode={settings.vectorRenderMode}
+                  vectorStrokeWidth={settings.vectorStrokeWidth}
                   onStrokeComplete={(stroke, reportedWidth, reportedHeight, durationMs) =>
                     handleGridStroke(slot, stroke, reportedWidth, reportedHeight, durationMs)
                   }
@@ -5321,6 +5368,48 @@ export default function Home() {
               whichever Grid cell last reported via onVectorSessionChange. */}
           {topMode === "draw" && VECTOR_TOOLS.has(drawTool) && (
             <SettingsSection id="anchorInfo" title="Path" defaultOpen>
+              {/* Draw-time default for the NEXT path started, baked onto it
+                  at its first anchor (see handleVectorPointerDown) — same
+                  "picked before you draw, not edited after" relationship the
+                  rest of this panel's controls already have to a stroke.
+                  Shown regardless of whether a path is currently selected. */}
+              <div className={styles.sliders}>
+                <div className={styles.settingsSubLabel}>New path</div>
+                <div className={styles.modeToggle} role="radiogroup" aria-label="Fill or stroke">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={settings.vectorRenderMode === "fill"}
+                    className={`${styles.modeBtn} ${settings.vectorRenderMode === "fill" ? styles.modeBtnActive : ""}`}
+                    onClick={() => updateSetting("vectorRenderMode", "fill")}
+                  >
+                    Fill
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={settings.vectorRenderMode === "stroke"}
+                    className={`${styles.modeBtn} ${settings.vectorRenderMode === "stroke" ? styles.modeBtnActive : ""}`}
+                    onClick={() => updateSetting("vectorRenderMode", "stroke")}
+                  >
+                    Stroke
+                  </button>
+                </div>
+                {settings.vectorRenderMode === "stroke" && (
+                  <label className={styles.sliderRow}>
+                    <span>Width</span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={60}
+                      step={1}
+                      value={settings.vectorStrokeWidth}
+                      onChange={(e) => updateSetting("vectorStrokeWidth", Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{settings.vectorStrokeWidth}</span>
+                  </label>
+                )}
+              </div>
               {vectorPanelInfo ? (
                 <>
                   <div className={styles.sliders}>

@@ -112,7 +112,24 @@ export type VectorShape = {
   anchors: BezierAnchor[];
   closed: boolean;
   createdAt: number;
+  // Baked in at creation from StrokeSettings.vectorRenderMode (see
+  // settings.ts) — undefined means "fill", today's only behavior (solid
+  // letterform / hole-punch). "stroke" inks a constant-width outline along
+  // the path instead, open or closed — see contour.ts's
+  // vectorShapeStrokeOutline(). Unversioned/optional like every other field
+  // added here after the fact: nothing to migrate.
+  renderMode?: "fill" | "stroke";
+  // Canvas px, meaningful only when renderMode is "stroke".
+  strokeWidth?: number;
 };
+
+export function shapeRenderMode(shape: VectorShape): "fill" | "stroke" {
+  return shape.renderMode ?? "fill";
+}
+
+export function shapeStrokeWidth(shape: VectorShape): number {
+  return shape.strokeWidth ?? 8;
+}
 
 const STORAGE_KEY = "fontane.vectorShapes.v1";
 

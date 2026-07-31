@@ -1,5 +1,7 @@
 import polygonClipping, { type Polygon, type MultiPolygon } from "polygon-clipping";
 import type { VectorShape, BezierAnchor, BezierPoint } from "./vectorShapes";
+import { calligraphyOutline } from "./calligraphy";
+import type { StrokePoint } from "./strokes";
 
 export type PathCommand =
   | { type: "M"; x: number; y: number }
@@ -218,6 +220,84 @@ export function flattenVectorShape(shape: VectorShape, segmentsPerCurve = 24): [
     }
   }
   return points;
+}
+
+// Per-point local-tangent normal offset of a CLOSED, already-deduped ring —
+// cyclic (no start/end caps, since there are no ends). Used by
+// vectorShapeStrokeOutline below to build the outer/inner boundary of a
+// closed path's stroke; a tight concave corner's inner offset can fold back
+// on itself locally, which is fine here because the caller only ever feeds
+// this into subtractOutlines(), whose polygon-clipping engine resolves that
+// robustly rather than needing the offset ring to already be simple.
+function offsetClosedRing(points: [number, number][], radius: number): [number, number][] {
+  const n = points.length;
+  const ring: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n];
+    const next = points[(i + 1) % n];
+    const dx = next[0] - prev[0];
+    const dy = next[1] - prev[1];
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len;
+    const ny = dx / len;
+    ring.push([points[i][0] + nx * radius, points[i][1] + ny * radius]);
+  }
+  return ring;
+}
+
+// A closed ring's flattened point list ends where it started (see
+// flattenVectorShape's wraparound on the final segment) — collapse that back
+// down to one instance, and any other back-to-back duplicates dense curve
+// sampling can produce, so offsetClosedRing's neighbour-based tangent never
+// divides by a zero-length gap.
+function dedupeRing(points: [number, number][]): [number, number][] {
+  const out: [number, number][] = [];
+  for (const p of points) {
+    const last = out[out.length - 1];
+    if (!last || Math.hypot(p[0] - last[0], p[1] - last[1]) > 1e-6) out.push(p);
+  }
+  if (out.length > 1) {
+    const first = out[0];
+    const last = out[out.length - 1];
+    if (Math.hypot(first[0] - last[0], first[1] - last[1]) < 1e-6) out.pop();
+  }
+  return out;
+}
+
+// A constant-width stroke along a VectorShape's true curve, in the exported-
+// glyph polygon shape (one or more rings) — the geometry both the live
+// canvas ink pass and compileDocument's export share, so they never drift
+// apart. An OPEN path reuses calligraphyOutline with a ratio-1 ("circular")
+// nib: that's already an exact Minkowski-sum-with-a-disk stroke, round caps
+// and joins included, so there's no new sweep math to write. A CLOSED path
+// has no ends to cap — instead its outer and inner offset boundaries (see
+// offsetClosedRing) are cut apart with the same polygon-clipping-backed
+// subtractOutlines() the rest of the export pipeline already trusts, which
+// is what makes a tight inner corner safe even though the naive offset ring
+// itself can be locally non-simple there.
+export function vectorShapeStrokeOutline(
+  shape: VectorShape,
+  width: number,
+  segmentsPerCurve = 24
+): [number, number][][] {
+  const points = flattenVectorShape(shape, segmentsPerCurve);
+  if (points.length < 2) return [];
+  if (!shape.closed) {
+    const tapped: StrokePoint[] = points.map(([x, y]) => [x, y, 1]);
+    const outline = calligraphyOutline(tapped, { size: width, ratio: 1, angle: 0 });
+    return outline.length >= 3 ? [outline] : [];
+  }
+  const ring = dedupeRing(points);
+  if (ring.length < 3) return [];
+  const radius = width / 2;
+  // Which offset direction is "outward" depends on the ring's own winding
+  // order, which a hand-drawn path can go either way — rather than assuming
+  // one, offset both ways and let enclosed area (always larger outward,
+  // smaller inward, regardless of winding) decide which is which.
+  const a = offsetClosedRing(ring, radius);
+  const b = offsetClosedRing(ring, -radius);
+  const [outer, inner] = ringArea(a) >= ringArea(b) ? [a, b] : [b, a];
+  return subtractOutlines([outer], [inner]);
 }
 
 function round(n: number): number {

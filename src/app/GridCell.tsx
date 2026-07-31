@@ -2,7 +2,15 @@
 
 import { useEffect, useRef } from "react";
 import styles from "./page.module.css";
-import { outlineToPath, outlineToSharpPath, skeletonToPath, cubicPoint, splitVectorSegment, type PathCommand } from "@/lib/contour";
+import {
+  outlineToPath,
+  outlineToSharpPath,
+  skeletonToPath,
+  cubicPoint,
+  splitVectorSegment,
+  vectorShapeStrokeOutline,
+  type PathCommand,
+} from "@/lib/contour";
 import { applyBrush, applyCalligraphy, brushEnvelope, type BrushOptions, type BrushOutput } from "@/lib/brush";
 import { pointInPolygon, anyPointInPolygon, fitPointsToBox } from "@/lib/geometry";
 import { simplifyStrokeIndices } from "@/lib/simplify";
@@ -17,6 +25,8 @@ import {
   alignOppositeHandle,
   constrainTo45,
   toggleAnchorSmooth,
+  shapeRenderMode,
+  shapeStrokeWidth,
   type BezierAnchor,
   type VectorShape,
 } from "@/lib/vectorShapes";
@@ -398,25 +408,46 @@ function beginVectorHandleDrag(anchor: BezierAnchor, breakPair: boolean) {
 // The fill is hazelnut rather than ink: while you're drawing, the muted body
 // stays readable underneath the blueberry outlines and grape handles that sit
 // on top of it. The exported font is monochrome either way.
-function renderVectorShapes(ctx: CanvasRenderingContext2D, shapes: VectorShape[], hasStrokes: boolean) {
-  const closed = shapes.filter((s) => s.closed && s.anchors.length >= 2);
-  if (closed.length === 0) return;
-  if (!hasStrokes) {
-    ctx.save();
-    ctx.beginPath();
-    for (const shape of closed) applyVectorShapePath(ctx, shape);
-    ctx.fillStyle = VECTOR_FILL_COLOR;
-    ctx.fill("evenodd");
-    ctx.restore();
-    return;
+function renderVectorShapes(
+  ctx: CanvasRenderingContext2D,
+  shapes: VectorShape[],
+  hasStrokes: boolean,
+  selectedIds: Set<string>
+) {
+  const closed = shapes.filter((s) => s.closed && s.anchors.length >= 2 && shapeRenderMode(s) !== "stroke");
+  if (closed.length > 0) {
+    if (!hasStrokes) {
+      ctx.save();
+      ctx.beginPath();
+      for (const shape of closed) applyVectorShapePath(ctx, shape);
+      ctx.fillStyle = VECTOR_FILL_COLOR;
+      ctx.fill("evenodd");
+      ctx.restore();
+    } else {
+      ctx.save();
+      ctx.beginPath();
+      for (const shape of closed) applyVectorShapePath(ctx, shape);
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.fillStyle = "black";
+      ctx.fill("evenodd");
+      ctx.restore();
+    }
   }
-  ctx.save();
-  ctx.beginPath();
-  for (const shape of closed) applyVectorShapePath(ctx, shape);
-  ctx.globalCompositeOperation = "destination-out";
-  ctx.fillStyle = "black";
-  ctx.fill("evenodd");
-  ctx.restore();
+  // Stroke-mode shapes (open or closed) are ink, not a fill/punch — mirrors
+  // page.tsx's own redraw(), including its evenodd-per-shape fill: a closed
+  // shape's stroke is an outer ring plus an inner hole ring that must fill
+  // together as one path, while two different overlapping stroke shapes
+  // still add ink instead of cancelling each other out.
+  for (const shape of shapes) {
+    if (shape.anchors.length < 2 || shapeRenderMode(shape) !== "stroke") continue;
+    const polygons = vectorShapeStrokeOutline(shape, shapeStrokeWidth(shape)).filter((p) => p.length >= 3);
+    if (polygons.length === 0) continue;
+    const color = selectedIds.has(shape.id) ? SELECTED_COLOR : CELL_COLOR;
+    ctx.beginPath();
+    for (const polygon of polygons) applyPath(ctx, outlineToPath(polygon));
+    ctx.fillStyle = color;
+    ctx.fill("evenodd");
+  }
 }
 
 // The Vector tool's editing affordances, mirroring page.tsx's own redraw().
@@ -497,6 +528,10 @@ type Props = {
   // strokeOptions because it isn't a perfect-freehand option set — the two
   // never apply to the same stroke.
   nib: Nib;
+  // Vector tool's draw-time default (mirrors page.tsx) — baked onto each new
+  // shape's renderMode/strokeWidth the moment its first anchor is placed.
+  vectorRenderMode: "fill" | "stroke";
+  vectorStrokeWidth: number;
   onStrokeComplete: (
     stroke: { id: string; points: StrokePoint[]; createdAt: number; kind?: StrokeKind },
     cellWidth: number,
@@ -583,6 +618,8 @@ export default function GridCell({
   onStrokesChange,
   strokeOptions,
   nib,
+  vectorRenderMode,
+  vectorStrokeWidth,
   onStrokeComplete,
   vectorShapes,
   onVectorShapesChange,
@@ -611,6 +648,8 @@ export default function GridCell({
   const onStrokesChangeRef = useRef(onStrokesChange);
   const strokeOptionsRef = useRef(strokeOptions);
   const nibRef = useRef(nib);
+  const vectorRenderModeRef = useRef(vectorRenderMode);
+  const vectorStrokeWidthRef = useRef(vectorStrokeWidth);
   const onStrokeCompleteRef = useRef(onStrokeComplete);
   const metricsRef = useRef(metrics);
   const bearingsRef = useRef({ leftBearing, rightBearing });
@@ -691,6 +730,8 @@ export default function GridCell({
   onStrokesChangeRef.current = onStrokesChange;
   strokeOptionsRef.current = strokeOptions;
   nibRef.current = nib;
+  vectorRenderModeRef.current = vectorRenderMode;
+  vectorStrokeWidthRef.current = vectorStrokeWidth;
   onStrokeCompleteRef.current = onStrokeComplete;
   metricsRef.current = metrics;
   // Skip while a drag is in progress: a stray parent re-render mid-drag
@@ -788,7 +829,7 @@ export default function GridCell({
           s.id === editingStrokeIdRef.current || selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
         fillOutline(ctx, strokeOutline(s, strokeOptionsRef.current, nibRef.current), color);
       }
-      renderVectorShapes(ctx, vectorShapesRef.current, strokesRef.current.length > 0);
+      renderVectorShapes(ctx, vectorShapesRef.current, strokesRef.current.length > 0, selectedIdsRef.current);
       if (pointsRef.current.length > 0) {
         fillOutline(
           ctx,
@@ -1182,6 +1223,8 @@ export default function GridCell({
         anchors: [{ x, y }],
         closed: false,
         createdAt: Date.now(),
+        renderMode: vectorRenderModeRef.current,
+        strokeWidth: vectorStrokeWidthRef.current,
       };
       vectorShapesRef.current = [...vectorShapesRef.current, newShape];
       editingShapeIdRef.current = newShape.id;
@@ -1851,7 +1894,7 @@ export default function GridCell({
       const color = selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
       fillOutline(ctx, strokeOutline(s, strokeOptions, nib), color);
     }
-    renderVectorShapes(ctx, vectorShapes, strokes.length > 0);
+    renderVectorShapes(ctx, vectorShapes, strokes.length > 0, selectedIdsRef.current);
     // editingShapeIdRef is guaranteed null by the guard above, so this only
     // ever draws the resting state (every shape's outline, no handles).
     if (tool === "vector") drawVectorAffordances(ctx, vectorShapes, null);

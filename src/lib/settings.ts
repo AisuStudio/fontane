@@ -25,6 +25,15 @@ export type StrokeSettings = {
   // nothing about an existing project file or a saved setting changes
   // meaning.
   brush: BrushSettings;
+  // The Vector (Bezier pen) tool's draw-time default, baked onto each new
+  // path the moment its first anchor is placed (mirrors how a Stroke's own
+  // `kind` is fixed by whichever tool drew it) — "fill" is today's only
+  // behavior (solid letterform / hole-punch), "stroke" instead inks a
+  // constant-width outline along the path, open or closed. See
+  // VectorShape.renderMode in src/lib/vectorShapes.ts.
+  vectorRenderMode: "fill" | "stroke";
+  // Canvas px, meaningful only when vectorRenderMode is "stroke".
+  vectorStrokeWidth: number;
 };
 
 export const DEFAULT_SETTINGS: StrokeSettings = {
@@ -37,6 +46,8 @@ export const DEFAULT_SETTINGS: StrokeSettings = {
   nibRatio: DEFAULT_CALLIGRAPHY_NIB.ratio,
   nibAngle: DEFAULT_CALLIGRAPHY_NIB.angle,
   brush: DEFAULT_BRUSH,
+  vectorRenderMode: "fill",
+  vectorStrokeWidth: 8,
 };
 
 const STORAGE_KEY = "fontane.settings.v1";
