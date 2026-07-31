@@ -182,6 +182,10 @@ const VECTOR_TOOLS = new Set<DrawTool>(["vector", "vectorAdd", "vectorDelete", "
 // Calligraphy belongs here too, but shows its own nib panel instead of the
 // brush one — see the Stroke section in the sidebar.
 const STROKE_TOOLS = new Set<DrawTool>(["pen", "brush", "calligraphy", "eraser", "nudge", "anchor"]);
+// The three tools that lay down ink with the active brush/nib — the ones
+// whose OS cursor gets replaced by the true-size, true-angle brush-shape ring
+// (see drawBrushCursor), since Eraser/Nudge/Anchor have no brush shape to show.
+const INK_TOOLS = new Set<DrawTool>(["pen", "brush", "calligraphy"]);
 // Every DrawTool whose button only ever appears when drawStyle==="free" —
 // leaving Free resets drawTool back to "pen" if it's one of these, since
 // their UI vanishes and a stale value would silently persist otherwise.
@@ -804,6 +808,37 @@ function strokeLassoPath(ctx: CanvasRenderingContext2D, points: [number, number]
   ctx.lineWidth = 1.5;
   ctx.strokeStyle = COLOR_TAGGED;
   ctx.stroke();
+  ctx.restore();
+}
+
+// The brush cursor: what a single tap would leave with the CURRENT settings,
+// centered on the pointer — reuses the exact same outlineFor() a real stroke
+// goes through, so the ring is never an approximation of size/ratio/angle,
+// it's the true shape. A small center dot stays visible even when the brush
+// itself is too thin to read as a ring.
+function drawBrushCursor(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  settings: StrokeSettings,
+  kind: StrokeKind
+) {
+  const tap: StrokePoint = [cx, cy, 1];
+  const outline = outlineFor([tap], settings, kind).polygons[0];
+  ctx.save();
+  if (outline && outline.length > 2) {
+    ctx.beginPath();
+    ctx.moveTo(outline[0][0], outline[0][1]);
+    for (let i = 1; i < outline.length; i++) ctx.lineTo(outline[i][0], outline[i][1]);
+    ctx.closePath();
+    ctx.strokeStyle = ANCHOR_COLOR;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.arc(cx, cy, 1.5, 0, Math.PI * 2);
+  ctx.fillStyle = ANCHOR_COLOR;
+  ctx.fill();
   ctx.restore();
 }
 
@@ -1852,6 +1887,15 @@ export default function Home() {
           });
         }
       }
+      if (INK_TOOLS.has(drawToolRef.current) && lastPointerPosRef.current) {
+        drawBrushCursor(
+          ctx,
+          lastPointerPosRef.current.x,
+          lastPointerPosRef.current.y,
+          settingsRef.current,
+          strokeKindFor(drawToolRef.current)
+        );
+      }
       ctx.restore();
     }
     redrawRef.current = redraw;
@@ -2092,8 +2136,20 @@ export default function Home() {
         canvas!.style.cursor = "grab";
         return;
       }
-      canvas!.style.cursor = "";
-      if (!drawingRef.current) return;
+      if (INK_TOOLS.has(drawToolRef.current)) {
+        // The OS arrow is hidden in favor of the brush-shape ring drawn in
+        // redraw() below — size/angle read at a glance instead of needing
+        // the sidebar sliders. Idle hover still needs its own redraw() since
+        // the tail below only fires while drawingRef is true.
+        canvas!.style.cursor = "none";
+        if (!drawingRef.current) {
+          redraw();
+          return;
+        }
+      } else {
+        canvas!.style.cursor = "";
+        if (!drawingRef.current) return;
+      }
       if (LASSO_TOOLS.has(drawToolRef.current)) {
         lassoRef.current.push([p[0], p[1]]);
       } else if (getHeldKeys().shift && currentPointsRef.current.length > 0) {
@@ -2224,10 +2280,20 @@ export default function Home() {
       );
     }
 
+    // Leaving the canvas mid-hover (no button down, so neither pointerup nor
+    // pointercancel fires) would otherwise strand the brush-cursor ring at
+    // its last position and leave the OS cursor hidden.
+    function onPointerLeave() {
+      lastPointerPosRef.current = null;
+      canvas!.style.cursor = "";
+      redraw();
+    }
+
     canvas.addEventListener("pointerdown", onPointerDown);
     canvas.addEventListener("pointermove", onPointerMove);
     canvas.addEventListener("pointerup", onPointerUp);
     canvas.addEventListener("pointercancel", onPointerUp);
+    canvas.addEventListener("pointerleave", onPointerLeave);
     canvas.addEventListener("dblclick", onDblClick);
 
     return () => {
@@ -2236,6 +2302,7 @@ export default function Home() {
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("pointercancel", onPointerUp);
+      canvas.removeEventListener("pointerleave", onPointerLeave);
       canvas.removeEventListener("dblclick", onDblClick);
     };
   }, []);

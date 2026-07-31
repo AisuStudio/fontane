@@ -84,6 +84,10 @@ const TRANSFORM_TOOLS = new Set<CellTool>(["move", "rotate", "scale"]);
 // anchor tools, all driving the same handleVectorPointerDown/Move/Up and
 // sharing one editing session. Mirrors page.tsx's VECTOR_TOOLS.
 const VECTOR_TOOLS = new Set<CellTool>(["vector", "vectorAdd", "vectorDelete", "vectorConvert"]);
+// The three tools that lay down ink with the active brush/nib — mirrors
+// page.tsx's INK_TOOLS. Their OS cursor is replaced by the true-size,
+// true-angle brush-shape ring (see drawBrushCursor).
+const INK_TOOLS = new Set<CellTool>(["pen", "brush", "calligraphy"]);
 
 export const DEFAULT_LEFT_BEARING = 0.15;
 export const DEFAULT_RIGHT_BEARING = 0.85;
@@ -177,6 +181,37 @@ function strokeKindFor(tool: CellTool): StrokeKind {
   if (tool === "brush") return "brush";
   if (tool === "calligraphy") return "calligraphy";
   return "pen";
+}
+
+// Mirrors page.tsx's drawBrushCursor: the exact "one tap here" ink outline
+// for the active ink tool's current settings, centered on the pointer, in
+// place of the OS arrow — so size/angle read at a glance. A small center dot
+// stays visible even when the brush itself is too thin to read as a ring.
+function drawBrushCursor(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  options: StrokeOptions,
+  nib: Nib,
+  kind: StrokeKind
+) {
+  const tap: StrokePoint = [cx, cy, 1];
+  const outline = outlineFor([tap], options, nib, kind).polygons[0];
+  ctx.save();
+  if (outline && outline.length > 2) {
+    ctx.beginPath();
+    ctx.moveTo(outline[0][0], outline[0][1]);
+    for (let i = 1; i < outline.length; i++) ctx.lineTo(outline[i][0], outline[i][1]);
+    ctx.closePath();
+    ctx.strokeStyle = ANCHOR_COLOR;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.arc(cx, cy, 1.5, 0, Math.PI * 2);
+  ctx.fillStyle = ANCHOR_COLOR;
+  ctx.fill();
+  ctx.restore();
 }
 
 // Pivot for Move/Rotate/Scale: bbox center across every currently-selected
@@ -585,6 +620,8 @@ export default function GridCell({
   const onResizeRef = useRef(onResize);
   const draggingRef = useRef<"left" | "right" | null>(null);
   const redrawRef = useRef<() => void>(() => {});
+  // Mirrors page.tsx's lastPointerPosRef — the brush-cursor ring's position.
+  const lastPointerPosRef = useRef<{ x: number; y: number } | null>(null);
 
   const lassoRef = useRef<[number, number][]>([]);
   // True for the duration of a gesture that started with Cmd/Ctrl held over a
@@ -811,6 +848,16 @@ export default function GridCell({
       }
       if (VECTOR_TOOLS.has(toolRef.current)) {
         drawVectorAffordances(ctx, vectorShapesRef.current, editingShapeIdRef.current);
+      }
+      if (INK_TOOLS.has(toolRef.current) && lastPointerPosRef.current) {
+        drawBrushCursor(
+          ctx,
+          lastPointerPosRef.current.x,
+          lastPointerPosRef.current.y,
+          strokeOptionsRef.current,
+          nibRef.current,
+          strokeKindFor(toolRef.current)
+        );
       }
     }
     redrawRef.current = redraw;
@@ -1460,6 +1507,7 @@ export default function GridCell({
         return;
       }
       const [x, y] = pointFromEvent(e);
+      lastPointerPosRef.current = { x, y };
       if (cmdSelectRef.current) {
         canvas!.style.cursor = "";
         if (!drawingRef.current) return;
@@ -1507,6 +1555,13 @@ export default function GridCell({
           canvas!.style.cursor = "crosshair";
         } else if (TRANSFORM_TOOLS.has(toolRef.current)) {
           canvas!.style.cursor = "move";
+        } else if (INK_TOOLS.has(toolRef.current)) {
+          // OS arrow hidden in favor of the brush-shape ring drawn in
+          // redraw() — idle hover needs its own redraw() since the tail
+          // below only fires while drawingRef is true.
+          canvas!.style.cursor = "none";
+          redraw();
+          return;
         } else {
           canvas!.style.cursor = "";
         }
@@ -1708,10 +1763,20 @@ export default function GridCell({
       handleVectorDblClick(e.clientX - rect.left, e.clientY - rect.top);
     }
 
+    // Leaving the cell mid-hover (no button down, so neither pointerup nor
+    // pointercancel fires) would otherwise strand the brush-cursor ring at
+    // its last position and leave the OS cursor hidden.
+    function onPointerLeave() {
+      lastPointerPosRef.current = null;
+      canvas!.style.cursor = "";
+      redraw();
+    }
+
     canvas.addEventListener("pointerdown", onPointerDown);
     canvas.addEventListener("pointermove", onPointerMove);
     canvas.addEventListener("pointerup", onPointerUp);
     canvas.addEventListener("pointercancel", onPointerUp);
+    canvas.addEventListener("pointerleave", onPointerLeave);
     canvas.addEventListener("dblclick", onDblClick);
     window.addEventListener("keydown", onKeyDown);
 
@@ -1721,6 +1786,7 @@ export default function GridCell({
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("pointercancel", onPointerUp);
+      canvas.removeEventListener("pointerleave", onPointerLeave);
       canvas.removeEventListener("dblclick", onDblClick);
       window.removeEventListener("keydown", onKeyDown);
       // A cell that unmounts mid-session (view switch, character set
