@@ -1514,6 +1514,10 @@ export default function GridCell({
       }
       if (LASSO_TOOLS.has(toolRef.current)) {
         lassoRef.current.push([x, y]);
+      } else if (getHeldKeys().shift && pointsRef.current.length > 0) {
+        const origin = pointsRef.current[0];
+        const c = constrainTo45(origin[0], origin[1], x, y);
+        pointsRef.current.push([c.x, c.y, e.pressure > 0 ? e.pressure : 0.5]);
       } else {
         pointsRef.current.push([x, y, e.pressure > 0 ? e.pressure : 0.5]);
       }

@@ -2096,6 +2096,10 @@ export default function Home() {
       if (!drawingRef.current) return;
       if (LASSO_TOOLS.has(drawToolRef.current)) {
         lassoRef.current.push([p[0], p[1]]);
+      } else if (getHeldKeys().shift && currentPointsRef.current.length > 0) {
+        const origin = currentPointsRef.current[0];
+        const c = constrainTo45(origin[0], origin[1], p[0], p[1]);
+        currentPointsRef.current.push([c.x, c.y, p[2]]);
       } else {
         currentPointsRef.current.push(p);
       }
