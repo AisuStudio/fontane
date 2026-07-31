@@ -47,6 +47,7 @@ const jsonLd = {
     "Reference Letterform: an optional faint Comic Sans backdrop in each Grid cell for orientation, sized to that cell's own guides, which disappears the instant you start drawing your own design there",
     "Stroke preview: a live sample stroke rendered with your current brush (Free/Nib/Stipple) and Mono/Dynamic settings, so the whole Stroke panel reads as one picture instead of slider values",
     "Illustrator-style vector pen family: Pen, Add Anchor, Delete Anchor, and Convert Anchor tools on familiar shortcuts (P, +, -, C)",
+    "Fill or stroke rendering for vector paths, chosen per path from the Path panel with an adjustable stroke width — open paths render and export as real constant-width ink instead of being dropped",
     "Smooth anchor points with tangent-continuity handles — dragging one handle keeps the opposite one aligned at its own length, Alt breaks the pair, double-click toggles smooth/corner",
     "Held-key modifiers like a desktop pen tool: Cmd for momentary direct selection, Shift for 45-degree constraints, Space to pan, Esc/Enter to end a path — with context-aware pen cursors for add, close, and continue",
     "The vector pen works inside Grid cells too, with shapes auto-tagged to the cell's character",
@@ -120,6 +121,11 @@ const SECTIONS: Section[] = [
         name: "Vector pen family",
         description:
           "A true Bezier pen with the full Illustrator toolset — Pen (P), Add Anchor (+, inserts without changing the curve), Delete Anchor (-), and Convert Anchor (C) — working in Sketcher and directly inside Grid cells, where shapes auto-tag to the cell's character.",
+      },
+      {
+        name: "Fill & stroke rendering",
+        description:
+          "Every vector path can render as a solid fill (the default) or as a constant-width stroke instead — pick which from the Path panel before you draw, with a width slider once Stroke is on. Stroke works on open paths too, so a line that never closes still exports as real ink instead of being dropped from the font.",
       },
       {
         name: "Smooth anchors & held-key modifiers",

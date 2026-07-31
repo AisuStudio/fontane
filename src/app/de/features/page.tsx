@@ -47,6 +47,7 @@ const jsonLd = {
     "Vorlagen-Buchstabe: eine optionale, blasse Comic-Sans-Vorlage in jeder Grid-Zelle zur Orientierung, passend zu den Führungslinien der Zelle skaliert, die verschwindet, sobald man mit dem eigenen Entwurf in dieser Zelle zu zeichnen beginnt",
     "Strich-Vorschau: ein live gerenderter Beispielstrich mit dem aktuellen Pinsel (Free/Nib/Stipple) und Mono/Dynamic-Einstellungen, damit das gesamte Stroke-Panel wie ein Bild wirkt statt wie Regler-Werte",
     "Illustrator-artige Vektorstift-Familie: Stift, Anker hinzufügen, Anker löschen und Anker umwandeln auf vertrauten Kürzeln (P, +, -, C)",
+    "Füllung oder Kontur für Vektorpfade, pro Pfad im Path-Panel wählbar mit einstellbarer Konturbreite — offene Pfade rendern und exportieren als echte Tinte mit fester Breite, statt verworfen zu werden",
     "Weiche Ankerpunkte mit tangentenstetigen Griffen — das Ziehen eines Griffs hält den gegenüberliegenden auf gleicher Länge ausgerichtet, Alt bricht das Paar, Doppelklick schaltet zwischen weich/eckig um",
     "Gehaltene Tasten wie bei einem Desktop-Stiftwerkzeug: Cmd für kurzzeitige Direktauswahl, Shift für 45-Grad-Beschränkung, Leertaste zum Verschieben, Esc/Enter beendet einen Pfad — mit kontextbezogenen Stift-Cursorn für Hinzufügen, Schließen und Fortsetzen",
     "Der Vektorstift funktioniert auch innerhalb von Grid-Zellen, Formen werden automatisch dem Zeichen der Zelle zugeordnet",
@@ -120,6 +121,11 @@ const SECTIONS: Section[] = [
         name: "Vektorstift-Familie",
         description:
           "Ein echter Bezierstift mit dem vollen Illustrator-Werkzeugkasten — Stift (P), Anker hinzufügen (+, fügt ein, ohne die Kurve zu verändern), Anker löschen (-), und Anker umwandeln (C) — nutzbar in Sketcher und direkt in Grid-Zellen, wo Formen automatisch dem Zeichen der Zelle zugeordnet werden.",
+      },
+      {
+        name: "Füllung & Kontur",
+        description:
+          "Jeder Vektorpfad lässt sich entweder als solide Füllung (Standard) oder als Kontur mit fester Breite rendern — wählbar im Path-Panel, bevor du zeichnest, mit einem Breitenregler sobald Kontur aktiv ist. Kontur funktioniert auch bei offenen Pfaden, sodass eine nie geschlossene Linie als echte Tinte exportiert wird, statt aus dem Font zu verschwinden.",
       },
       {
         name: "Weiche Anker & gehaltene Tasten",
