@@ -67,7 +67,17 @@ export function hrefWith(base: string, filters: Filters, override: Partial<Filte
 
 export function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
-  const minutes = Math.floor(seconds / 60);
+  if (seconds < 3600) {
+    const minutes = Math.floor(seconds / 60);
+    const rest = Math.round(seconds % 60);
+    return `${minutes}m ${rest}s`;
+  }
+  // A tab left open for hours (a real thing this dashboard has seen — see
+  // the "hours dragged the mean up" comment in aggregate.ts) used to come
+  // out as e.g. "666m 40s", technically correct but nobody reads triple-
+  // digit minutes at a glance. h/m/s past the hour mark instead.
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
   const rest = Math.round(seconds % 60);
-  return `${minutes}m ${rest}s`;
+  return `${hours}h ${minutes}m ${rest}s`;
 }
