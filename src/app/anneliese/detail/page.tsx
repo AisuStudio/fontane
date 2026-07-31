@@ -102,7 +102,7 @@ export default async function AnnelieseDetailPage({
 
       <Section
         title="time spent, by view"
-        note="visible time only; one segment per view, so a visit can appear in several rows"
+        note="visible time only; one segment per view, so a visit can appear in several rows — combined is every session's segments added together, not any one session's length (that's what median is for)"
       >
         {stats.timeByView.length === 0 ? (
           <Empty>no per-view timing yet</Empty>
@@ -112,7 +112,7 @@ export default async function AnnelieseDetailPage({
               <tr style={{ opacity: 0.5, fontSize: 12, textAlign: "left" }}>
                 <th style={{ padding: "0 0 6px", fontWeight: "normal" }}>view</th>
                 <th style={{ padding: "0 0 6px", fontWeight: "normal", textAlign: "right" }}>median</th>
-                <th style={{ padding: "0 0 6px", fontWeight: "normal", textAlign: "right" }}>total</th>
+                <th style={{ padding: "0 0 6px", fontWeight: "normal", textAlign: "right" }}>combined</th>
                 <th style={{ padding: "0 0 6px", fontWeight: "normal", textAlign: "right" }}>segments</th>
               </tr>
             </thead>
