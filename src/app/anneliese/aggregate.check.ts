@@ -29,7 +29,7 @@ const base: EventRow = {
 };
 const row = (o: Partial<EventRow>): EventRow => ({ ...base, ...o });
 
-// s1 desktop, direct: arrives, draws after 30s, exports. 120s + 60s visible.
+// s1 desktop, direct: arrives, draws after 30s, exports. 120s + 60s + 10s visible.
 // s2 mobile, google: arrives, draws, never exports. 8s visible.
 // s3 desktop, google: arrives, never draws. 5s visible.
 // s4 desktop, direct: arrives, draws, exports, publishes. 3000s visible.
@@ -42,13 +42,14 @@ const rows: EventRow[] = [
   row({ type: "duration", session_id: "s1", seconds: 120, page: "studio:grid", created_at: "2026-07-20T10:02:00.000Z" }),
   row({ type: "duration", session_id: "s1", seconds: 60, page: "studio:editor", created_at: "2026-07-20T10:03:00.000Z" }),
   row({ type: "export", session_id: "s1", format: "otf", bucket: "6-20", created_at: "2026-07-20T10:03:10.000Z" }),
-  // No session/page on purpose — a third 07-20 sample that only exercises
-  // buildBuckets()'s day-level median/max, without touching sessionFacts
-  // (needs session_id) or timeByView (needs page). Without a third sample,
-  // median() on an even-length array always equals the max (its upper-
-  // middle tie-break picks the larger of two) — this is what actually
-  // proves medianSeconds and maxSeconds aren't secretly the same number.
-  row({ type: "duration", session_id: null, page: null, seconds: 10, created_at: "2026-07-20T10:01:30.000Z" }),
+  // s1's own third segment, no page on purpose — exercises buildBuckets()'s
+  // day-level median/max without touching timeByView (needs page). Without
+  // a third sample, median() on an even-length array always equals the max
+  // (its upper-middle tie-break picks the larger of two) — this is what
+  // actually proves medianSeconds and maxSeconds aren't secretly the same
+  // number. Has a real session_id (unlike the dedicated no-session case
+  // below) so it also lands in s1's own summed visible time.
+  row({ type: "duration", session_id: "s1", page: null, seconds: 10, created_at: "2026-07-20T10:01:30.000Z" }),
 
   row({ session_id: "s2", device: "mobile", referrer: "www.google.com", created_at: "2026-07-21T10:00:00.000Z" }),
   row({ type: "tool_use", session_id: "s2", format: "pen", page: "studio:free", pointer: "touch", created_at: "2026-07-21T10:00:10.000Z" }),
@@ -79,8 +80,8 @@ const o = computeOverview({ allRows: rows, prevAllRows: [], allTimeVisits: 999, 
 eq("visits (pageviews incl. legacy)", o.visits, 5);
 eq("funnel", o.funnel, { sessions: 4, drew: 3, exported: 2, published: 1 });
 eq("activation 3/4", o.activation, 0.75);
-// visit lengths: s1 180, s2 8, s3 5, s4 3000 -> sorted 5,8,180,3000 -> median idx2 = 180
-eq("median visit = summed segments", o.medianVisitSeconds, 180);
+// visit lengths: s1 190, s2 8, s3 5, s4 3000 -> sorted 5,8,190,3000 -> median idx2 = 190
+eq("median visit = summed segments", o.medianVisitSeconds, 190);
 eq("visits measured", o.sessionsMeasured, 4);
 // time to first tool: s1 30, s2 10, s4 20 -> sorted 10,20,30 -> 20
 eq("median time to first stroke", o.medianTimeToFirstTool, 20);
@@ -159,6 +160,31 @@ eq(
   [
     { label: "Search", sessions: 3, drew: 0, exported: 0 },
     { label: "example-blog.com", sessions: 1, drew: 0, exported: 0 },
+  ]
+);
+
+// A duration row with no session_id predates both session tracking AND the
+// visitDuration.ts visibility-segment fix (an earlier version reported
+// wall-clock-since-mount, so a tab left open overnight logged as a 10-hour
+// "visit") — it must not reach the day's max/median line on the overview
+// chart, same as it already doesn't reach sessionFacts/the histogram.
+const legacyRows: EventRow[] = [
+  row({ session_id: "z1", created_at: "2026-07-20T10:00:00.000Z" }),
+  row({ type: "duration", session_id: "z1", seconds: 42, created_at: "2026-07-20T10:00:10.000Z" }),
+  row({ type: "duration", session_id: null, seconds: 40000, created_at: "2026-07-20T10:00:20.000Z" }),
+];
+const legacyOverview = computeOverview({ allRows: legacyRows, prevAllRows: [], allTimeVisits: 0, filters });
+eq(
+  "no-session duration row excluded from the day's bucket entirely",
+  legacyOverview.buckets.map((b) => [b.durationSamples, b.maxSeconds, b.medianSeconds]),
+  [
+    [0, 0, 0],
+    [0, 0, 0],
+    [1, 42, 42],
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
   ]
 );
 

@@ -303,10 +303,17 @@ function buildBuckets(pageviews: EventRow[], durationRows: EventRow[], range: Da
   // series line up on the same x. Deliberately a per-bucket median, not a
   // rolling one: this dashboard has few visitors/day, so some days will be a
   // single sample — noisier, but an honest number beats a smoothed one that
-  // implies more data than exists.
+  // implies more data than exists. Rows with no session_id predate
+  // 2026-07-25 — and predate the visibility-segment fix in
+  // lib/visitDuration.ts (an earlier version sent wall-clock-since-mount on
+  // every pagehide, so a tab left open overnight reported a 10-hour
+  // "visit"). Excluding them here matches sessionFacts()/funnelOf() doing
+  // the same for every other duration-based number already; without it this
+  // was the one place a since-fixed measurement bug could still surface, as
+  // a multi-hour spike on the day's max-seconds line.
   const secondsByBucket = new Map<string, number[]>();
   for (const r of durationRows) {
-    if (r.seconds == null) continue;
+    if (r.seconds == null || !r.session_id) continue;
     const key = bucketOf(r.created_at);
     const list = secondsByBucket.get(key) ?? [];
     list.push(r.seconds);
