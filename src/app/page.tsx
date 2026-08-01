@@ -4350,12 +4350,16 @@ export default function Home() {
         setCloudError(typeof data.error === "string" ? data.error : "Sign up failed.");
         return;
       }
+      // The account exists either way at this point — track it before
+      // branching on whether it's also logged in yet, or a project with
+      // "Confirm email" on (as this one turned out to be) would silently
+      // undercount every real signup.
+      trackAuth("signup");
       if (data.needsConfirmation) {
         setCloudError("Check your email to confirm your account, then log in.");
         setAuthMode("login");
         return;
       }
-      trackAuth("signup");
       window.location.reload();
     } catch {
       setCloudError("Network error — please try again.");
