@@ -66,7 +66,8 @@ const rows: EventRow[] = [
   row({ created_at: "2026-07-19T10:00:00.000Z" }), // legacy, no session
   row({ type: "export", format: "marketplace-download", created_at: "2026-07-23T12:00:00.000Z" }), // server-side, no session
   row({ type: "charset", session_id: "s1", format: "latin-extended", bucket: "on", created_at: "2026-07-20T10:00:40.000Z" }),
-  row({ type: "gate", session_id: "s3", format: "cloud-code", created_at: "2026-07-22T10:00:05.000Z" }),
+  row({ type: "gate", session_id: "s3", format: "invite-code", created_at: "2026-07-22T10:00:05.000Z" }),
+  row({ type: "auth", session_id: "s4", format: "signup", created_at: "2026-07-23T10:00:01.000Z" }),
   row({ type: "error", session_id: "s1", format: "export:otf", created_at: "2026-07-20T10:03:11.000Z" }),
   row({ type: "tour", session_id: "s1", format: "started", created_at: "2026-07-20T10:00:01.000Z" }),
   row({ type: "tour", session_id: "s1", format: "completed", created_at: "2026-07-20T10:00:45.000Z" }),
@@ -126,7 +127,8 @@ eq("pointer mix", d.pointerMix, [{ label: "pen", count: 2 }, { label: "mouse", c
 eq("export sizes keep ordinal order", d.exportSizes.map((b) => b.count), [0, 0, 1, 0, 1]);
 eq("exports incl. server-side download", d.exports.map((e) => e.label).sort(), ["marketplace-download", "marketplace-publish", "otf"]);
 eq("charsets", d.charsets, [{ label: "latin-extended", on: 1, off: 0 }]);
-eq("gates", d.gates, [{ label: "cloud-code", count: 1 }]);
+eq("gates", d.gates, [{ label: "invite-code", count: 1 }]);
+eq("auth events", d.authEvents, [{ label: "signup", count: 1 }]);
 eq("errors", d.errors, [{ label: "export:otf", count: 1 }]);
 eq("tour started", d.tourStarted, 2);
 eq("tour completed", d.tourCompleted, 1);

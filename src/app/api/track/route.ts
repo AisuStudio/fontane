@@ -17,6 +17,7 @@ type TrackBody = { session?: string } & (
   | { type: "gate"; format: string }
   | { type: "error"; format: string }
   | { type: "tour"; format: string }
+  | { type: "auth"; format: string }
 );
 
 // Anything client-supplied that lands in a column is clamped to a short
@@ -176,7 +177,7 @@ export async function POST(request: Request) {
         await supabase
           .from("fontane_events")
           .insert({ type: "charset", session_id: session, format: label(body.format), bucket: label(body.bucket, 8) });
-      } else if ((body.type === "gate" || body.type === "error" || body.type === "tour") && body.format) {
+      } else if ((body.type === "gate" || body.type === "error" || body.type === "tour" || body.type === "auth") && body.format) {
         await supabase.from("fontane_events").insert({ type: body.type, session_id: session, format: label(body.format) });
       }
     } catch {

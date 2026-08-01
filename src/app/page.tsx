@@ -60,7 +60,7 @@ import { loadMetrics, saveMetrics, DEFAULT_METRICS, type Metrics } from "@/lib/m
 import { loadSettings, saveSettings, DEFAULT_SETTINGS, type StrokeSettings } from "@/lib/settings";
 import { loadSectionOpen, saveSectionOpen } from "@/lib/uiPrefs";
 import { downloadProjectFile, parseProjectFile, applyProjectFile, buildProjectFile } from "@/lib/projectFile";
-import { getStoredCode, setStoredCode, clearStoredCode } from "@/lib/cloudCode";
+import { createClient as createBrowserClient } from "@/lib/supabaseBrowser";
 import { layoutText } from "@/lib/layoutText";
 import {
   Undo2,
@@ -93,7 +93,7 @@ import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
 import AnimatePanel from "./AnimatePanel";
 import EditorPanel, { DEFAULT_EDITOR_FONT_SIZE_PT, EDITOR_SAMPLE_TEXT } from "./EditorPanel";
 import { DEFAULT_PRESET_ID, type AnimationPresetId } from "@/lib/animationPresets";
-import { trackCharset, trackError, trackExport, trackGate, trackToolUse, trackUndo, notePointer } from "@/lib/analytics";
+import { trackAuth, trackCharset, trackError, trackExport, trackGate, trackToolUse, trackUndo, notePointer } from "@/lib/analytics";
 import { useVisitTracking } from "@/lib/visitDuration";
 import {
   getAuthorId,
@@ -1030,12 +1030,15 @@ export default function Home() {
   const [shareCopyState, setShareCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [shareCopiedSlug, setShareCopiedSlug] = useState<string | null>(null);
 
-  // Cloud project save/load — gated by a single shared betacode (checked
-  // server-side in api/projects/*, see src/lib/betaCode.ts) rather than real
-  // per-user accounts, see the plan this was built from. cloudCode/
-  // currentCloudProject both persist to localStorage (lazy initializers)
+  // Cloud project save/load — gated by a real signed-in account (Supabase
+  // Auth session, cookie-based via src/lib/supabaseBrowser.ts +
+  // src/lib/supabaseServer.ts) instead of the old shared betacode. `user`
+  // starts null and is filled in by the getSession()/onAuthStateChange
+  // effect below — it's the actual source of truth, not a persisted local
+  // value, since the session itself already lives in a cookie.
+  // currentCloudProject still persists to localStorage (lazy initializer)
   // since a Load reloads the page, same as the local FFF Import flow.
-  const [cloudCode, setCloudCode] = useState<string | null>(() => getStoredCode());
+  const [user, setUser] = useState<{ id: string; email: string | null } | null>(null);
   const [currentCloudProject, setCurrentCloudProject] = useState<{ id: number; name: string } | null>(() => {
     if (typeof window === "undefined") return null;
     try {
@@ -1045,8 +1048,11 @@ export default function Home() {
       return null;
     }
   });
-  const [cloudModal, setCloudModal] = useState<"unlock" | "save" | "projects" | null>(null);
-  const [cloudCodeInput, setCloudCodeInput] = useState("");
+  const [cloudModal, setCloudModal] = useState<"auth" | "save" | "projects" | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authInviteCode, setAuthInviteCode] = useState("");
   const [cloudSaveAsName, setCloudSaveAsName] = useState("");
   const [cloudBusy, setCloudBusy] = useState(false);
   const [cloudError, setCloudError] = useState<string | null>(null);
@@ -1105,15 +1111,38 @@ export default function Home() {
 
   // Fetches the cloud project list whenever "My Cloud Projects" opens — not
   // debounced (no text input driving it), just a one-shot load per open.
+  // No auth header needed: the session cookie rides along on every
+  // same-origin fetch automatically.
   useEffect(() => {
-    if (cloudModal !== "projects" || !cloudCode) return;
+    if (cloudModal !== "projects" || !user) return;
     setCloudProjectsLoading(true);
-    fetch("/api/projects", { headers: { "x-fontane-code": cloudCode } })
+    fetch("/api/projects")
       .then((r) => r.json())
       .then((data) => setCloudProjects(data.projects ?? []))
       .catch(() => setCloudProjects([]))
       .finally(() => setCloudProjectsLoading(false));
-  }, [cloudModal, cloudCode]);
+  }, [cloudModal, user]);
+
+  // The one place session state gets read: an initial getSession() (so a
+  // page reload doesn't flash "signed out" before the cookie's been
+  // checked) plus a live subscription for sign-in/sign-out/token-refresh
+  // happening in this same tab. supabaseBrowser's client persists its own
+  // subscription internally — this only mirrors its current user into
+  // component state for the UI to read.
+  useEffect(() => {
+    const supabase = createBrowserClient();
+    supabase.auth.getSession().then(({ data }) => {
+      const u = data.session?.user;
+      setUser(u ? { id: u.id, email: u.email ?? null } : null);
+    });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      const u = session?.user;
+      setUser(u ? { id: u.id, email: u.email ?? null } : null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   const [activeSetIds, setActiveSetIds] = useState<Set<string>>(new Set(DEFAULT_CHARACTER_SET_IDS));
   // Extra Grid cells beyond the fixed character sets — this is the only way
@@ -4273,24 +4302,61 @@ export default function Home() {
     else window.localStorage.removeItem("fontane.currentCloudProject.v1");
   }
 
-  async function handleUnlockCloud() {
-    const code = cloudCodeInput.trim();
-    if (!code) return;
+  // Log in and sign up share one submit (same modal, a tab toggle picks the
+  // mode — see cloudModal === "auth" below). Log in runs entirely
+  // client-side: signInWithPassword() updates the browser client's session
+  // directly, which the onAuthStateChange subscription above already picks
+  // up, no manual state sync needed. Sign up has to be a server round-trip
+  // instead — the invite code must never be checked (or ship) client-side,
+  // see api/auth/signup/route.ts — so afterward this reloads the page
+  // rather than trying to hand-sync a session the server just set in a
+  // cookie into this tab's already-initialized browser client.
+  async function handleAuthSubmit() {
+    const email = authEmail.trim();
+    const password = authPassword;
+    if (!email || !password) return;
     setCloudBusy(true);
     setCloudError(null);
     try {
-      const res = await fetch("/api/projects", { headers: { "x-fontane-code": code } });
-      if (!res.ok) {
-        // Not an error to log — a person asking for the thing behind the
-        // wall. Which wall, nothing about the code they tried.
-        trackGate("cloud-code");
-        setCloudError("Wrong code.");
+      if (authMode === "login") {
+        const supabase = createBrowserClient();
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) {
+          setCloudError(error.message);
+          return;
+        }
+        trackAuth("login");
+        setCloudModal(null);
+        setAuthEmail("");
+        setAuthPassword("");
         return;
       }
-      setStoredCode(code);
-      setCloudCode(code);
-      setCloudModal(null);
-      setCloudCodeInput("");
+
+      const inviteCode = authInviteCode.trim();
+      if (!inviteCode) {
+        setCloudError("Invite code required.");
+        return;
+      }
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, inviteCode }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        // Not an error to log — a person asking for the thing behind the
+        // wall. Which wall, nothing about the code or email they tried.
+        if (res.status === 401) trackGate("invite-code");
+        setCloudError(typeof data.error === "string" ? data.error : "Sign up failed.");
+        return;
+      }
+      if (data.needsConfirmation) {
+        setCloudError("Check your email to confirm your account, then log in.");
+        setAuthMode("login");
+        return;
+      }
+      trackAuth("signup");
+      window.location.reload();
     } catch {
       setCloudError("Network error — please try again.");
     } finally {
@@ -4298,9 +4364,9 @@ export default function Home() {
     }
   }
 
-  function handleLockCloud() {
-    clearStoredCode();
-    setCloudCode(null);
+  async function handleLogOut() {
+    const supabase = createBrowserClient();
+    await supabase.auth.signOut();
     setCurrentCloudProjectPersist(null);
   }
 
@@ -4312,7 +4378,7 @@ export default function Home() {
 
   async function handleSaveToCloud(asNew: boolean) {
     const name = cloudSaveAsName.trim();
-    if (!name || !cloudCode) return;
+    if (!name || !user) return;
     setCloudBusy(true);
     setCloudError(null);
     try {
@@ -4321,7 +4387,7 @@ export default function Home() {
       if (!asNew && currentCloudProject) body.id = currentCloudProject.id;
       const res = await fetch("/api/projects", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-fontane-code": cloudCode },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       const data = await res.json();
@@ -4345,11 +4411,11 @@ export default function Home() {
   }
 
   async function handleLoadCloudProject(id: number, name: string) {
-    if (!cloudCode) return;
+    if (!user) return;
     setCloudBusy(true);
     setCloudError(null);
     try {
-      const res = await fetch(`/api/projects/${id}`, { headers: { "x-fontane-code": cloudCode } });
+      const res = await fetch(`/api/projects/${id}`);
       const data = await res.json();
       if (!res.ok) {
         setCloudError(typeof data.error === "string" ? data.error : "Load failed.");
@@ -4365,9 +4431,9 @@ export default function Home() {
   }
 
   async function handleDeleteCloudProject(id: number) {
-    if (!cloudCode) return;
+    if (!user) return;
     try {
-      const res = await fetch(`/api/projects/${id}`, { method: "DELETE", headers: { "x-fontane-code": cloudCode } });
+      const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
       if (!res.ok) return;
       setCloudProjects((prev) => prev.filter((p) => p.id !== id));
       if (currentCloudProject?.id === id) setCurrentCloudProjectPersist(null);
@@ -4758,14 +4824,14 @@ export default function Home() {
           </button>
           {openMenu === "cloud" && (
             <div className={styles.dropdown} role="menu">
-              {!cloudCode ? (
+              {!user ? (
                 <button
                   type="button"
                   role="menuitem"
                   className={styles.dropdownItem}
-                  onClick={() => { setCloudModal("unlock"); setCloudError(null); setOpenMenu(null); }}
+                  onClick={() => { setCloudModal("auth"); setAuthMode("login"); setCloudError(null); setOpenMenu(null); }}
                 >
-                  Unlock Cloud
+                  Sign In
                 </button>
               ) : (
                 <>
@@ -4790,9 +4856,9 @@ export default function Home() {
                     type="button"
                     role="menuitem"
                     className={styles.dropdownItem}
-                    onClick={() => { handleLockCloud(); setOpenMenu(null); }}
+                    onClick={() => { handleLogOut(); setOpenMenu(null); }}
                   >
-                    Lock
+                    Log Out
                   </button>
                 </>
               )}
@@ -6499,33 +6565,75 @@ export default function Home() {
         </div>
       )}
 
-      {cloudModal === "unlock" && (
+      {cloudModal === "auth" && (
         <div className={styles.modalBackdrop} onClick={() => setCloudModal(null)}>
           <div className={styles.modalCard} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
-              <span>Unlock Cloud</span>
+              <span>{authMode === "login" ? "Log In" : "Sign Up"}</span>
               <button type="button" className={styles.modalClose} onClick={() => setCloudModal(null)} aria-label="Close">
                 ×
               </button>
             </div>
             <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <p style={{ fontSize: 12, opacity: 0.7, marginTop: 0 }}>
+                Free — an account only unlocks cross-device cloud save, everything else stays account-free.
+              </p>
+              <div className={styles.modeToggle} role="radiogroup" aria-label="Log in or sign up">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={authMode === "login"}
+                  className={`${styles.modeBtn} ${authMode === "login" ? styles.modeBtnActive : ""}`}
+                  onClick={() => { setAuthMode("login"); setCloudError(null); }}
+                >
+                  Log In
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={authMode === "signup"}
+                  className={`${styles.modeBtn} ${authMode === "signup" ? styles.modeBtnActive : ""}`}
+                  onClick={() => { setAuthMode("signup"); setCloudError(null); }}
+                >
+                  Sign Up
+                </button>
+              </div>
+              <input
+                type="email"
+                className={styles.nameInput}
+                style={{ width: "100%" }}
+                placeholder="Email"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+              />
               <input
                 type="password"
                 className={styles.nameInput}
                 style={{ width: "100%" }}
-                placeholder="Cloud code"
-                value={cloudCodeInput}
-                onChange={(e) => setCloudCodeInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") handleUnlockCloud(); }}
+                placeholder="Password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && authMode === "login") handleAuthSubmit(); }}
               />
+              {authMode === "signup" && (
+                <input
+                  type="text"
+                  className={styles.nameInput}
+                  style={{ width: "100%" }}
+                  placeholder="Invite code"
+                  value={authInviteCode}
+                  onChange={(e) => setAuthInviteCode(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleAuthSubmit(); }}
+                />
+              )}
               {cloudError && <p style={{ fontSize: 12, color: "var(--color-error, #c0392b)" }}>{cloudError}</p>}
               <button
                 type="button"
                 className={styles.clearBtn}
-                disabled={!cloudCodeInput.trim() || cloudBusy}
-                onClick={handleUnlockCloud}
+                disabled={!authEmail.trim() || !authPassword || cloudBusy}
+                onClick={handleAuthSubmit}
               >
-                {cloudBusy ? "Checking…" : "Unlock"}
+                {cloudBusy ? "Please wait…" : authMode === "login" ? "Log In" : "Sign Up"}
               </button>
             </div>
           </div>

@@ -10,6 +10,7 @@
     "check:analytics": "tsc -p tsconfig.check.json && node .analytics-check/app/anneliese/aggregate.check.js"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.110.7",
     "@vercel/functions": "^3.7.5",
     "lucide-react": "^1.24.0",

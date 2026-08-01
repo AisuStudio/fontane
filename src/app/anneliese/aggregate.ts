@@ -532,6 +532,11 @@ export function computeDetail(input: { allRows: EventRow[]; filters: Filters }) 
     marketplaceDownloads: exportRows.filter((r) => r.format === "marketplace-download").length,
     gates: countBy(rows, (r) => (r.type === "gate" ? r.format : null)),
     errors: countBy(rows, (r) => (r.type === "error" ? r.format : null)),
+    // "signup"/"login" — a real account created or a returning sign-in, see
+    // trackAuth() in lib/analytics.ts. Only exists since accounts replaced
+    // the shared cloud-save code.
+    authEvents: countBy(rows, (r) => (r.type === "auth" ? r.format : null)),
+    authSince: coverageSince(allRows, (r) => r.type === "auth", filters.from),
     tourStarted: rows.filter((r) => r.type === "tour" && r.format === "started").length,
     tourCompleted: rows.filter((r) => r.type === "tour" && r.format === "completed").length,
     tourSkips: countBy(rows, (r) =>

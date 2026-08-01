@@ -171,6 +171,16 @@ export function trackError(where: string) {
   send({ type: "error", format: where });
 }
 
+// A real account being created or a returning sign-in — the one auth signal
+// worth its own type rather than reusing "gate" (that's for a WALL someone
+// hit, and a successful sign-up/login is the opposite of that) or "export"
+// (no format/bucket relationship to a font export at all). `action` is
+// "signup" | "login" — kept as a free string, not a union, so a new call
+// site elsewhere doesn't need this file to change first.
+export function trackAuth(action: string) {
+  send({ type: "auth", format: action });
+}
+
 // The coach marks tour's outcome: "started" once per tour instance
 // (auto-launch or a deliberate "Show tour again"), "completed" if Done was
 // reached, or "skipped:N" with the 1-based step it was skipped at. The step

@@ -162,7 +162,7 @@ export default async function AnnelieseDetailPage({
 
       <Section
         title="walls and failures"
-        note="a rejected betacode is a person asking for accounts; an export error is a use that didn't work"
+        note="a rejected invite code is someone trying to sign up without one; an export error is a use that didn't work"
       >
         <div style={{ display: "grid", gap: 24, gridTemplateColumns: "repeat(2, 1fr)" }}>
           <div>
@@ -174,6 +174,14 @@ export default async function AnnelieseDetailPage({
             {stats.errors.length === 0 ? <Empty>none</Empty> : <BarTable rows={stats.errors} />}
           </div>
         </div>
+      </Section>
+
+      <Section
+        title="accounts"
+        note="signup = a new account created (invite code accepted); login = a returning sign-in — cross-device cloud save is the only thing an account unlocks"
+        since={stats.authSince}
+      >
+        {stats.authEvents.length === 0 ? <Empty>none yet</Empty> : <BarTable rows={stats.authEvents} />}
       </Section>
 
       <Section
