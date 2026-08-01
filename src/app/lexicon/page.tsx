@@ -167,6 +167,10 @@ const SECTIONS: Section[] = [
         term: "Provenance",
         definition: "Fontane's term for a font's traceable drawing history — evidence that a glyph was actually hand-drawn over real time, rather than converted or generated. Checked before a font can publish to the Marketplace.",
       },
+      {
+        term: "Fill vs. stroke (Vector pen)",
+        definition: "Two ways a Vector-tool path can render, chosen per path in the Path panel before you draw. Fill turns a closed path into a solid shape — or a hole cut into one, the classic way to draw the counter in an 'O'. Stroke inks a constant-width outline along the path instead, at an adjustable width — the only way an open path (one that never closes back on its own start point) becomes visible ink at all, since a fill has no interior to fill without one.",
+      },
     ],
   },
 ];
