@@ -112,6 +112,10 @@ function fitTransform(bbox: Bounds, rect: { x: number; y: number; w: number; h: 
   const originX = rect.x * HANGUL_EM + (rect.w * HANGUL_EM - srcW * sx) / 2;
   const originY = rect.y * HANGUL_EM + (rect.h * HANGUL_EM - srcH * sy) / 2;
   return {
+    sx,
+    sy,
+    originX,
+    originY,
     x: (x: number) => originX + (x - bbox.xmin) * sx,
     y: (y: number) => originY + (y - bbox.ymin) * sy,
   };
@@ -124,6 +128,15 @@ function applyTransform(contours: Command[][], t: { x: (n: number) => number; y:
       pts: c.pts.map((v, i) => (i % 2 === 0 ? t.x(v) : t.y(v))),
     }))
   );
+}
+
+// Fontane names a glyph after the character itself ("a"), which the post
+// table can't hold for anything outside Latin-1 — fontTools raises
+// UnicodeEncodeError on the first ㄱ. Hangul glyphs therefore get AGL-style
+// uniXXXX names. The cmap entry still comes from `unicode`, so nothing about
+// how the font is used changes; only the internal name does.
+export function hangulGlyphName(codepoint: number): string {
+  return `uni${codepoint.toString(16).toUpperCase().padStart(4, "0")}`;
 }
 
 export type JamoSource = Map<string, Command[][]>;
@@ -179,6 +192,66 @@ function composeStandalone(jamo: string, source: JamoSource): string[] | null {
   return applyTransform(contours, fitTransform(bbox, STANDALONE_RECT, "uniform")).map(serializePath);
 }
 
+// A syllable expressed as references to the jamo glyphs instead of copies of
+// their outlines — the difference between ~25 MB and ~1 MB for the full
+// 11.172, because every syllable then costs three component records rather
+// than three duplicated outlines.
+//
+// Only the offline TrueType build can use this: composites live in the glyf
+// table, and opentype.js writes CFF, which has no equivalent the library
+// exposes. So the browser keeps baking outlines and this rides along in the
+// exported JSON for font-build/build_ttf.py.
+export type HangulPart = {
+  jamo: string; // the component glyph's name — a jamo is its own glyph too
+  // A scale-and-offset transform in FONT space (y up, baseline at 0), taking
+  // the standalone jamo glyph onto this syllable's slot. Derived rather than
+  // measured: the standalone glyph is itself the jamo's ink fitted into
+  // STANDALONE_RECT, so going from there to any other slot is the ratio of
+  // the two fits. No rotation or skew is ever involved, which is what keeps
+  // this expressible as a TrueType component at all.
+  xx: number;
+  yy: number;
+  dx: number;
+  dy: number;
+};
+
+// Font space's baseline offset — the top of the em box in font units. Kept
+// here rather than imported from exportFont.ts so this module stays free of
+// the opentype.js side of the pipeline; both refer to the same 800.
+const FONT_ASCENT = 800;
+
+export function composeSyllableParts(
+  codepoint: number,
+  source: JamoSource,
+  fit: FitMode = "uniform",
+  layout?: LayoutTable
+): HangulPart[] | null {
+  const placements = placementFor(codepoint, layout);
+  if (!placements) return null;
+  const parts: HangulPart[] = [];
+  for (const p of placements) {
+    const contours = source.get(p.jamo);
+    if (!contours) return null;
+    const bbox = boundsOf(contours);
+    if (!bbox) return null;
+    const target = fitTransform(bbox, p.rect, fit);
+    const standalone = fitTransform(bbox, STANDALONE_RECT, "uniform");
+    const xx = target.sx / standalone.sx;
+    const yy = target.sy / standalone.sy;
+    parts.push({
+      // The component's GLYPH name, not the character — see hangulGlyphName.
+      jamo: hangulGlyphName(p.jamo.codePointAt(0)!),
+      xx,
+      yy,
+      dx: target.originX - xx * standalone.originX,
+      // y is flipped between doc space (down) and font space (up), so the
+      // offset is derived from the flipped origins, not the raw ones.
+      dy: FONT_ASCENT - target.originY - yy * (FONT_ASCENT - standalone.originY),
+    });
+  }
+  return parts;
+}
+
 export type ComposeOptions = {
   // "common" is the ~2.350-syllable band that covers ordinary Korean text and
   // keeps a browser-built OTF in the single-digit MB range; "all" is the full
@@ -187,6 +260,10 @@ export type ComposeOptions = {
   set?: "common" | "all" | number[];
   fit?: FitMode;
   layout?: LayoutTable;
+  // "outline" bakes each syllable's contours (the only thing the browser's
+  // CFF writer can consume); "components" emits jamo references instead, for
+  // the offline TrueType build. See HangulPart.
+  mode?: "outline" | "components";
 };
 
 // Appends composed syllables (and em-normalized jamo) to a compiled document.
@@ -215,7 +292,7 @@ export function composeHangul(doc: CompiledDocument, options: ComposeOptions = {
     const contours = composeStandalone(jamo, source);
     if (!contours) continue;
     composed.push({
-      name: jamo,
+      name: hangulGlyphName(jamo.codePointAt(0)!),
       kind: "base",
       unicode: `U+${jamo.codePointAt(0)!.toString(16).toUpperCase()}`,
       contours,
@@ -231,14 +308,19 @@ export function composeHangul(doc: CompiledDocument, options: ComposeOptions = {
     });
   }
 
+  const asComponents = options.mode === "components";
   for (const cp of targets) {
-    const contours = composeSyllable(cp, source, fit, options.layout);
-    if (!contours) continue;
+    // Both modes describe the same geometry; they differ only in whether the
+    // jamo's outline is copied in or pointed at.
+    const parts = asComponents ? composeSyllableParts(cp, source, fit, options.layout) : null;
+    const contours = asComponents ? [] : composeSyllable(cp, source, fit, options.layout);
+    if (asComponents ? !parts : !contours) continue;
     composed.push({
-      name: String.fromCodePoint(cp),
+      name: hangulGlyphName(cp),
       kind: "base",
       unicode: `U+${cp.toString(16).toUpperCase()}`,
-      contours,
+      contours: contours ?? [],
+      ...(parts ? { hangulParts: parts } : {}),
       script: "hangul",
       cellWidth: HANGUL_EM,
       cellHeight: HANGUL_EM,

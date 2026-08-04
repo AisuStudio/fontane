@@ -18,6 +18,7 @@ import sys
 
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
+from fontTools.ttLib.tables._g_l_y_f import UNSCALED_COMPONENT_OFFSET
 
 UPM = 1000
 ASCENT = 800
@@ -139,6 +140,33 @@ def bbox_transform(contours):
     )
 
 
+def em_transform(entry):
+    """Hangul's calibration. No baseline: the glyph was drawn inside (or
+    composed into) a square em box and maps onto the font's em square - top
+    edge at the ascender, bottom one em below, advance exactly one em for
+    every syllable. That uniform advance is how Korean is set, not a
+    simplification.
+
+    The source square is the largest centred square inside the cell, matching
+    GridCell's emBox() and exportFont.ts's emTransform() exactly - a drawn
+    jamo's canvas is never quite square (the label bar takes some height), and
+    measuring against the full canvas would squash every glyph by that ratio.
+    """
+    cell_width = entry.get("cellWidth")
+    cell_height = entry.get("cellHeight")
+    if not cell_width or not cell_height:
+        return None
+    size = min(cell_width, cell_height)
+    origin_x = (cell_width - size) / 2
+    origin_y = (cell_height - size) / 2
+    scale = UPM / size
+    return (
+        lambda x: (x - origin_x) * scale,
+        lambda y: ASCENT - (y - origin_y) * scale,
+        UPM,
+    )
+
+
 def glyph_name_for(entry):
     # Match the naming convention the Glyphs import script also uses, so a
     # font built here and a font built via Glyphs.app agree on glyph names.
@@ -152,17 +180,69 @@ def build_font(doc, family_name="Fontane Sketch"):
     cmap = {}
     glyphs = {}
     metrics = {}
+    composite_names = []
     doc_metrics = doc.get("metrics")
 
     notdef_pen = TTGlyphPen(None)
     glyphs[".notdef"] = notdef_pen.glyph()
     metrics[".notdef"] = (DEFAULT_ADVANCE, 0)
 
-    for entry in doc.get("glyphs", []):
+    # Composite syllables have to come second: fontTools resolves a component
+    # by glyph name at compile time, so every jamo it points at must already
+    # be in `glyphs`. Sorting by "does it have parts" is enough - jamo never
+    # have parts, and a syllable never references another syllable.
+    entries = sorted(doc.get("glyphs", []), key=lambda e: bool(e.get("hangulParts")))
+
+    for entry in entries:
         name = glyph_name_for(entry)
-        pen = TTGlyphPen(None)
+        pen = TTGlyphPen(glyphs)
+        parts = entry.get("hangulParts")
+
+        if parts:
+            # A syllable as references to the jamo glyphs rather than copies
+            # of their outlines - three component records instead of three
+            # duplicated contours, which is the whole reason the full 11.172
+            # fit in about a megabyte. The transforms are pure scale+offset
+            # (see HangulPart), which is all a TrueType component can carry.
+            for part in parts:
+                if part["jamo"] not in glyphs:
+                    continue  # jamo not drawn - skip rather than emit a half syllable
+                pen.addComponent(
+                    part["jamo"],
+                    (part["xx"], 0, 0, part["yy"], part["dx"], part["dy"]),
+                )
+            glyph = pen.glyph()
+            # Without this flag the spec leaves it to the rasterizer whether a
+            # component's offset is scaled by that component's own transform:
+            # Microsoft's assumes unscaled, Apple's assumes scaled. Our dx/dy
+            # are already in final font units, so on macOS the unflagged font
+            # rendered every scaled-down part in the wrong place - most
+            # visibly the horizontal vowels, which are squeezed the hardest
+            # and so were displaced the furthest. fontTools computes bounds
+            # with the unscaled assumption, which is why the glyf table looked
+            # correct while the text did not.
+            for component in glyph.components:
+                component.flags |= UNSCALED_COMPONENT_OFFSET
+            glyphs[name] = glyph
+            glyph_order.append(name)
+            # Left side bearing has to equal the glyph's own xMin, which for a
+            # composite only exists once its components have been resolved -
+            # so it's filled in after setupGlyf below. Getting this wrong does
+            # not misplace the glyph a little: renderers that trust hmtx shift
+            # the outline by (lsb - xMin), which for a syllable whose ink
+            # starts a third of the way into the em threw whole parts out of
+            # the cell.
+            composite_names.append(name)
+            metrics[name] = (UPM, 0)
+            if entry.get("kind") == "base" and entry.get("unicode"):
+                cmap[int(entry["unicode"].replace("U+", ""), 16)] = name
+            continue
+
         contours = [parse_path_commands(d) for d in entry.get("contours", [])]
-        transform = guide_transform(entry, doc_metrics) or bbox_transform(contours)
+        if entry.get("script") == "hangul":
+            transform = em_transform(entry) or bbox_transform(contours)
+        else:
+            transform = guide_transform(entry, doc_metrics) or bbox_transform(contours)
 
         advance, lsb = DEFAULT_ADVANCE, 0
         if transform:
@@ -187,6 +267,11 @@ def build_font(doc, family_name="Fontane Sketch"):
     fb.setupGlyphOrder(glyph_order)
     fb.setupCharacterMap(cmap)
     fb.setupGlyf(glyphs)
+    # setupGlyf resolves each composite and computes its real bounds; only now
+    # can a composite's left side bearing be set to its own xMin (see above).
+    for name in composite_names:
+        glyph = fb.font["glyf"][name]
+        metrics[name] = (UPM, getattr(glyph, "xMin", 0))
     fb.setupHorizontalMetrics(metrics)
     fb.setupHorizontalHeader(ascent=ASCENT, descent=DESCENT)
     fb.setupNameTable({"familyName": family_name, "styleName": "Regular"})

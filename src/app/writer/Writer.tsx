@@ -5,7 +5,14 @@ import { applyBrush } from "@/lib/brush";
 import { outlineToPath, outlineToSharpPath, type PathCommand } from "@/lib/contour";
 import type { Stroke, StrokePoint } from "@/lib/strokes";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
-import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
+import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS, scriptOf } from "@/lib/charsets";
+
+// Writer practises one character at a time against a traced backdrop, which
+// is a Latin-shaped idea: a Hangul syllable is composed rather than written
+// as one unit, and its 24 jamo are drawn in the Grid against an em square,
+// not here. Offering the Jamo set would put 24 cells into a flow that can't
+// do anything useful with them, so Writer stays Latin-only for now.
+const WRITER_SETS = CHARACTER_SETS.filter((s) => scriptOf(s) === "latin");
 
 // How many not-yet-covered characters go on the line at once — still "a few
 // words" pacing (see the /writer plan), just driven by the real character
@@ -374,7 +381,7 @@ export default function Writer() {
   // automatic character-set batch", same as it always has.
   const [customText, setCustomText] = useState("");
 
-  const selectedChars = [...new Set(CHARACTER_SETS.filter((s) => selectedSetIds.includes(s.id)).flatMap((s) => s.chars))];
+  const selectedChars = [...new Set(WRITER_SETS.filter((s) => selectedSetIds.includes(s.id)).flatMap((s) => s.chars))];
   const remainingChars = selectedChars.filter((c) => !coveredChars.has(c));
   const currentBatch = remainingChars.slice(0, BATCH_SIZE);
   const autoText = currentBatch.join(" ");
@@ -661,7 +668,7 @@ export default function Writer() {
               boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
             }}
           >
-            {CHARACTER_SETS.map((set) => (
+            {WRITER_SETS.map((set) => (
               <label key={set.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#2a2822" }}>
                 <input type="checkbox" checked={selectedSetIds.includes(set.id)} onChange={() => handleToggleSet(set.id)} />
                 {set.label}

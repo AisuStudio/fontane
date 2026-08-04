@@ -35,6 +35,10 @@ export type CompiledGlyph = {
   // below) instead of the baseline one. Absent for everything else, so the
   // Latin path is byte-for-byte what it was.
   script?: "hangul";
+  // Set only by the components-mode composition, which this file's CFF
+  // writer can't consume — it rides along in the exported JSON for
+  // font-build/build_ttf.py. Shape defined in src/lib/hangulCompose.ts.
+  hangulParts?: { jamo: string; xx: number; yy: number; dx: number; dy: number }[];
 };
 
 export type DocMetrics ={ ascender: number; baseline: number; descender: number };

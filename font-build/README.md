@@ -43,6 +43,44 @@ python3 build_ttf.py fontane-document.json output.ttf
   codepoint or feature (same limitation as the Glyphs path — no context
   rules yet, by design).
 
+## Korean
+
+A document with drawn jamo can be turned into a font covering the whole
+Hangul syllable block. The web app already does this on export, but only up
+to the frequent ~2.350 syllables, and it has to copy each jamo's outline into
+every syllable that uses it — `opentype.js` writes CFF, which has no
+composites. TrueType does, and that is the difference between roughly 25 MB
+and roughly 1 MB for the full 11.172.
+
+```bash
+# compose (all 11.172, as references rather than copies)
+node --import ./font-build/ts-register.mjs font-build/spike-hangul.mjs \
+  --in fontane-document.json --out hangul-doc.json --all --components
+
+# build
+python3 font-build/build_ttf.py hangul-doc.json korean.ttf
+```
+
+Drop `--components` to bake outlines instead (bigger, but readable by any
+tool that chokes on composites), `--all` to get the frequent subset, or pass
+`--fit stretch` to compare the two ways a jamo can fill its slot.
+
+The composition itself — which of the 24 jamo go where — is
+`src/lib/hangulCompose.ts`, imported directly by the script rather than
+reimplemented here, so the offline build and the in-app export can't drift
+apart. `ts-loader.mjs` exists only to let Node resolve the app's
+extensionless TypeScript imports.
+
+Two things this got wrong at first, both invisible in the `glyf` table and
+obvious on screen, worth knowing if you touch the composite path:
+
+- a composite's **left side bearing must equal its own `xMin`**, which only
+  exists after its components are resolved. Left at 0, renderers shift the
+  outline by the difference and parts of the syllable leave the cell.
+- component offsets are flagged `UNSCALED_COMPONENT_OFFSET`, because they're
+  computed in final font units; without the flag it's the rasterizer's choice
+  whether to scale them, and Apple's and Microsoft's choose differently.
+
 ## What's verified vs. what isn't
 
 Unlike the Glyphs.app import script (which I can't run — no way to test
