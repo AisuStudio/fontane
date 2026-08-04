@@ -114,42 +114,80 @@ export type ClassLayout = {
 // need to move.
 export type LayoutTable = Record<LayoutClass, ClassLayout>;
 
+// Side bearing, as a fraction of the em on each side. The first version had
+// ink running from 0.03 to 0.97, which left syllables all but touching in
+// running text — the em is the advance, so whatever the layout doesn't leave
+// free IS the gap between syllables.
+const SIDE = 0.07;
+const INNER = 1 - 2 * SIDE;
+
 export const DEFAULT_LAYOUT: LayoutTable = {
-  // 가 — initial left, vowel right, both full height
+  // 가 — initial left, vowel right. Their TOPS align: a vertical vowel that
+  // starts higher than the initial reads as falling over, and real Korean
+  // faces line the two up. Only the vowel reaches further down.
   V: {
-    initial: { x: 0.03, y: 0.09, w: 0.55, h: 0.82 },
-    medialV: { x: 0.62, y: 0.04, w: 0.35, h: 0.92 },
+    initial: { x: SIDE, y: 0.08, w: INNER * 0.6, h: 0.78 },
+    medialV: { x: SIDE + INNER * 0.66, y: 0.08, w: INNER * 0.34, h: 0.86 },
   },
-  // 강 — same, squeezed up to make room for the batchim
+  // 강 — same, squeezed up to make room for the batchim. The band is tighter
+  // than it was: at 0.33 of the em it took so much that the syllable core
+  // above it looked crushed.
   VT: {
-    initial: { x: 0.04, y: 0.05, w: 0.52, h: 0.55 },
-    medialV: { x: 0.61, y: 0.02, w: 0.34, h: 0.60 },
-    final: { x: 0.10, y: 0.64, w: 0.80, h: 0.33 },
+    initial: { x: SIDE, y: 0.06, w: INNER * 0.58, h: 0.54 },
+    medialV: { x: SIDE + INNER * 0.64, y: 0.06, w: INNER * 0.36, h: 0.58 },
+    final: { x: SIDE + INNER * 0.06, y: 0.68, w: INNER * 0.88, h: 0.27 },
   },
   // 고 — initial on top, vowel underneath, full width
   H: {
-    initial: { x: 0.17, y: 0.06, w: 0.66, h: 0.48 },
-    medialH: { x: 0.03, y: 0.58, w: 0.94, h: 0.36 },
+    initial: { x: SIDE + INNER * 0.16, y: 0.07, w: INNER * 0.68, h: 0.46 },
+    medialH: { x: SIDE, y: 0.58, w: INNER, h: 0.34 },
   },
   // 곰 — three stacked bands
   HT: {
-    initial: { x: 0.19, y: 0.03, w: 0.62, h: 0.36 },
-    medialH: { x: 0.03, y: 0.42, w: 0.94, h: 0.22 },
-    final: { x: 0.15, y: 0.67, w: 0.70, h: 0.30 },
+    initial: { x: SIDE + INNER * 0.18, y: 0.04, w: INNER * 0.64, h: 0.34 },
+    medialH: { x: SIDE, y: 0.42, w: INNER, h: 0.21 },
+    final: { x: SIDE + INNER * 0.12, y: 0.68, w: INNER * 0.76, h: 0.27 },
   },
   // 과 — vowel wraps: wide part below the initial, upright part down the right
   M: {
-    initial: { x: 0.04, y: 0.06, w: 0.44, h: 0.46 },
-    medialH: { x: 0.03, y: 0.58, w: 0.68, h: 0.36 },
-    medialV: { x: 0.74, y: 0.04, w: 0.23, h: 0.92 },
+    initial: { x: SIDE, y: 0.08, w: INNER * 0.46, h: 0.44 },
+    medialH: { x: SIDE, y: 0.58, w: INNER * 0.7, h: 0.34 },
+    medialV: { x: SIDE + INNER * 0.76, y: 0.08, w: INNER * 0.24, h: 0.86 },
   },
   // 관
   MT: {
-    initial: { x: 0.05, y: 0.03, w: 0.40, h: 0.36 },
-    medialH: { x: 0.04, y: 0.42, w: 0.64, h: 0.21 },
-    medialV: { x: 0.72, y: 0.02, w: 0.22, h: 0.61 },
-    final: { x: 0.12, y: 0.67, w: 0.76, h: 0.30 },
+    initial: { x: SIDE, y: 0.05, w: INNER * 0.42, h: 0.34 },
+    medialH: { x: SIDE, y: 0.42, w: INNER * 0.66, h: 0.2 },
+    medialV: { x: SIDE + INNER * 0.74, y: 0.05, w: INNER * 0.26, h: 0.57 },
+    final: { x: SIDE + INNER * 0.1, y: 0.68, w: INNER * 0.8, h: 0.27 },
   },
+};
+
+// Optical size correction, applied after a jamo has been fitted to its slot.
+//
+// A fit-inside rule scales by whichever axis runs out first, which is right
+// for a bar and wrong for a circle: ㅇ inscribed in its slot reads visibly
+// smaller than a ㅅ filling the same box, because the eye compares areas, not
+// bounding boxes. Every typeface corrects this by hand — round and enclosed
+// shapes are drawn slightly oversized so they *look* the same size.
+//
+// Values are deliberately mild and clamped at the call site so a boosted jamo
+// can grow toward its slot's longer dimension but never burst out of it.
+export const JAMO_OPTICAL_WEIGHT: Record<string, number> = {
+  "ㅇ": 1.18, // circle — the worst offender
+  "ㅎ": 1.12, // circle with a hat
+  "ㅁ": 1.08, // square, same effect one step weaker
+  "ㅂ": 1.06,
+};
+
+// Not every cluster splits 50:50. ㄹ is a tall, busy shape that needs room;
+// ㄱ next to it is content with less. Weights are relative within one slot,
+// so a pair of equal weights still divides evenly.
+const CLUSTER_WIDTH: Record<string, number> = {
+  "ㄹ": 1.25,
+  "ㅁ": 1.1,
+  "ㅂ": 1.1,
+  "ㅣ": 0.7, // the trailing upright of ㅐ/ㅔ/ㅙ/ㅞ — a bare stroke needs little
 };
 
 // ---------------------------------------------------------------------------
@@ -218,17 +256,32 @@ export function layoutClassFor(medial: string, hasFinal: boolean): LayoutClass |
 // scales with the slot rather than with the em.
 const SUBSLOT_GAP = 0.06;
 
-function splitRow(rect: Rect, n: number): Rect[] {
+// Splits by CLUSTER_WIDTH weight rather than evenly — see the table.
+function splitRow(rect: Rect, parts: string[]): Rect[] {
+  const n = parts.length;
   if (n <= 1) return [rect];
   const gap = rect.w * SUBSLOT_GAP;
-  const w = (rect.w - gap * (n - 1)) / n;
-  return Array.from({ length: n }, (_, i) => ({ x: rect.x + i * (w + gap), y: rect.y, w, h: rect.h }));
+  const usable = rect.w - gap * (n - 1);
+  const weights = parts.map((j) => CLUSTER_WIDTH[j] ?? 1);
+  const total = weights.reduce((a, b) => a + b, 0);
+  const out: Rect[] = [];
+  let x = rect.x;
+  for (let i = 0; i < n; i++) {
+    const w = (usable * weights[i]) / total;
+    out.push({ x, y: rect.y, w, h: rect.h });
+    x += w + gap;
+  }
+  return out;
 }
 
 export type JamoPlacement = {
   jamo: string; // always one of BASIC_JAMO — never a compound
   role: "initial" | "medial" | "final";
   rect: Rect; // where it goes in the unit em box, y down
+  // Optical correction for this shape — see JAMO_OPTICAL_WEIGHT. Carried on
+  // the placement so both consumers (export and preview) apply it without
+  // each having to know the table.
+  weight: number;
 };
 
 // The one function the rest of the app calls. Returns null for anything that
@@ -243,24 +296,36 @@ export function placementFor(codepoint: number, layout: LayoutTable = DEFAULT_LA
   const box = layout[cls];
   const out: JamoPlacement[] = [];
 
+  const weightOf = (jamo: string) => JAMO_OPTICAL_WEIGHT[jamo] ?? 1;
+
   const initials = consonantParts(parts.initial);
-  splitRow(box.initial, initials.length).forEach((rect, i) => {
-    out.push({ jamo: initials[i], role: "initial", rect });
+  splitRow(box.initial, initials).forEach((rect, i) => {
+    out.push({ jamo: initials[i], role: "initial", rect, weight: weightOf(initials[i]) });
   });
 
   if (shape.horizontal && box.medialH) {
-    out.push({ jamo: shape.horizontal, role: "medial", rect: box.medialH });
+    out.push({
+      jamo: shape.horizontal,
+      role: "medial",
+      rect: box.medialH,
+      weight: weightOf(shape.horizontal),
+    });
   }
   if (shape.vertical && box.medialV) {
-    splitRow(box.medialV, shape.vertical.length).forEach((rect, i) => {
-      out.push({ jamo: shape.vertical![i], role: "medial", rect });
+    splitRow(box.medialV, shape.vertical).forEach((rect, i) => {
+      out.push({
+        jamo: shape.vertical![i],
+        role: "medial",
+        rect,
+        weight: weightOf(shape.vertical![i]),
+      });
     });
   }
 
   if (parts.t !== 0 && box.final) {
     const finals = consonantParts(parts.final);
-    splitRow(box.final, finals.length).forEach((rect, i) => {
-      out.push({ jamo: finals[i], role: "final", rect });
+    splitRow(box.final, finals).forEach((rect, i) => {
+      out.push({ jamo: finals[i], role: "final", rect, weight: weightOf(finals[i]) });
     });
   }
 

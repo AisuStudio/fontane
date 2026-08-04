@@ -168,7 +168,7 @@ export function layoutText(
 
         // Same rule the export uses (fitInSlot), just in line pixels instead
         // of font units, so what you type is what you get.
-        const fit = fitInSlot(bbox, placement.rect, HANGUL_EM_SIZE);
+        const fit = fitInSlot(bbox, placement.rect, HANGUL_EM_SIZE, "uniform", placement.weight);
         entries.push({
           kind: "glyph",
           glyph: jamo!,

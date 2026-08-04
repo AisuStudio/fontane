@@ -159,7 +159,14 @@ def em_transform(entry):
     cell_height = entry.get("cellHeight")
     if not cell_width or not cell_height:
         return None
-    size = min(cell_width, cell_height) * EM_BOX_FRACTION
+    # A drawn jamo sits in a cell deliberately larger than the em (air to draw
+    # in, room to overshoot), so the em is inset within it. A composed syllable
+    # was laid out in em coordinates already - insetting those would scale
+    # every syllable up and push the batchim through the bottom of the em.
+    if entry.get("composed"):
+        size = min(cell_width, cell_height)
+    else:
+        size = min(cell_width, cell_height) * EM_BOX_FRACTION
     origin_x = (cell_width - size) / 2
     origin_y = (cell_height - size) / 2
     scale = UPM / size

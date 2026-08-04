@@ -36,6 +36,10 @@ export type CompiledGlyph = {
   // below) instead of the baseline one. Absent for everything else, so the
   // Latin path is byte-for-byte what it was.
   script?: "hangul";
+  // Set on glyphs that were composed rather than drawn. Their contours are
+  // already stated in em coordinates, so they must NOT get the drawing-cell
+  // inset applied — see emTransform.
+  composed?: boolean;
   // Set only by the components-mode composition, which this file's CFF
   // writer can't consume — it rides along in the exported JSON for
   // font-build/build_ttf.py. Shape defined in src/lib/hangulCompose.ts.
@@ -175,7 +179,16 @@ function guideTransform(entry: CompiledGlyph, metrics: DocMetrics): Transform | 
 function emTransform(entry: CompiledGlyph): Transform | null {
   const { cellWidth, cellHeight } = entry;
   if (!cellWidth || !cellHeight) return null;
-  const box = emBox(cellWidth, cellHeight);
+  // A DRAWN jamo sits in a cell that is deliberately bigger than the em, so
+  // there's air to draw into and room to overshoot — emBox() finds the em
+  // inside it. A COMPOSED syllable has no cell: its contours were laid out in
+  // em coordinates to begin with, so the box is the whole thing. Running the
+  // inset over those would scale every syllable up by 1/EM_BOX_FRACTION and
+  // push the batchim out through the bottom of the em, which is exactly what
+  // it did until this branch existed.
+  const box = entry.composed
+    ? { x: 0, y: 0, size: Math.min(cellWidth, cellHeight) }
+    : emBox(cellWidth, cellHeight);
   const scale = UPM / box.size;
   return {
     tx: (x) => (x - box.x) * scale,

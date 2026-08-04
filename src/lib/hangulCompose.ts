@@ -114,14 +114,22 @@ export function fitInSlot(
   bbox: InkBounds,
   rect: { x: number; y: number; w: number; h: number },
   emSize: number,
-  mode: FitMode = "uniform"
+  mode: FitMode = "uniform",
+  // Optical correction — see JAMO_OPTICAL_WEIGHT in hangul.ts. 1 leaves the
+  // plain fit untouched.
+  weight = 1
 ): { sx: number; sy: number; originX: number; originY: number } {
   const srcW = Math.max(bbox.xmax - bbox.xmin, 1e-6);
   const srcH = Math.max(bbox.ymax - bbox.ymin, 1e-6);
   const dstW = rect.w * emSize * SLOT_FILL;
   const dstH = rect.h * emSize * SLOT_FILL;
-  const sx = mode === "stretch" ? dstW / srcW : Math.min(dstW / srcW, dstH / srcH);
-  const sy = mode === "stretch" ? dstH / srcH : sx;
+  const fitted = Math.min(dstW / srcW, dstH / srcH);
+  // Clamped at the slot's *longer* dimension: a round jamo may grow past the
+  // axis that limited it, which is the whole point, but never past the slot
+  // itself — otherwise ㅇ in a batchim band would spill into the vowel above.
+  const boosted = Math.min(fitted * weight, Math.max(dstW / srcW, dstH / srcH));
+  const sx = mode === "stretch" ? dstW / srcW : boosted;
+  const sy = mode === "stretch" ? dstH / srcH : boosted;
   return {
     sx,
     sy,
@@ -130,8 +138,8 @@ export function fitInSlot(
   };
 }
 
-function fitTransform(bbox: Bounds, rect: { x: number; y: number; w: number; h: number }, mode: FitMode) {
-  const { sx, sy, originX, originY } = fitInSlot(bbox, rect, HANGUL_EM, mode);
+function fitTransform(bbox: Bounds, rect: { x: number; y: number; w: number; h: number }, mode: FitMode, weight = 1) {
+  const { sx, sy, originX, originY } = fitInSlot(bbox, rect, HANGUL_EM, mode, weight);
   return {
     sx,
     sy,
@@ -196,7 +204,7 @@ export function composeSyllable(
     if (!contours) return null;
     const bbox = boundsOf(contours);
     if (!bbox) return null;
-    for (const cmds of applyTransform(contours, fitTransform(bbox, p.rect, fit))) {
+    for (const cmds of applyTransform(contours, fitTransform(bbox, p.rect, fit, p.weight))) {
       out.push(serializePath(cmds));
     }
   }
@@ -255,7 +263,7 @@ export function composeSyllableParts(
     if (!contours) return null;
     const bbox = boundsOf(contours);
     if (!bbox) return null;
-    const target = fitTransform(bbox, p.rect, fit);
+    const target = fitTransform(bbox, p.rect, fit, p.weight);
     const standalone = fitTransform(bbox, STANDALONE_RECT, "uniform");
     const xx = target.sx / standalone.sx;
     const yy = target.sy / standalone.sy;
@@ -318,6 +326,7 @@ export function composeHangul(doc: CompiledDocument, options: ComposeOptions = {
       unicode: `U+${jamo.codePointAt(0)!.toString(16).toUpperCase()}`,
       contours,
       script: "hangul",
+      composed: true,
       cellWidth: HANGUL_EM,
       cellHeight: HANGUL_EM,
       // Only the browser export reads `script`; font-build/build_ttf.py still
@@ -343,6 +352,7 @@ export function composeHangul(doc: CompiledDocument, options: ComposeOptions = {
       contours: contours ?? [],
       ...(parts ? { hangulParts: parts } : {}),
       script: "hangul",
+      composed: true,
       cellWidth: HANGUL_EM,
       cellHeight: HANGUL_EM,
       // Only the browser export reads `script`; font-build/build_ttf.py still
