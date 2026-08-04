@@ -4611,20 +4611,54 @@ export default function Home() {
       // trail and the gate is stricter accordingly, not a hard client-side
       // block.
       await flushProvenanceQueueAndWait();
+
+      // Three steps instead of one, because the font no longer travels
+      // through the API route: a serverless request body is capped (4,5 MB on
+      // Vercel) and a Korean font is 4–6 MB. The route grants permission,
+      // the browser uploads straight to storage, the route then makes it
+      // visible. See api/fonts/publish/start.
+      const meta = {
+        name: trimmed,
+        glyphCount: glyphs.length,
+        licenseAccepted: true,
+        draftId: getDraftId(),
+        authorId: getAuthorId(),
+        ...(publishAuthorName.trim() ? { authorName: publishAuthorName.trim() } : {}),
+        ...(publishAuthorUrl.trim() ? { authorUrl: publishAuthorUrl.trim() } : {}),
+      };
+
+      const startRes = await fetch("/api/fonts/publish/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(meta),
+      });
+      const start = await startRes.json();
+      if (!startRes.ok) {
+        setPublishError(typeof start.error === "string" ? start.error : "Publish failed.");
+        return;
+      }
+
+      // Built only once the gate has passed — no point compiling a font
+      // nobody is allowed to publish.
       const font = buildFont(composedExportDoc()!, trimmed);
       const blob = new Blob([font.toArrayBuffer()], { type: "font/otf" });
-      const form = new FormData();
-      form.append("font", blob, "font.otf");
-      form.append("name", trimmed);
-      form.append("glyphCount", String(glyphs.length));
-      form.append("licenseAccepted", "true");
-      form.append("draftId", getDraftId());
-      form.append("authorId", getAuthorId());
-      if (publishAuthorName.trim()) form.append("authorName", publishAuthorName.trim());
-      if (publishAuthorUrl.trim()) form.append("authorUrl", publishAuthorUrl.trim());
-      const res = await fetch("/api/fonts/publish", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) {
+      // The anon-key client is enough here: the signed token is the
+      // authorisation, not the key. It grants exactly this one path, once.
+      const { error: uploadError } = await createBrowserClient()
+        .storage.from("fonts")
+        .uploadToSignedUrl(start.path, start.token, blob, { contentType: "font/otf" });
+      if (uploadError) {
+        setPublishError("Upload failed — please try again.");
+        return;
+      }
+
+      const finishRes = await fetch("/api/fonts/publish/finish", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(meta),
+      });
+      const data = await finishRes.json();
+      if (!finishRes.ok) {
         setPublishError(typeof data.error === "string" ? data.error : "Publish failed.");
         return;
       }
