@@ -31,9 +31,13 @@ export type CompiledGlyph = {
   rightBearing?: number;
   cellWidth?: number;
   cellHeight?: number;
+  // "hangul" switches this glyph to the em-square calibration (emTransform
+  // below) instead of the baseline one. Absent for everything else, so the
+  // Latin path is byte-for-byte what it was.
+  script?: "hangul";
 };
 
-export type DocMetrics = { ascender: number; baseline: number; descender: number };
+export type DocMetrics ={ ascender: number; baseline: number; descender: number };
 
 export type CompiledDocument = {
   version: number;
@@ -149,6 +153,30 @@ function guideTransform(entry: CompiledGlyph, metrics: DocMetrics): Transform | 
     tx: (x) => (x - leftPx) * scale,
     ty: (y) => (baselinePx - y) * scale,
     advanceWidth: Math.max(Math.round((rightPx - leftPx) * scale), 1),
+  };
+}
+
+// Hangul's calibration. No baseline is involved: the glyph was drawn inside
+// (or composed into) a square em box, and it maps onto the font's em square —
+// top edge at the ascender, bottom edge one em below it, advance exactly one
+// em for every syllable. That uniform advance is not a simplification; it is
+// how Korean is set.
+//
+// The source square is the largest centered square inside the cell, matching
+// GridCell's emBox() exactly — a drawn jamo's canvas is never quite square
+// (the label bar takes some height), and measuring against the full canvas
+// would squash every glyph by that ratio.
+function emTransform(entry: CompiledGlyph): Transform | null {
+  const { cellWidth, cellHeight } = entry;
+  if (!cellWidth || !cellHeight) return null;
+  const size = Math.min(cellWidth, cellHeight);
+  const originX = (cellWidth - size) / 2;
+  const originY = (cellHeight - size) / 2;
+  const scale = UPM / size;
+  return {
+    tx: (x) => (x - originX) * scale,
+    ty: (y) => ASCENT - (y - originY) * scale,
+    advanceWidth: UPM,
   };
 }
 
@@ -315,7 +343,9 @@ export function buildFont(doc: CompiledDocument, familyName = "Fontane Sketch", 
 
   for (const entry of doc.glyphs) {
     const contours = entry.contours.map(parseContour);
-    const transform = (doc.metrics && guideTransform(entry, doc.metrics)) ?? bboxTransform(contours);
+    const transform =
+      (entry.script === "hangul" ? emTransform(entry) : doc.metrics && guideTransform(entry, doc.metrics)) ??
+      bboxTransform(contours);
 
     const path = new Path();
     let advanceWidth = DEFAULT_ADVANCE;

@@ -6,7 +6,8 @@ import styles from "./page.module.css";
 import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokeKind, type StrokePoint } from "@/lib/strokes";
 import { nibPolygon, type Nib } from "@/lib/calligraphy";
 import { loadGlyphs, saveGlyphs, unicodeFor, nextAlternateName, type Glyph, type GlyphKind } from "@/lib/glyphs";
-import { BASIC_JAMO, coverage, isHangulChar } from "@/lib/hangul";
+import { BASIC_JAMO, coverage, frequentSyllables, isHangulChar } from "@/lib/hangul";
+import { HANGUL_EM, composeHangul, composeSyllable, jamoFrom } from "@/lib/hangulCompose";
 import { anyPointInPolygon, pointInPolygon } from "@/lib/geometry";
 import {
   applyBrush,
@@ -761,6 +762,10 @@ function compileDocument(
         rightBearing: g.rightBearing,
         cellWidth: g.cellWidth,
         cellHeight: g.cellHeight,
+        // Tagged here, not guessed at export time: a jamo is calibrated
+        // against the em square rather than the baseline, and that is true
+        // whether or not anyone ever composes a syllable from it.
+        ...(isHangulChar(g.name) ? { script: "hangul" as const } : {}),
         // Midpoint-quadratic smoothing is right for freehand ink (dense
         // point clouds, where it reproduces the drawn curve) and wrong for
         // nib hulls and stamps (sparse exact polygons, where it rounds off
@@ -1813,6 +1818,31 @@ export default function Home() {
   const [redoCount, setRedoCount] = useState(0);
   const [exportJson, setExportJson] = useState("");
   const [exportDoc, setExportDoc] = useState<ReturnType<typeof compileDocument> | null>(null);
+
+  // A handful of real syllables built from whatever jamo exist right now.
+  // This is the payoff moment of the whole feature — the first time someone
+  // sees their own handwriting in a character they never drew — so it runs
+  // live off exportDoc rather than waiting for an export.
+  //
+  // Only a few at a time: composing all 2.350 on every stroke would be a
+  // waste, and a wall of syllables says less than eight does.
+  const [syllableSeed, setSyllableSeed] = useState(0);
+  const syllablePreview = useMemo(() => {
+    if (!exportDoc) return [];
+    const source = jamoFrom(exportDoc);
+    if (source.size === 0) return [];
+    const candidates = frequentSyllables(400);
+    const out: { char: string; contours: string[] }[] = [];
+    // Walks from a seed-dependent offset and wraps, so "Other syllables"
+    // moves through the list deterministically instead of re-rolling and
+    // sometimes showing the same ones again.
+    for (let i = 0; i < candidates.length && out.length < 8; i++) {
+      const cp = candidates[(i + syllableSeed * 8) % candidates.length];
+      const contours = composeSyllable(cp, source);
+      if (contours) out.push({ char: String.fromCodePoint(cp), contours });
+    }
+    return out;
+  }, [exportDoc, syllableSeed]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -4212,9 +4242,19 @@ export default function Home() {
   // question of what this tool is for, and no other event answers it.
   const drawnGlyphCount = glyphs.filter((g) => g.strokeIds.length > 0 || (g.vectorShapeIds?.length ?? 0) > 0).length;
 
+  // Syllables are composed here, at the moment of export, and never before:
+  // 2.350 of them would make the live compile effect (which runs on every
+  // stroke) unusable, and they'd have to be thrown away again on the next
+  // edit. A font with no drawn jamo passes straight through.
+  function composedExportDoc() {
+    if (!exportDoc) return exportDoc;
+    return composeHangul(exportDoc);
+  }
+
   function handleDownloadJson() {
     trackExport("json", drawnGlyphCount);
-    const blob = new Blob([exportJson], { type: "application/json" });
+    const doc = composedExportDoc();
+    const blob = new Blob([doc ? JSON.stringify(doc, null, 2) : exportJson], { type: "application/json" });
     saveFile(blob, {
       suggestedName: "fontane-document.json",
       mimeType: "application/json",
@@ -4230,7 +4270,7 @@ export default function Home() {
     // would otherwise be indistinguishable from a finished download — the
     // one place where "used" and "worked" quietly diverge.
     try {
-      downloadFont(exportDoc, "fontane.otf");
+      downloadFont(composedExportDoc()!, "fontane.otf");
     } catch (err) {
       trackError("export:otf");
       throw err; // reporting it must not also swallow it
@@ -4562,7 +4602,7 @@ export default function Home() {
       // trail and the gate is stricter accordingly, not a hard client-side
       // block.
       await flushProvenanceQueueAndWait();
-      const font = buildFont(exportDoc, trimmed);
+      const font = buildFont(composedExportDoc()!, trimmed);
       const blob = new Blob([font.toArrayBuffer()], { type: "font/otf" });
       const form = new FormData();
       form.append("font", blob, "font.otf");
@@ -5822,6 +5862,26 @@ export default function Home() {
                   unlike the cell-layout controls above them (still open by
                   default, unlike Metrics — just also collapsible now, for
                   consistency with every other group in this panel). */}
+              {/* Only in Hangul, and only once something has been drawn:
+                  this panel exists to show that 24 drawings became a
+                  writing system, which is meaningless with an empty grid. */}
+              {activeScript === "hangul" && syllablePreview.length > 0 && (
+                <SettingsSection id="syllables" title="Syllables" defaultOpen>
+                  <div className={styles.syllableGrid}>
+                    {syllablePreview.map((s) => (
+                      <div key={s.char} className={styles.syllableCell} title={s.char}>
+                        <svg viewBox={`0 0 ${HANGUL_EM} ${HANGUL_EM}`} className={styles.syllableSvg}>
+                          <path d={s.contours.join(" ")} fill="currentColor" fillRule="nonzero" />
+                        </svg>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" className={styles.syllableBtn} onClick={() => setSyllableSeed((n) => n + 1)}>
+                    Other syllables
+                  </button>
+                </SettingsSection>
+              )}
+
               <SettingsSection id="metrics" title="Metrics" defaultOpen={false} tourId="metrics">
                 <div className={styles.sliders}>
                   <label className={styles.sliderRow}>

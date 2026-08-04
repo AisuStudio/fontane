@@ -1072,6 +1072,50 @@
   accent-color: var(--color-grape);
 }
 
+/* Syllable preview — composed from the drawn jamo, never stored anywhere.
+   Two rows of four in the settings panel's width. */
+.syllableGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-bottom: var(--sp-sm);
+}
+
+.syllableCell {
+  aspect-ratio: 1;
+  border: 0.5px solid var(--color-hazelnut);
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.syllableSvg {
+  width: 100%;
+  height: 100%;
+  /* The em box includes the descender band, so the glyph would otherwise sit
+     high in a square cell. */
+  padding: 2px;
+  color: var(--color-text);
+}
+
+.syllableBtn {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  padding: 4px 10px;
+  border: 0.5px solid var(--color-hazelnut);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.syllableBtn:hover {
+  border-color: var(--color-grape);
+  color: var(--color-grape);
+}
+
 /* Only drawn for non-Latin groups — see the comment at the call site. */
 .charsetGroupLabel {
   font-family: var(--font-sans);

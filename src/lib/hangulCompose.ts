@@ -1,0 +1,255 @@
+// Turns drawn jamo into composed Hangul syllables, at the level of compiled
+// contours (SVG path strings) rather than strokes.
+//
+// That level is deliberate. compileDocument() has already unioned each
+// glyph's strokes into outlines by the time this runs, so composition is
+// pure affine geometry on path strings — no perfect-freehand, no polygon
+// clipping, nothing that would have to be re-run per syllable. It also means
+// this module works identically in the browser and in font-build's offline
+// script.
+//
+// What is NOT here, on purpose: any notion of storing syllables. All 11.172
+// of them are a function of 24 drawings, and materializing even the common
+// 2.350 into glyph/stroke state would blow the localStorage budget for no
+// gain. Composition happens at export time and, for a handful of syllables
+// at a time, in the preview.
+
+import type { CompiledDocument, CompiledGlyph } from "./exportFont";
+import { BASIC_JAMO, SYLLABLE_BASE, SYLLABLE_LAST, frequentSyllables, placementFor, type LayoutTable } from "./hangul";
+
+// The composed em box, in the same y-down space the compiled contours already
+// use. Paired with emTransform() in exportFont.ts this maps 1:1 onto a
+// 1000-unit em; nothing else in the pipeline needs to know the number.
+export const HANGUL_EM = 1000;
+
+// How much of its slot a jamo is allowed to fill. Slightly under 1 because
+// real Korean faces leave a little air between the initial and the vowel even
+// at full size — at exactly 1 the parts touch and the syllable reads as one
+// blob at text sizes.
+const SLOT_FILL = 0.94;
+
+// Where a standalone jamo (typed on its own, before a syllable is finished)
+// sits in the em box. Centred rather than filling it, which is the Korean
+// convention for an isolated letter.
+const STANDALONE_RECT = { x: 0.18, y: 0.15, w: 0.64, h: 0.7 };
+
+export type FitMode = "uniform" | "stretch";
+
+// Op plus a flat coordinate list, rather than a tuple per command shape: the
+// transforms below only ever walk the numbers in pairs, and a shape-specific
+// union would mean a switch in every one of them.
+type Command = { op: "M" | "L" | "Q" | "Z"; pts: number[] };
+
+const TOKEN_RE = /[MLQZ]|-?\d+(?:\.\d+)?/g;
+
+function parsePath(d: string): Command[] {
+  const tokens = d.match(TOKEN_RE) ?? [];
+  const out: Command[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const tok = tokens[i];
+    if (tok === "M" || tok === "L") {
+      out.push({ op: tok, pts: [Number(tokens[i + 1]), Number(tokens[i + 2])] });
+      i += 3;
+    } else if (tok === "Q") {
+      out.push({
+        op: "Q",
+        pts: [Number(tokens[i + 1]), Number(tokens[i + 2]), Number(tokens[i + 3]), Number(tokens[i + 4])],
+      });
+      i += 5;
+    } else {
+      out.push({ op: "Z", pts: [] });
+      i += 1;
+    }
+  }
+  return out;
+}
+
+// One decimal is far below a font unit's resolution at UPM 1000 and shaves
+// roughly a third off the serialized size — which matters when a document
+// carries thousands of syllables.
+const r1 = (n: number) => Math.round(n * 10) / 10;
+
+function serializePath(cmds: Command[]): string {
+  return cmds.map((c) => (c.op === "Z" ? "Z" : `${c.op} ${c.pts.map(r1).join(" ")}`)).join(" ");
+}
+
+type Bounds = { xmin: number; xmax: number; ymin: number; ymax: number };
+
+function boundsOf(contours: Command[][]): Bounds | null {
+  let xmin = Infinity,
+    xmax = -Infinity,
+    ymin = Infinity,
+    ymax = -Infinity;
+  for (const cmds of contours) {
+    for (const c of cmds) {
+      for (let i = 0; i < c.pts.length; i += 2) {
+        xmin = Math.min(xmin, c.pts[i]);
+        xmax = Math.max(xmax, c.pts[i]);
+        ymin = Math.min(ymin, c.pts[i + 1]);
+        ymax = Math.max(ymax, c.pts[i + 1]);
+      }
+    }
+  }
+  return xmin === Infinity ? null : { xmin, xmax, ymin, ymax };
+}
+
+// Maps a jamo's own ink box into a target rect of the em box.
+//
+// "uniform" scales both axes by the same factor and centres what's left, so
+// ㅇ stays a circle and ㅡ stays a thin bar. "stretch" fills the slot exactly
+// and distorts. Uniform is the default because the alternative gives every ㅇ
+// an eccentricity that depends on which syllable it lands in — the fastest
+// way to make composed text look synthetic. The option exists so the two can
+// be compared on real handwriting rather than argued about.
+function fitTransform(bbox: Bounds, rect: { x: number; y: number; w: number; h: number }, mode: FitMode) {
+  const srcW = Math.max(bbox.xmax - bbox.xmin, 1e-6);
+  const srcH = Math.max(bbox.ymax - bbox.ymin, 1e-6);
+  const dstW = rect.w * HANGUL_EM * SLOT_FILL;
+  const dstH = rect.h * HANGUL_EM * SLOT_FILL;
+  const sx = mode === "stretch" ? dstW / srcW : Math.min(dstW / srcW, dstH / srcH);
+  const sy = mode === "stretch" ? dstH / srcH : sx;
+  const originX = rect.x * HANGUL_EM + (rect.w * HANGUL_EM - srcW * sx) / 2;
+  const originY = rect.y * HANGUL_EM + (rect.h * HANGUL_EM - srcH * sy) / 2;
+  return {
+    x: (x: number) => originX + (x - bbox.xmin) * sx,
+    y: (y: number) => originY + (y - bbox.ymin) * sy,
+  };
+}
+
+function applyTransform(contours: Command[][], t: { x: (n: number) => number; y: (n: number) => number }): Command[][] {
+  return contours.map((cmds) =>
+    cmds.map((c): Command => ({
+      op: c.op,
+      pts: c.pts.map((v, i) => (i % 2 === 0 ? t.x(v) : t.y(v))),
+    }))
+  );
+}
+
+export type JamoSource = Map<string, Command[][]>;
+
+// Pulls the drawn basic jamo out of a compiled document. Anything else in the
+// document (Latin, ligatures, half-finished cells with no contours) is
+// ignored — this is only ever asked for the 24 shapes composition needs.
+export function jamoFrom(doc: CompiledDocument): JamoSource {
+  const source: JamoSource = new Map();
+  for (const g of doc.glyphs) {
+    if (g.kind !== "base" || !g.contours.length) continue;
+    if (!BASIC_JAMO.includes(g.name)) continue;
+    source.set(g.name, g.contours.map(parsePath));
+  }
+  return source;
+}
+
+export function drawnJamoCount(doc: CompiledDocument): number {
+  return jamoFrom(doc).size;
+}
+
+// One syllable's contours, in the em box. Returns null when any jamo it needs
+// hasn't been drawn yet — callers skip rather than emit a half-syllable,
+// which would look like a bug in the font rather than a gap in the drawing.
+export function composeSyllable(
+  codepoint: number,
+  source: JamoSource,
+  fit: FitMode = "uniform",
+  layout?: LayoutTable
+): string[] | null {
+  const placements = placementFor(codepoint, layout);
+  if (!placements) return null;
+  const out: string[] = [];
+  for (const p of placements) {
+    const contours = source.get(p.jamo);
+    if (!contours) return null;
+    const bbox = boundsOf(contours);
+    if (!bbox) return null;
+    for (const cmds of applyTransform(contours, fitTransform(bbox, p.rect, fit))) {
+      out.push(serializePath(cmds));
+    }
+  }
+  return out;
+}
+
+// A jamo as its own glyph in the em box — same box as the syllables, so a
+// standalone ㄱ and the ㄱ inside 가 come out at a consistent weight.
+function composeStandalone(jamo: string, source: JamoSource): string[] | null {
+  const contours = source.get(jamo);
+  if (!contours) return null;
+  const bbox = boundsOf(contours);
+  if (!bbox) return null;
+  return applyTransform(contours, fitTransform(bbox, STANDALONE_RECT, "uniform")).map(serializePath);
+}
+
+export type ComposeOptions = {
+  // "common" is the ~2.350-syllable band that covers ordinary Korean text and
+  // keeps a browser-built OTF in the single-digit MB range; "all" is the full
+  // 11.172 and is meant for the offline composite build. An explicit list is
+  // what the preview uses.
+  set?: "common" | "all" | number[];
+  fit?: FitMode;
+  layout?: LayoutTable;
+};
+
+// Appends composed syllables (and em-normalized jamo) to a compiled document.
+// Non-Hangul glyphs pass through untouched, so a font with both scripts
+// exports in one go.
+export function composeHangul(doc: CompiledDocument, options: ComposeOptions = {}): CompiledDocument {
+  const source = jamoFrom(doc);
+  if (source.size === 0) return doc;
+
+  const fit = options.fit ?? "uniform";
+  let targets: number[];
+  if (Array.isArray(options.set)) targets = options.set;
+  else if (options.set === "all") {
+    targets = [];
+    for (let cp = SYLLABLE_BASE; cp <= SYLLABLE_LAST; cp++) targets.push(cp);
+  } else targets = frequentSyllables();
+
+  const composed: CompiledGlyph[] = [];
+
+  // The drawn jamo are replaced rather than left as they were: their own
+  // cells are Latin-sized canvases, and re-emitting them in the em box is
+  // what makes a standalone ㄱ match the ㄱ inside a syllable.
+  const jamoNames = new Set(source.keys());
+  const rest = doc.glyphs.filter((g) => !jamoNames.has(g.name));
+  for (const jamo of source.keys()) {
+    const contours = composeStandalone(jamo, source);
+    if (!contours) continue;
+    composed.push({
+      name: jamo,
+      kind: "base",
+      unicode: `U+${jamo.codePointAt(0)!.toString(16).toUpperCase()}`,
+      contours,
+      script: "hangul",
+      cellWidth: HANGUL_EM,
+      cellHeight: HANGUL_EM,
+      // Only the browser export reads `script`; font-build/build_ttf.py still
+      // goes through the shared guide transform, and these two values are what
+      // make that transform an identity onto the em (see the offline script's
+      // header for the derivation).
+      leftBearing: 0,
+      rightBearing: 1,
+    });
+  }
+
+  for (const cp of targets) {
+    const contours = composeSyllable(cp, source, fit, options.layout);
+    if (!contours) continue;
+    composed.push({
+      name: String.fromCodePoint(cp),
+      kind: "base",
+      unicode: `U+${cp.toString(16).toUpperCase()}`,
+      contours,
+      script: "hangul",
+      cellWidth: HANGUL_EM,
+      cellHeight: HANGUL_EM,
+      // Only the browser export reads `script`; font-build/build_ttf.py still
+      // goes through the shared guide transform, and these two values are what
+      // make that transform an identity onto the em (see the offline script's
+      // header for the derivation).
+      leftBearing: 0,
+      rightBearing: 1,
+    });
+  }
+
+  return { ...doc, glyphs: [...rest, ...composed] };
+}
