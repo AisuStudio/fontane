@@ -445,6 +445,10 @@ const DESCENDER_LETTERS = new Set(["g", "j", "p", "q", "y"]);
 const ASCENDER_LETTERS = new Set(["b", "d", "f", "h", "k", "l", "t"]);
 
 function bandFor(name: string, metrics: Metrics): { top: number; bottom: number } {
+  // Korean has no baseline band to fall into — a jamo occupies the em square,
+  // so a Free-tagged one gets fitted to the whole cell rather than squeezed
+  // between the x-height and a baseline that means nothing to it.
+  if (isHangulChar(name)) return { top: 0, bottom: 1 };
   const isLowerLatin = name.length === 1 && name >= "a" && name <= "z";
   if (isLowerLatin) {
     if (DESCENDER_LETTERS.has(name)) return { top: metrics.xHeight, bottom: metrics.descender };
@@ -1625,7 +1629,15 @@ export default function Home() {
     ...extraGridSlots.filter((s) => slotScript(s.name) === activeScript),
   ];
 
-  const gridScripts = activeScripts(activeSetIds);
+  // Same hydration guard as panelReady/firstStepReady below: activeSetIds is
+  // read from localStorage in a lazy initializer, so the server renders the
+  // default (Latin only) while a returning Hangul user's client render has
+  // two scripts — and a tab row that exists on one side and not the other is
+  // a hydration mismatch. Only the row is gated, not the cells: activeScript
+  // starts at "latin" either way, so the cells themselves match.
+  const [scriptsReady, setScriptsReady] = useState(false);
+  useEffect(() => setScriptsReady(true), []);
+  const gridScripts = scriptsReady ? activeScripts(activeSetIds) : [DEFAULT_SCRIPT];
 
   // "18 of 24 jamo drawn -> 6.412 of 11.172 syllables covered" is the whole
   // Hangul pitch in one line, and the only progress number that means
@@ -5487,6 +5499,7 @@ export default function Home() {
                   rightBearing={glyph?.rightBearing}
                   onBearingsChange={(left, right) => handleBearingsChange(slot, left, right)}
                   lockBearings={lockBearings}
+                  guides={scriptById(activeScript).guides}
                   showReferenceGlyph={showReferenceGlyph}
                   onResize={(width, height) => handleCellResize(cellKey, width, height)}
                   widthPx={effectiveWidthPx}

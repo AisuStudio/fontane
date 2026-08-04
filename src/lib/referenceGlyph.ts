@@ -40,9 +40,20 @@ export function drawReferenceGlyph(
   metrics: Metrics,
   leftBearing: number,
   rightBearing: number,
-  char: string
+  char: string,
+  guides: "baseline" | "em" = "baseline"
 ) {
   if (!char || char.length !== 1) return;
+
+  // Hangul takes a different path entirely rather than a branch inside the
+  // Latin one: there is no baseline to sit on, no case to test, and Comic
+  // Sans has no Korean coverage at all — the cap/x-height ratios measured
+  // off H and x say nothing about a jamo's proportions.
+  if (guides === "em") {
+    drawReferenceJamo(ctx, width, height, char);
+    return;
+  }
+
   calibrate(ctx);
   if (!capRatio || !xRatio) return;
 
@@ -62,5 +73,63 @@ export function drawReferenceGlyph(
   ctx.fillStyle = REFERENCE_COLOR;
   ctx.globalAlpha = 0.4;
   ctx.fillText(char, ((leftBearing + rightBearing) / 2) * width, baseY);
+  ctx.restore();
+}
+
+// The Korean counterpart. Same job — a faint backdrop shape to orient
+// against — but measured against the em square instead of a baseline, and
+// centered in it, which is how a standalone jamo actually sits.
+//
+// The font stack is a system Korean face rather than something deliberately
+// contrasting like Comic Sans: the Latin trick of "pick a face nobody would
+// mistake for their own design" has no equivalent here, and coverage matters
+// more than contrast — a stack that falls through to tofu is worse than no
+// backdrop at all. Low alpha does the separating instead.
+const REFERENCE_JAMO_STACK =
+  "'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'AppleGothic', sans-serif";
+
+// Ink extents per jamo, cached by character. Deliberately NOT one shared
+// ratio the way capRatio/xRatio are for Latin: jamo proportions are wildly
+// unlike each other — ㅣ is a full-height bar, ㅡ is a flat rule, ㅇ is a
+// circle — so a single ratio measured off one of them oversizes or
+// undersizes every other. 24 measurements, taken once each.
+const jamoInk = new Map<string, { w: number; h: number }>();
+
+function inkFor(ctx: CanvasRenderingContext2D, char: string): { w: number; h: number } | null {
+  const cached = jamoInk.get(char);
+  if (cached) return cached;
+  const prevFont = ctx.font;
+  ctx.font = `${TEST_SIZE}px ${REFERENCE_JAMO_STACK}`;
+  const m = ctx.measureText(char);
+  ctx.font = prevFont;
+  const ink = {
+    w: (m.actualBoundingBoxLeft + m.actualBoundingBoxRight) / TEST_SIZE,
+    h: (m.actualBoundingBoxAscent + m.actualBoundingBoxDescent) / TEST_SIZE,
+  };
+  if (!(ink.w > 0) || !(ink.h > 0)) return null;
+  jamoInk.set(char, ink);
+  return ink;
+}
+
+function drawReferenceJamo(ctx: CanvasRenderingContext2D, width: number, height: number, char: string) {
+  const ink = inkFor(ctx, char);
+  if (!ink) return;
+
+  // The same centered square GridCell's em guides draw, so the backdrop
+  // lines up with the box the user is drawing into. Standalone jamo don't
+  // fill the em — Korean convention leaves air around them, and a backdrop
+  // touching the guide lines would read as a target to trace.
+  const target = Math.min(width, height) * 0.72;
+  // Fit, don't stretch: whichever axis runs out first sets the size, so a
+  // bar stays a bar and a circle stays a circle.
+  const fontSize = Math.min(target / ink.w, target / ink.h);
+
+  ctx.save();
+  ctx.font = `${fontSize}px ${REFERENCE_JAMO_STACK}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = REFERENCE_COLOR;
+  ctx.globalAlpha = 0.4;
+  ctx.fillText(char, width / 2, height / 2);
   ctx.restore();
 }

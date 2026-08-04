@@ -248,6 +248,48 @@ function selectionBottomLeft(strokes: CellStroke[], ids: Set<string>): { x: numb
   return { x: xmin, y: ymax };
 }
 
+// The em square a Hangul cell is drawn inside: the largest centered square
+// that fits the canvas. Not the canvas itself — the label bar underneath eats
+// a couple of dozen pixels of height, so the drawing area is never actually
+// square, and a jamo drawn against a non-square "em" would compose distorted.
+// Export uses this exact same rule, which is why it lives here as one
+// function rather than as two matching constants.
+export function emBox(width: number, height: number): { x: number; y: number; size: number } {
+  const size = Math.min(width, height);
+  return { x: (width - size) / 2, y: (height - size) / 2, size };
+}
+
+// Hangul's guides: the em square, plus a faint cross at the proportions a
+// syllable actually divides on (see DEFAULT_LAYOUT in src/lib/hangul.ts —
+// the initial/vowel split and the batchim line). No baseline, no x-height:
+// neither exists in Korean, and drawing them would invite the wrong shapes.
+function drawEmGuides(ctx: CanvasRenderingContext2D, width: number, height: number) {
+  const box = emBox(width, height);
+  ctx.save();
+  ctx.lineWidth = 0.5;
+  ctx.strokeStyle = GUIDE_COLOR;
+
+  ctx.setLineDash([]);
+  ctx.strokeRect(Math.round(box.x) + 0.5, Math.round(box.y) + 0.5, Math.round(box.size), Math.round(box.size));
+
+  ctx.setLineDash([3, 3]);
+  ctx.globalAlpha = 0.7;
+  ctx.beginPath();
+  // Vertical: where an initial consonant hands over to an upright vowel.
+  const vx = Math.round(box.x + box.size * 0.6) + 0.5;
+  ctx.moveTo(vx, box.y);
+  ctx.lineTo(vx, box.y + box.size);
+  // Horizontal: the two bands a wide vowel and a batchim sit in.
+  for (const f of [0.56, 0.66]) {
+    const hy = Math.round(box.y + box.size * f) + 0.5;
+    ctx.moveTo(box.x, hy);
+    ctx.lineTo(box.x + box.size, hy);
+  }
+  ctx.stroke();
+
+  ctx.restore();
+}
+
 function drawGuides(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -573,6 +615,11 @@ type Props = {
   // owns the toggle), since the whole point is drawing across many cells
   // without having to think about where the bearings sit in each one.
   lockBearings?: boolean;
+  // Which guide system this cell draws under. "baseline" is the Latin one
+  // (ascender/x-height/baseline/descender plus draggable sidebearings);
+  // "em" is Hangul's square, which has no baseline and no bearings at all —
+  // every syllable advances by one full em, so there is nothing to drag.
+  guides?: "baseline" | "em";
   // Faint backdrop letterform (Comic Sans) behind the guides/ink, sized off
   // this cell's own metrics — an orientation aid, not part of the glyph
   // itself; never persisted, never exported. See src/lib/referenceGlyph.ts.
@@ -629,6 +676,7 @@ export default function GridCell({
   rightBearing = DEFAULT_RIGHT_BEARING,
   onBearingsChange,
   lockBearings = false,
+  guides = "baseline",
   showReferenceGlyph = false,
   onResize,
   widthPx,
@@ -655,6 +703,7 @@ export default function GridCell({
   const bearingsRef = useRef({ leftBearing, rightBearing });
   const onBearingsChangeRef = useRef(onBearingsChange);
   const lockBearingsRef = useRef(lockBearings);
+  const guidesRef = useRef(guides);
   const showReferenceGlyphRef = useRef(showReferenceGlyph);
   const onResizeRef = useRef(onResize);
   const draggingRef = useRef<"left" | "right" | null>(null);
@@ -744,6 +793,7 @@ export default function GridCell({
   }
   onBearingsChangeRef.current = onBearingsChange;
   lockBearingsRef.current = lockBearings;
+  guidesRef.current = guides;
   showReferenceGlyphRef.current = showReferenceGlyph;
   onResizeRef.current = onResize;
   cellDimsRef.current = { width: widthPx, height: heightPx };
@@ -798,15 +848,19 @@ export default function GridCell({
     function redraw() {
       if (!canvas || !ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      drawGuides(
-        ctx,
-        canvas.clientWidth,
-        canvas.clientHeight,
-        metricsRef.current,
-        bearingsRef.current.leftBearing,
-        bearingsRef.current.rightBearing,
-        lockBearingsRef.current
-      );
+      if (guidesRef.current === "em") {
+        drawEmGuides(ctx, canvas.clientWidth, canvas.clientHeight);
+      } else {
+        drawGuides(
+          ctx,
+          canvas.clientWidth,
+          canvas.clientHeight,
+          metricsRef.current,
+          bearingsRef.current.leftBearing,
+          bearingsRef.current.rightBearing,
+          lockBearingsRef.current
+        );
+      }
       // Hidden the moment the cell has any ink of its own — mid-gesture
       // (pointsRef, before the stroke even commits) as well as at rest — so
       // it never sits underneath, or is mistaken for part of, what someone
@@ -821,7 +875,8 @@ export default function GridCell({
           metricsRef.current,
           bearingsRef.current.leftBearing,
           bearingsRef.current.rightBearing,
-          label
+          label,
+          guidesRef.current
         );
       }
       for (const s of strokesRef.current) {
@@ -934,6 +989,9 @@ export default function GridCell({
       // returning null while locked takes the bearings out of the picture
       // completely and the click falls through to whatever tool is active.
       if (lockBearingsRef.current) return null;
+      // Hangul has no sidebearings to hit in the first place: every syllable
+      // advances by one full em, so there is nothing a drag could change.
+      if (guidesRef.current === "em") return null;
       const lx = bearingsRef.current.leftBearing * width;
       const rx = bearingsRef.current.rightBearing * width;
       if (Math.abs(x - lx) <= BEARING_HIT_PX) return "left";
@@ -1886,9 +1944,13 @@ export default function GridCell({
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawGuides(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing, lockBearings);
+    if (guides === "em") {
+      drawEmGuides(ctx, canvas.clientWidth, canvas.clientHeight);
+    } else {
+      drawGuides(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing, lockBearings);
+    }
     if (showReferenceGlyph && strokes.length === 0 && vectorShapes.length === 0) {
-      drawReferenceGlyph(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing, label);
+      drawReferenceGlyph(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing, label, guides);
     }
     for (const s of strokes) {
       const color = selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
@@ -1898,7 +1960,7 @@ export default function GridCell({
     // editingShapeIdRef is guaranteed null by the guard above, so this only
     // ever draws the resting state (every shape's outline, no handles).
     if (tool === "vector") drawVectorAffordances(ctx, vectorShapes, null);
-  }, [strokes, vectorShapes, tool, metrics, leftBearing, rightBearing, lockBearings, strokeOptions, nib, showReferenceGlyph, label]);
+  }, [strokes, vectorShapes, tool, metrics, leftBearing, rightBearing, lockBearings, guides, strokeOptions, nib, showReferenceGlyph, label]);
 
   const unicode = unicodeFor(label);
 
@@ -1925,13 +1987,16 @@ export default function GridCell({
   useEffect(() => {
     const el = widthHandleRef.current;
     if (!el) return;
-    const active = Boolean(onWidthCommit) && !lockBearings;
+    // Per-cell width is a Latin idea (a narrow "i" next to a wide "fi"); a
+    // Hangul cell is an em square by definition, so the handle goes away
+    // there for the same reason the bearings do.
+    const active = Boolean(onWidthCommit) && !lockBearings && guides !== "em";
     el.style.pointerEvents = active ? "auto" : "none";
     el.style.opacity = active ? "1" : "0";
-  }, [onWidthCommit, lockBearings]);
+  }, [onWidthCommit, lockBearings, guides]);
 
   function handleWidthPointerDown(e: React.PointerEvent) {
-    if (lockBearings) return;
+    if (lockBearings || guides === "em") return;
     e.stopPropagation();
     (e.target as Element).setPointerCapture(e.pointerId);
     widthDragRef.current = {
