@@ -798,6 +798,15 @@ function cellAspectFor(script: ScriptId): number {
   return scriptById(script).aspect;
 }
 
+// Note on "aspect 1" for Hangul: it makes the cell's OUTER box square, so the
+// drawing area underneath is a little shorter than it is wide (the label bar
+// takes ~21px). Adding that back — making the canvas itself square — was
+// tried and reverted: cellWidth/cellHeight are recorded per glyph at draw
+// time, and fromAnchorSpace() rescales each axis independently, so changing
+// the canvas height retroactively stretches every jamo already drawn. The em
+// box (src/lib/hangul.ts) is inset within the canvas instead, which gives the
+// air without touching anyone's existing drawings.
+
 // Free mode's background: plain, evenly-spaced ruled lines, not tied to any
 // glyph metrics — just a spatial reference the user can space out via one
 // slider. (An earlier version reused Grid View's Ascender/X-height/Baseline/

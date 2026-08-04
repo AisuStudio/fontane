@@ -1,4 +1,5 @@
 import type { Metrics } from "./metrics";
+import { emBox } from "./hangul";
 
 // A faint backdrop letterform drawn behind a Grid cell's own guides/ink — an
 // orientation aid for users unsure what a character's basic anatomy looks
@@ -115,11 +116,13 @@ function drawReferenceJamo(ctx: CanvasRenderingContext2D, width: number, height:
   const ink = inkFor(ctx, char);
   if (!ink) return;
 
-  // The same centered square GridCell's em guides draw, so the backdrop
-  // lines up with the box the user is drawing into. Standalone jamo don't
-  // fill the em — Korean convention leaves air around them, and a backdrop
-  // touching the guide lines would read as a target to trace.
-  const target = Math.min(width, height) * 0.72;
+  // Measured against the same em box GridCell's guides draw and export maps
+  // from, so the backdrop can't drift away from the square the user is
+  // actually drawing into. Standalone jamo don't fill the em — Korean
+  // convention leaves air around them, and a backdrop touching the guide
+  // lines would read as a target to trace.
+  const box = emBox(width, height);
+  const target = box.size * 0.84;
   // Fit, don't stretch: whichever axis runs out first sets the size, so a
   // bar stays a bar and a circle stays a circle.
   const fontSize = Math.min(target / ink.w, target / ink.h);
@@ -130,6 +133,6 @@ function drawReferenceJamo(ctx: CanvasRenderingContext2D, width: number, height:
   ctx.textBaseline = "middle";
   ctx.fillStyle = REFERENCE_COLOR;
   ctx.globalAlpha = 0.4;
-  ctx.fillText(char, width / 2, height / 2);
+  ctx.fillText(char, box.x + box.size / 2, box.y + box.size / 2);
   ctx.restore();
 }

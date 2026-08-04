@@ -1,5 +1,6 @@
 import { Font, Glyph, Path } from "opentype.js";
 import { saveFile } from "./saveFile";
+import { emBox } from "./hangul";
 
 // Mirrors font-build/build_ttf.py's glyph naming/metrics/cmap conventions, but
 // the actual binary output differs: opentype.js always writes a CFF-flavored
@@ -166,20 +167,19 @@ function guideTransform(entry: CompiledGlyph, metrics: DocMetrics): Transform | 
 // em for every syllable. That uniform advance is not a simplification; it is
 // how Korean is set.
 //
-// The source square is the largest centered square inside the cell, matching
-// GridCell's emBox() exactly — a drawn jamo's canvas is never quite square
-// (the label bar takes some height), and measuring against the full canvas
-// would squash every glyph by that ratio.
+// The source square comes from emBox() in src/lib/hangul.ts — the same
+// function that draws the guides, so what the user sees as the em really is
+// the box that maps onto the font's em. It is deliberately smaller than the
+// canvas: a jamo drawn right up to the cell edge should overshoot the em a
+// little rather than define it.
 function emTransform(entry: CompiledGlyph): Transform | null {
   const { cellWidth, cellHeight } = entry;
   if (!cellWidth || !cellHeight) return null;
-  const size = Math.min(cellWidth, cellHeight);
-  const originX = (cellWidth - size) / 2;
-  const originY = (cellHeight - size) / 2;
-  const scale = UPM / size;
+  const box = emBox(cellWidth, cellHeight);
+  const scale = UPM / box.size;
   return {
-    tx: (x) => (x - originX) * scale,
-    ty: (y) => ASCENT - (y - originY) * scale,
+    tx: (x) => (x - box.x) * scale,
+    ty: (y) => ASCENT - (y - box.y) * scale,
     advanceWidth: UPM,
   };
 }

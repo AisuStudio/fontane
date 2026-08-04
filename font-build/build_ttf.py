@@ -30,6 +30,8 @@ SIDE_BEARING = 40
 # to this height so nothing comes out microscopic or oversized relative to a
 # 1000-unit em - a reasonable cap-height-ish target, not a real calibration.
 TARGET_GLYPH_HEIGHT = 700
+# Mirrors EM_BOX_FRACTION in src/lib/hangul.ts - see em_transform below.
+EM_BOX_FRACTION = 0.86
 
 # L is in here because a glyph drawn with a nib or stipple brush emits
 # straight-edged contours (src/lib/contour.ts's outlineToSharpPath) instead of
@@ -147,16 +149,17 @@ def em_transform(entry):
     every syllable. That uniform advance is how Korean is set, not a
     simplification.
 
-    The source square is the largest centred square inside the cell, matching
-    GridCell's emBox() and exportFont.ts's emTransform() exactly - a drawn
-    jamo's canvas is never quite square (the label bar takes some height), and
-    measuring against the full canvas would squash every glyph by that ratio.
+    The source square mirrors emBox() in src/lib/hangul.ts, which is also what
+    draws the guides in the app - so what the user sees as the em is the box
+    that maps onto the font's em. Deliberately smaller than the cell: a jamo
+    drawn right up to the edge should overshoot the em slightly rather than
+    define it. EM_BOX_FRACTION has to stay in step with that module.
     """
     cell_width = entry.get("cellWidth")
     cell_height = entry.get("cellHeight")
     if not cell_width or not cell_height:
         return None
-    size = min(cell_width, cell_height)
+    size = min(cell_width, cell_height) * EM_BOX_FRACTION
     origin_x = (cell_width - size) / 2
     origin_y = (cell_height - size) / 2
     scale = UPM / size

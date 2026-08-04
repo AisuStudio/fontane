@@ -18,6 +18,7 @@ import type { StrokeKind, StrokePoint } from "@/lib/strokes";
 import { calligraphyOutline, type Nib } from "@/lib/calligraphy";
 import type { Metrics } from "@/lib/metrics";
 import { drawReferenceGlyph } from "@/lib/referenceGlyph";
+import { emBox } from "@/lib/hangul";
 import { unicodeFor } from "@/lib/glyphs";
 import { setClipboard, getClipboard, type ClipboardStroke } from "@/lib/clipboard";
 import {
@@ -246,17 +247,6 @@ function selectionBottomLeft(strokes: CellStroke[], ids: Set<string>): { x: numb
     ymax = Math.max(ymax, y);
   }
   return { x: xmin, y: ymax };
-}
-
-// The em square a Hangul cell is drawn inside: the largest centered square
-// that fits the canvas. Not the canvas itself — the label bar underneath eats
-// a couple of dozen pixels of height, so the drawing area is never actually
-// square, and a jamo drawn against a non-square "em" would compose distorted.
-// Export uses this exact same rule, which is why it lives here as one
-// function rather than as two matching constants.
-export function emBox(width: number, height: number): { x: number; y: number; size: number } {
-  const size = Math.min(width, height);
-  return { x: (width - size) / 2, y: (height - size) / 2, size };
 }
 
 // Hangul's guides: the em square, plus a faint cross at the proportions a

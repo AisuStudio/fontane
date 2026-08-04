@@ -169,6 +169,25 @@ export function isHangulChar(name: string): boolean {
   );
 }
 
+// How much of a cell's drawing area the em square takes. Not 1: a syllable
+// needs air around it the way a Latin glyph gets air from its sidebearings,
+// and a box flush against the canvas edge gives you nowhere to overshoot and
+// no way to see where the em actually ends.
+export const EM_BOX_FRACTION = 0.86;
+
+// The em square inside a drawing area of the given size — the box a jamo is
+// drawn in, and the box export maps onto the font's em.
+//
+// Lives here, next to the layout table, because three places need to agree on
+// it exactly: the guides GridCell draws, exportFont.ts's emTransform, and
+// font-build/build_ttf.py's em_transform (which mirrors this in Python).
+// They were three separate copies of the same arithmetic before, which is
+// precisely the kind of thing that drifts.
+export function emBox(width: number, height: number): { x: number; y: number; size: number } {
+  const size = Math.min(width, height) * EM_BOX_FRACTION;
+  return { x: (width - size) / 2, y: (height - size) / 2, size };
+}
+
 export type Decomposition ={ l: number; v: number; t: number; initial: string; medial: string; final: string };
 
 // The reason no lookup table is needed anywhere: the block is a dense product
