@@ -102,15 +102,36 @@ function boundsOf(contours: Command[][]): Bounds | null {
 // an eccentricity that depends on which syllable it lands in — the fastest
 // way to make composed text look synthetic. The option exists so the two can
 // be compared on real handwriting rather than argued about.
-function fitTransform(bbox: Bounds, rect: { x: number; y: number; w: number; h: number }, mode: FitMode) {
+export type InkBounds = { xmin: number; xmax: number; ymin: number; ymax: number };
+
+// The placement rule itself, in whatever unit the caller's em is expressed in.
+// Exported because the on-screen preview (layoutText.ts) has to place jamo by
+// exactly the same rule as the export does — it just works on stroke points in
+// line pixels instead of contours in font units. One rule, two coordinate
+// systems; two copies of the arithmetic would drift and the drift would only
+// show up as "the preview lies".
+export function fitInSlot(
+  bbox: InkBounds,
+  rect: { x: number; y: number; w: number; h: number },
+  emSize: number,
+  mode: FitMode = "uniform"
+): { sx: number; sy: number; originX: number; originY: number } {
   const srcW = Math.max(bbox.xmax - bbox.xmin, 1e-6);
   const srcH = Math.max(bbox.ymax - bbox.ymin, 1e-6);
-  const dstW = rect.w * HANGUL_EM * SLOT_FILL;
-  const dstH = rect.h * HANGUL_EM * SLOT_FILL;
+  const dstW = rect.w * emSize * SLOT_FILL;
+  const dstH = rect.h * emSize * SLOT_FILL;
   const sx = mode === "stretch" ? dstW / srcW : Math.min(dstW / srcW, dstH / srcH);
   const sy = mode === "stretch" ? dstH / srcH : sx;
-  const originX = rect.x * HANGUL_EM + (rect.w * HANGUL_EM - srcW * sx) / 2;
-  const originY = rect.y * HANGUL_EM + (rect.h * HANGUL_EM - srcH * sy) / 2;
+  return {
+    sx,
+    sy,
+    originX: rect.x * emSize + (rect.w * emSize - srcW * sx) / 2,
+    originY: rect.y * emSize + (rect.h * emSize - srcH * sy) / 2,
+  };
+}
+
+function fitTransform(bbox: Bounds, rect: { x: number; y: number; w: number; h: number }, mode: FitMode) {
+  const { sx, sy, originX, originY } = fitInSlot(bbox, rect, HANGUL_EM, mode);
   return {
     sx,
     sy,

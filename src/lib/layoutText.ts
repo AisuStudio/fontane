@@ -3,6 +3,8 @@ import type { Stroke, StrokeKind, StrokePoint } from "./strokes";
 import type { Metrics } from "./metrics";
 import type { VectorShape } from "./vectorShapes";
 import { flattenVectorShape } from "./contour";
+import { placementFor } from "./hangul";
+import { fitInSlot } from "./hangulCompose";
 
 // A shared row-of-text pixel space for the Animate preview/export — not a
 // real font em, just fixed constants big enough that every glyph (Grid- or
@@ -11,6 +13,14 @@ const TARGET_CAP_HEIGHT = 140;
 const BASELINE_Y = 100;
 const SPACE_ADVANCE = TARGET_CAP_HEIGHT * 0.4;
 const FALLBACK_SIDE_BEARING = TARGET_CAP_HEIGHT * 0.08;
+
+// Korean's em on this line, derived rather than picked: the exported font maps
+// Latin's cap height onto ASCENT (800 of a 1000-unit em), so an em is
+// capHeight / 0.8 and its top sits 0.8 em above the baseline. Choosing a
+// number by eye instead would make the preview and the font disagree about
+// how big a syllable is next to a Latin letter.
+const HANGUL_EM_SIZE = TARGET_CAP_HEIGHT / 0.8;
+const HANGUL_EM_TOP = BASELINE_Y - 0.8 * HANGUL_EM_SIZE;
 
 export type LaidOutEntry =
   | {
@@ -121,6 +131,73 @@ export function layoutText(
     if (char === " ") {
       entries.push({ kind: "space", advanceWidth: SPACE_ADVANCE, char });
       cursorX += SPACE_ADVANCE;
+      i += 1;
+      continue;
+    }
+
+    // Korean composes rather than looks up: 한 is one codepoint with no glyph
+    // of its own, built on the spot from the jamo that were drawn. Standalone
+    // jamo fall through to the ordinary path below — they DO have glyphs.
+    const syllable = placementFor(char.codePointAt(0)!);
+    if (syllable) {
+      const parts = syllable.map((p) => ({ placement: p, glyph: baseByName.get(p.jamo) }));
+      if (parts.some((p) => !p.glyph)) {
+        // One missing jamo means the whole syllable is missing — half a
+        // syllable would read as a broken font rather than an undrawn letter.
+        missing.add(char);
+        entries.push({ kind: "missing", advanceWidth: HANGUL_EM_SIZE, char });
+        cursorX += HANGUL_EM_SIZE;
+        i += 1;
+        continue;
+      }
+
+      let placed = 0;
+      parts.forEach(({ placement, glyph: jamo }, partIndex) => {
+        const jamoStrokes = jamo!.strokeIds
+          .map((id) => byId.get(id))
+          .filter((s): s is Stroke => Boolean(s))
+          .map((s) => ({ points: s.points, kind: s.kind, id: s.id }));
+        const jamoShapes = (jamo!.vectorShapeIds ?? [])
+          .map((id) => shapesById.get(id))
+          .filter((s): s is VectorShape => Boolean(s && s.closed));
+        const bbox = bounds([
+          ...jamoStrokes.flatMap((s) => s.points).map((p) => [p[0], p[1]] as [number, number]),
+          ...jamoShapes.flatMap((s) => flattenVectorShape(s)),
+        ]);
+        if (!bbox) return; // jamo tagged but empty — skip this part, not the syllable
+
+        // Same rule the export uses (fitInSlot), just in line pixels instead
+        // of font units, so what you type is what you get.
+        const fit = fitInSlot(bbox, placement.rect, HANGUL_EM_SIZE);
+        entries.push({
+          kind: "glyph",
+          glyph: jamo!,
+          strokeSets: jamoStrokes,
+          vectorShapes: jamoShapes,
+          scale: fit.sx,
+          offsetX: cursorX + fit.originX - bbox.xmin * fit.sx,
+          offsetY: HANGUL_EM_TOP + fit.originY - bbox.ymin * fit.sy,
+          // Every part after the first counts for zero typed characters and
+          // zero width. The caret index (counted in characters, see
+          // EditorPanel) then still lines up after a syllable made of three
+          // entries — and the line-wrapper, which measures in advanceWidth,
+          // sees one em per syllable rather than three zero-width entries it
+          // would never break on. Carrying the advance on the FIRST part also
+          // means a break can only ever fall before a syllable, never inside
+          // one: the continuations are zero-width and can't trigger it.
+          charLength: partIndex === 0 ? 1 : 0,
+          advanceWidth: partIndex === 0 ? HANGUL_EM_SIZE : 0,
+        });
+        placed++;
+      });
+
+      if (placed === 0) {
+        missing.add(char);
+        entries.push({ kind: "missing", advanceWidth: HANGUL_EM_SIZE, char });
+      }
+      // The cursor moves one em per syllable, once — not per part. That
+      // uniform advance is how Korean is set.
+      cursorX += HANGUL_EM_SIZE;
       i += 1;
       continue;
     }
