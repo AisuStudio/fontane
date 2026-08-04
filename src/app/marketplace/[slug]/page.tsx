@@ -110,15 +110,47 @@ export default async function FontOverviewPage({
           <ShareButton slug={font.slug} />
         </div>
 
-        {glyphSheet && glyphSheet.glyphs.length > 0 && (
+        {glyphSheet && glyphSheet.charsTotal > 0 && (
           <div style={{ marginTop: 40 }}>
-            <h2 style={{ fontSize: 16, marginBottom: 16, opacity: 0.6 }}>all glyphs ({glyphSheet.glyphs.length})</h2>
-            {/* Rendered directly from each glyph's own outline, not through
-                @font-face text — ligature/alternate glyphs have no cmap
-                entry (no GSUB either), so typing text can never reach them.
-                This is the only view that shows literally every glyph. */}
+            <h2 style={{ fontSize: 16, marginBottom: 16, opacity: 0.6 }}>
+              characters ({glyphSheet.charsTotal})
+              {glyphSheet.charsTotal > glyphSheet.chars.length && (
+                <span style={{ fontSize: 13 }}> · showing first {glyphSheet.chars.length}</span>
+              )}
+            </h2>
+            {/* Set in the font itself, not drawn from outlines: every one of
+                these has a codepoint, so the @font-face above already renders
+                them and the page ships characters instead of path data. A
+                Korean font is ~2.350 syllables — as SVG that was several MB
+                per page view for something the browser does for free. */}
+            <div
+              style={{
+                fontFamily: `"mp-${font.slug}", sans-serif`,
+                fontSize: 28,
+                lineHeight: 1.6,
+                letterSpacing: "0.12em",
+                wordBreak: "break-word",
+              }}
+            >
+              {glyphSheet.chars.join("")}
+            </div>
+          </div>
+        )}
+
+        {glyphSheet && glyphSheet.hidden.length > 0 && (
+          <div style={{ marginTop: 40 }}>
+            <h2 style={{ fontSize: 16, marginBottom: 16, opacity: 0.6 }}>
+              glyphs without a codepoint ({glyphSheet.hiddenTotal})
+              {glyphSheet.hiddenTotal > glyphSheet.hidden.length && (
+                <span style={{ fontSize: 13 }}> · showing first {glyphSheet.hidden.length}</span>
+              )}
+            </h2>
+            {/* Ligatures and alternates. These have no cmap entry, so no
+                amount of typing reaches them — drawing their outlines really
+                is the only way to show them, and there are few enough that it
+                costs nothing. */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(48px, 1fr))", gap: 4 }}>
-              {glyphSheet.glyphs.map((g, i) => (
+              {glyphSheet.hidden.map((g, i) => (
                 <svg
                   // Glyph names in a real compiled OTF aren't guaranteed unique
                   // (e.g. duplicate-named figure/ligature-component glyphs) — index
