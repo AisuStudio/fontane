@@ -6,6 +6,7 @@ import styles from "./page.module.css";
 import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokeKind, type StrokePoint } from "@/lib/strokes";
 import { nibPolygon, type Nib } from "@/lib/calligraphy";
 import { loadGlyphs, saveGlyphs, unicodeFor, nextAlternateName, type Glyph, type GlyphKind } from "@/lib/glyphs";
+import { BASIC_JAMO, coverage, isHangulChar } from "@/lib/hangul";
 import { anyPointInPolygon, pointInPolygon } from "@/lib/geometry";
 import {
   applyBrush,
@@ -89,7 +90,16 @@ import CoachMarks from "./CoachMarks";
 import Writer from "./writer/Writer";
 import SettingsSection from "./SettingsSection";
 import BetaBadge from "./BetaBadge";
-import { CHARACTER_SETS, DEFAULT_CHARACTER_SET_IDS } from "@/lib/charsets";
+import {
+  CHARACTER_SETS,
+  DEFAULT_CHARACTER_SET_IDS,
+  DEFAULT_SCRIPT,
+  SCRIPTS,
+  activeScripts,
+  scriptById,
+  scriptOf,
+  type ScriptId,
+} from "@/lib/charsets";
 import AnimatePanel from "./AnimatePanel";
 import EditorPanel, { DEFAULT_EDITOR_FONT_SIZE_PT, EDITOR_SAMPLE_TEXT } from "./EditorPanel";
 import { DEFAULT_PRESET_ID, type AnimationPresetId } from "@/lib/animationPresets";
@@ -770,9 +780,14 @@ function compileDocument(
   };
 }
 
-// Grid View's cells use a fixed 16:9 height-to-cellSize ratio (see the
-// cellHeightPx computation below).
-const CELL_ASPECT_RATIO = 16 / 9;
+// Grid View's cell height as a multiple of cellSize. Latin cells are 16:9
+// portrait so ascenders and descenders have room above and below the
+// x-height; a Hangul cell is the em square, because a syllable is composed
+// inside one. Per script rather than one constant — see SCRIPTS in
+// src/lib/charsets.ts.
+function cellAspectFor(script: ScriptId): number {
+  return scriptById(script).aspect;
+}
 
 // Free mode's background: plain, evenly-spaced ruled lines, not tied to any
 // glyph metrics — just a spatial reference the user can space out via one
@@ -1144,7 +1159,27 @@ export default function Home() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const [activeSetIds, setActiveSetIds] = useState<Set<string>>(new Set(DEFAULT_CHARACTER_SET_IDS));
+  // Persisted, unlike every other version of this state before it: switching
+  // a script on is a decision about what font this is, not a view toggle, and
+  // losing it on reload reads as "my Hangul cells are gone" even though the
+  // drawings are all still there.
+  const [activeSetIds, setActiveSetIds] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set(DEFAULT_CHARACTER_SET_IDS);
+    try {
+      const raw = window.localStorage.getItem("fontane.activeSets.v1");
+      const parsed = raw ? (JSON.parse(raw) as string[]) : null;
+      // Drop ids that no longer exist rather than carrying phantom sets
+      // forward; an empty result falls back to the default.
+      const known = parsed?.filter((id) => CHARACTER_SETS.some((s) => s.id === id)) ?? [];
+      return new Set(known.length ? known : DEFAULT_CHARACTER_SET_IDS);
+    } catch {
+      return new Set(DEFAULT_CHARACTER_SET_IDS);
+    }
+  });
+
+  // Which script's cells the Grid is showing. Only meaningful when more than
+  // one script is switched on — see activeScripts() in charsets.ts.
+  const [activeScript, setActiveScript] = useState<ScriptId>(DEFAULT_SCRIPT);
   // Extra Grid cells beyond the fixed character sets — this is the only way
   // to get a ligature/alternate slot into Grid view at all (Free mode's
   // Assign panel already supports both kinds via lasso-tagging; Grid drawing
@@ -1330,12 +1365,24 @@ export default function Home() {
     // from here rather than inside the updater below, which React may run
     // more than once per call.
     trackCharset(id, !activeSetIds.has(id));
-    setActiveSetIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    // Computed out here, not inside the updater: React may run an updater
+    // more than once per call, and both the localStorage write and the
+    // script follow below have to happen exactly once.
+    const next = new Set(activeSetIds);
+    const turnedOn = !next.has(id);
+    if (turnedOn) next.add(id);
+    else next.delete(id);
+    setActiveSetIds(next);
+    window.localStorage.setItem("fontane.activeSets.v1", JSON.stringify([...next]));
+
+    // Follow the user to whatever they just switched on — turning on the
+    // Jamo set and then still staring at Latin cells reads as the toggle
+    // having done nothing. Switching one off can equally strand the Grid on
+    // a script with no cells left, so fall back to whatever remains.
+    const set = CHARACTER_SETS.find((s) => s.id === id);
+    const scripts = activeScripts(next);
+    if (turnedOn && set) setActiveScript(scriptOf(set));
+    else if (!scripts.includes(activeScript)) setActiveScript(scripts[0] ?? DEFAULT_SCRIPT);
   }
 
   function updateMetric(key: keyof Metrics, value: number) {
@@ -1563,13 +1610,40 @@ export default function Home() {
     )
     .map((g): GridSlot => ({ name: g.name, kind: g.kind, components: g.components, alternateOf: g.alternateOf }));
 
+  // Cells are per script, not one flat wall: Latin and Hangul cells have
+  // different proportions and different guides, so they can't share a grid
+  // even when the same font contains both. Fixed sets carry their script
+  // explicitly; user-created slots (tagged in Free, or added by hand) are
+  // filed by what they're actually written in.
+  const slotScript = (name: string): ScriptId => (isHangulChar(name) ? "hangul" : "latin");
+
   const gridSlots: GridSlot[] = [
-    ...CHARACTER_SETS.filter((s) => activeSetIds.has(s.id))
+    ...CHARACTER_SETS.filter((s) => activeSetIds.has(s.id) && scriptOf(s) === activeScript)
       .flatMap((s) => s.chars)
       .map((name): GridSlot => ({ name, kind: "base" })),
-    ...taggedSlots,
-    ...extraGridSlots,
+    ...taggedSlots.filter((s) => slotScript(s.name) === activeScript),
+    ...extraGridSlots.filter((s) => slotScript(s.name) === activeScript),
   ];
+
+  const gridScripts = activeScripts(activeSetIds);
+
+  // "18 of 24 jamo drawn -> 6.412 of 11.172 syllables covered" is the whole
+  // Hangul pitch in one line, and the only progress number that means
+  // anything here: cells drawn says little, syllables reachable says
+  // everything. coverage() brute-forces all 11.172, so it's memoized on the
+  // drawn set rather than run per render.
+  const drawnJamoKey = glyphs
+    .filter(
+      (g) =>
+        g.kind === "base" &&
+        BASIC_JAMO.includes(g.name) &&
+        (g.strokeIds.length > 0 || (g.vectorShapeIds?.length ?? 0) > 0)
+    )
+    .map((g) => g.name)
+    .sort()
+    .join("");
+  const hangulCoverage = useMemo(() => coverage([...drawnJamoKey]), [drawnJamoKey]);
+  const jamoDrawn = [...drawnJamoKey].length;
   // First-run onboarding: with a totally empty project, the very first Grid
   // slot gets a highlight + hint bubble (see GridCell's firstStepHint) so
   // there's an obvious place to draw instead of 50+ equally-blank cells.
@@ -4889,12 +4963,30 @@ export default function Home() {
             </button>
             {openMenu === "charset" && (
               <div className={styles.dropdown} role="menu">
-                {CHARACTER_SETS.map((set) => (
-                  <label key={set.id} className={styles.charsetOption}>
-                    <input type="checkbox" checked={activeSetIds.has(set.id)} onChange={() => toggleCharacterSet(set.id)} />
-                    {set.label}
-                  </label>
-                ))}
+                {/* Grouped by script, with the heading shown only where a
+                    group actually needs naming — a lone "Latin" label above
+                    the sets everyone already uses would be noise, but
+                    "Hangul" above the Jamo set is the entire explanation of
+                    what that one checkbox does. */}
+                {SCRIPTS.map((script) => {
+                  const sets = CHARACTER_SETS.filter((s) => scriptOf(s) === script.id);
+                  if (sets.length === 0) return null;
+                  return (
+                    <div key={script.id}>
+                      {script.id !== "latin" && <div className={styles.charsetGroupLabel}>{script.label}</div>}
+                      {sets.map((set) => (
+                        <label key={set.id} className={styles.charsetOption}>
+                          <input
+                            type="checkbox"
+                            checked={activeSetIds.has(set.id)}
+                            onChange={() => toggleCharacterSet(set.id)}
+                          />
+                          {set.label}
+                        </label>
+                      ))}
+                    </div>
+                  );
+                })}
 
                 {extraGridSlots.length > 0 && (
                   <div className={styles.extraGlyphList}>
@@ -5176,6 +5268,37 @@ export default function Home() {
         </div>
       )}
 
+      {/* Script tabs appear only once a second script is switched on. With
+          Latin alone there is nothing to switch between, so a Latin-only
+          user never meets the concept — the same reason the Grid stopped
+          gating on a setup overlay. */}
+      {topMode === "draw" && drawStyle === "grid" && gridScripts.length > 1 && (
+        <div className={styles.scriptTabs} role="tablist" aria-label="Script">
+          {gridScripts.map((id) => {
+            const script = scriptById(id);
+            const active = id === activeScript;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={`${styles.scriptTab} ${active ? styles.scriptTabActive : ""}`}
+                onClick={() => setActiveScript(id)}
+              >
+                {script.label}
+              </button>
+            );
+          })}
+          {activeScript === "hangul" && (
+            <span className={styles.scriptTabNote}>
+              {jamoDrawn} / {BASIC_JAMO.length} Jamo · {hangulCoverage.covered.toLocaleString("de-DE")} von{" "}
+              {hangulCoverage.total.toLocaleString("de-DE")} Silben
+            </span>
+          )}
+        </div>
+      )}
+
       {topMode === "draw" && drawStyle === "free" && drawTool === "assign" && glyphs.length > 0 && (
         <div className={styles.glyphListWrap}>
           <div className={styles.glyphListHeader}>
@@ -5270,7 +5393,7 @@ export default function Home() {
                     .filter((s): s is Stroke => Boolean(s))
                 : [];
               const needsFit = glyph && !(glyph.cellWidth && glyph.cellHeight);
-              const cellHeightPx = cellSize * CELL_ASPECT_RATIO;
+              const cellHeightPx = cellSize * cellAspectFor(activeScript);
               // A glyph's own widthRatio (dragged per-cell — see the width
               // handle in GridCell) overrides the global Width slider just
               // for this cell; everything else still follows cellWidthRatio.

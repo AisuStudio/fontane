@@ -529,6 +529,51 @@
   cursor: default;
 }
 
+/* Script tabs (Latin | Hangul), a second row under the view tabs. Smaller
+   and flatter than .viewTab on purpose: this is a switch inside the Grid,
+   not a switch between views, and two rows of identical folder tabs would
+   read as one confused navigation. */
+.scriptTabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: var(--sp-xs) var(--sp-sm) 0;
+}
+
+.scriptTab {
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  font-weight: 400;
+  padding: 3px 12px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-hazelnut);
+  cursor: pointer;
+}
+
+.scriptTab:hover:not(.scriptTabActive) {
+  color: var(--color-blueberry);
+}
+
+.scriptTabActive {
+  background: var(--color-hazelnut);
+  color: var(--color-vanilla);
+  font-weight: 700;
+  cursor: default;
+}
+
+/* Coverage readout next to the tabs — "18 / 24 Jamo · 6.412 von 11.172
+   Silben". Deliberately not a badge or a progress bar: the number itself is
+   the surprising part. */
+.scriptTabNote {
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  color: var(--color-hazelnut);
+  margin-left: var(--sp-sm);
+}
+
 .canvasWrap {
   position: relative;
   flex: 1;
@@ -1025,6 +1070,16 @@
 
 .charsetOption input[type="checkbox"] {
   accent-color: var(--color-grape);
+}
+
+/* Only drawn for non-Latin groups — see the comment at the call site. */
+.charsetGroupLabel {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-hazelnut);
+  margin: var(--sp-sm) 0 2px;
 }
 
 .extraGlyphList {

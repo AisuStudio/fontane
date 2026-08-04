@@ -154,7 +154,22 @@ export const DEFAULT_LAYOUT: LayoutTable = {
 
 // ---------------------------------------------------------------------------
 
-export type Decomposition = { l: number; v: number; t: number; initial: string; medial: string; final: string };
+// Whether a glyph/slot name belongs to Korean at all — covers standalone
+// compatibility jamo (what the Grid's cells use), conjoining jamo (what other
+// tools emit), and the precomposed syllables. Used to file a user-created
+// glyph under the right script tab; only the first codepoint is examined,
+// which is what a mixed name like a ligature would want anyway.
+export function isHangulChar(name: string): boolean {
+  const cp = name.codePointAt(0);
+  if (cp === undefined) return false;
+  return (
+    (cp >= 0x1100 && cp <= 0x11ff) || // conjoining jamo
+    (cp >= 0x3131 && cp <= 0x318e) || // compatibility jamo
+    (cp >= SYLLABLE_BASE && cp <= SYLLABLE_LAST) // precomposed syllables
+  );
+}
+
+export type Decomposition ={ l: number; v: number; t: number; initial: string; medial: string; final: string };
 
 // The reason no lookup table is needed anywhere: the block is a dense product
 // in L-major order, so integer division recovers the three indices exactly.

@@ -1,8 +1,46 @@
+import { BASIC_CONSONANTS, BASIC_VOWELS } from "./hangul";
+
+// Which writing system a set belongs to. Not a taxonomy for its own sake —
+// it decides cell geometry: Latin, Cyrillic and Greek all sit on the same
+// baseline with an x-height above it, so they share one Grid tab and one set
+// of metrics. Hangul doesn't have a baseline at all; a syllable fills a
+// square em box. Those two facts can't live in the same grid.
+export type ScriptId = "latin" | "hangul";
+
+export type Script = {
+  id: ScriptId;
+  label: string;
+  // Cell height as a multiple of cell width. Latin cells are portrait to
+  // leave room for ascenders/descenders; a Hangul cell is the em square.
+  aspect: number;
+  // Which guides GridCell draws: baseline/x-height/ascender/descender, or
+  // the em box with its jamo position grid.
+  guides: "baseline" | "em";
+};
+
+export const SCRIPTS: Script[] = [
+  { id: "latin", label: "Latin", aspect: 16 / 9, guides: "baseline" },
+  { id: "hangul", label: "Hangul", aspect: 1, guides: "em" },
+];
+
+export const DEFAULT_SCRIPT: ScriptId = "latin";
+
+export function scriptById(id: ScriptId): Script {
+  return SCRIPTS.find((s) => s.id === id) ?? SCRIPTS[0];
+}
+
 export type CharacterSet = {
   id: string;
   label: string;
   chars: string[];
+  // Undefined means "latin" — every set that existed before Hangul stays
+  // untouched rather than getting a field added to each one.
+  script?: ScriptId;
 };
+
+export function scriptOf(set: CharacterSet): ScriptId {
+  return set.script ?? "latin";
+}
 
 const LATIN_BASIC: string[] = [
   ..."abcdefghijklmnopqrstuvwxyz".split(""),
@@ -91,6 +129,14 @@ const SYMBOLS: string[] = [
   "+", "−", "×", "÷", "=", "<", ">", "%", "‰", "°",
 ];
 
+// The 24 basic jamo — and that is the whole Korean drawing job. Every
+// doubled consonant (ㄲ), consonant cluster (ㄺ) and compound vowel (ㅘ) is
+// written as two of these side by side, and all 11.172 syllables are
+// composed from them at export/preview time rather than drawn. See
+// src/lib/hangul.ts, which owns the list so the grid and the composition
+// can't drift apart.
+const HANGUL_JAMO: string[] = [...BASIC_CONSONANTS, ...BASIC_VOWELS];
+
 // Add more sets here (e.g. Cyrillic) as their own entry — the grid UI picks
 // up any set added to this list automatically.
 export const CHARACTER_SETS: CharacterSet[] = [
@@ -102,7 +148,22 @@ export const CHARACTER_SETS: CharacterSet[] = [
   { id: "numbers", label: "Numbers", chars: NUMBERS },
   { id: "punctuation", label: "Punctuation", chars: PUNCTUATION },
   { id: "symbols", label: "Symbols", chars: SYMBOLS },
+  { id: "hangul-jamo", label: "Jamo (24)", chars: HANGUL_JAMO, script: "hangul" },
 ];
+
+export function setsForScript(script: ScriptId): CharacterSet[] {
+  return CHARACTER_SETS.filter((s) => scriptOf(s) === script);
+}
+
+// Which scripts the user currently has switched on, in SCRIPTS order. The
+// Grid's script tab row keys off this: with one script active there is
+// nothing to switch between, so no tab row is drawn at all and a Latin-only
+// user never sees that the concept exists.
+export function activeScripts(activeSetIds: Set<string>): ScriptId[] {
+  return SCRIPTS.map((s) => s.id).filter((id) =>
+    CHARACTER_SETS.some((set) => activeSetIds.has(set.id) && scriptOf(set) === id)
+  );
+}
 
 // Just the 52 basic letters to start with. Four sets on by default meant a new
 // font opened onto ~165 empty cells — most of them accents and symbols nobody
