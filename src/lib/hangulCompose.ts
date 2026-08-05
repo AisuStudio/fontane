@@ -390,7 +390,28 @@ export function composeHangul(doc: CompiledDocument, options: ComposeOptions = {
   // what makes a standalone ㄱ match the ㄱ inside a syllable.
   const jamoNames = new Set(source.keys());
   const standalone = [...source.keys()].filter((n) => BASIC_JAMO.includes(n));
-  const rest = doc.glyphs.filter((g) => !jamoNames.has(g.name));
+
+  // Syllables somebody drew by hand — the practice sheet the context variants
+  // are harvested from (src/lib/hangulHarvest.ts). A hand-drawn syllable beats
+  // an assembled one, so it wins over the composed version rather than sitting
+  // beside it: left alone, both would claim the same codepoint, and the drawn
+  // one would carry the name "각" into a post table that can only hold ASCII.
+  // Renamed to uniXXXX here, exactly as the standalone jamo are.
+  const drawnSyllables = new Map<number, CompiledGlyph>();
+  for (const g of doc.glyphs) {
+    const cp = [...g.name].length === 1 ? g.name.codePointAt(0) : undefined;
+    if (cp === undefined || cp < SYLLABLE_BASE || cp > SYLLABLE_LAST) continue;
+    if (g.contours.length === 0) continue;
+    drawnSyllables.set(cp, g);
+  }
+
+  // By name, not by first codepoint: a ligature called "각각" starts with the
+  // same codepoint and is not the same glyph.
+  const drawnSyllableNames = new Set([...drawnSyllables.keys()].map((cp) => String.fromCodePoint(cp)));
+  const rest = doc.glyphs.filter((g) => !jamoNames.has(g.name) && !drawnSyllableNames.has(g.name));
+  for (const [cp, g] of drawnSyllables) {
+    composed.push({ ...g, name: hangulGlyphName(cp), unicode: `U+${cp.toString(16).toUpperCase()}`, script: "hangul" });
+  }
   for (const jamo of standalone) {
     const contours = composeStandalone(jamo, source);
     if (!contours) continue;
@@ -414,6 +435,7 @@ export function composeHangul(doc: CompiledDocument, options: ComposeOptions = {
 
   const asComponents = options.mode === "components";
   for (const cp of targets) {
+    if (drawnSyllables.has(cp)) continue; // the hand-drawn one is already in
     // Both modes describe the same geometry; they differ only in whether the
     // jamo's outline is copied in or pointed at.
     const parts = asComponents ? composeSyllableParts(cp, source, fit, options.layout) : null;

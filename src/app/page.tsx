@@ -13,6 +13,7 @@ import {
   allVariantSlots,
   coverage,
   frequentSyllables,
+  harvestSyllables,
   isHangulChar,
   variantName,
 } from "@/lib/hangul";
@@ -1673,10 +1674,20 @@ export default function Home() {
       ? allVariantSlots().map((v): GridSlot => ({ name: v.name, kind: "base" }))
       : [];
 
+  // The practice sheet: whole syllables, drawn by hand, that the batchim
+  // variants get lifted out of. A cell this size is the point — a fixed pen in
+  // a 0.27-em box writes a relatively fat stroke, so the batchim can only be
+  // drawn at its real density as part of something bigger.
+  const syllableSlots: GridSlot[] =
+    activeScript === "hangul" && activeSetIds.has("hangul-jamo")
+      ? harvestSyllables().map((s): GridSlot => ({ name: s.char, kind: "base" }))
+      : [];
+
   const gridSlots: GridSlot[] = [
     ...CHARACTER_SETS.filter((s) => activeSetIds.has(s.id) && scriptOf(s) === activeScript)
       .flatMap((s) => s.chars)
       .map((name): GridSlot => ({ name, kind: "base" })),
+    ...syllableSlots,
     ...variantSlots,
     ...taggedSlots.filter((s) => slotScript(s.name) === activeScript),
     ...extraGridSlots.filter((s) => slotScript(s.name) === activeScript),
@@ -1699,6 +1710,13 @@ export default function Home() {
     variantSlots.length > 0
       ? [
           { id: "grp-basic", label: "Jamo · the basics", example: "ㄱ", count: BASIC_JAMO.length, first: gridSlots[0]?.name },
+          {
+            id: "grp-syllables",
+            label: "Syllables · draw these whole",
+            example: "각",
+            count: syllableSlots.length,
+            first: syllableSlots[0]?.name,
+          },
           ...JAMO_VARIANTS.map((v) => ({
             id: `grp-${v.role}`,
             label: v.label,

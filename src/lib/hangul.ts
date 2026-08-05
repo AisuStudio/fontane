@@ -242,6 +242,46 @@ export function allVariantSlots(): { name: string; base: string; role: JamoRole;
   );
 }
 
+// ---------------------------------------------------------------------------
+// The syllables worth drawing by hand
+// ---------------------------------------------------------------------------
+//
+// Drawing a consonant into a variant cell means drawing it inside a box the
+// size of its slot, and a fixed pen in a small box makes a relatively fat
+// stroke — which is why the batchim row is the one that can't be drawn. Drawn
+// as part of a whole syllable, the reference frame is the syllable instead:
+// the pen stays put and the batchim comes out as small and as dense as the
+// hand actually writes it. So the drawing surface is a syllable, and the parts
+// are lifted out of it afterwards.
+//
+// Fourteen of them, not twenty-eight: the measured weight loss is in the
+// batchim alone (56-71% of the syllable's other parts), while an initial
+// beside or above its vowel already lands at ~100% — its slot is nearly as
+// big as the jamo cell, so scaling it barely scales anything. Each syllable
+// therefore carries its own consonant as the batchim, and the vowels rotate
+// so all five upright basics get used and the set doubles as a legibility
+// check on them.
+export type HarvestSyllable = {
+  char: string;
+  // What can be lifted out of this drawing. Only the final for now: an
+  // initial harvested here would sit in a VT-class slot (0.50 x 0.54) while
+  // the initV cell is shaped from class V (0.52 x 0.78), and one cell cannot
+  // be both. Splitting initV into with-batchim and without is a real option
+  // — it just isn't paid for by any measurement yet.
+  teaches: { role: JamoRole; base: string }[];
+};
+
+const UPRIGHT_VOWELS = BASIC_VOWELS.filter((v) => MEDIALS[v]?.kind === "vertical");
+
+export function harvestSyllables(): HarvestSyllable[] {
+  return BASIC_CONSONANTS.map((c, i) => {
+    const l = COMPAT_L.indexOf(c);
+    const v = COMPAT_V.indexOf(UPRIGHT_VOWELS[i % UPRIGHT_VOWELS.length]);
+    const t = COMPAT_T.indexOf(c);
+    return { char: compose(l, v, t), teaches: [{ role: "fin" as JamoRole, base: c }] };
+  });
+}
+
 // Which context a given slot in a given class is, or null where no variant
 // exists (vowels, for now).
 function roleFor(cls: LayoutClass, slot: "initial" | "medial" | "final"): JamoRole | null {
