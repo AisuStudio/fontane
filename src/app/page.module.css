@@ -1097,7 +1097,11 @@
   /* The em box includes the descender band, so the glyph would otherwise sit
      high in a square cell. */
   padding: 2px;
-  color: var(--color-text);
+  /* Vanilla, not --color-text: this panel is dark (.settingsPanel paints
+     itself --color-blueberry, which is what --color-text resolves to), so ink
+     colour here is the background colour and the syllables came out invisible
+     — drawn, correct, and the same shade as what's behind them. */
+  color: var(--color-vanilla);
 }
 
 .syllableBtn {
@@ -1107,13 +1111,13 @@
   border: 0.5px solid var(--color-hazelnut);
   border-radius: 4px;
   background: transparent;
-  color: var(--color-text);
+  color: var(--color-vanilla); /* dark panel — see .syllableSvg */
   cursor: pointer;
+  width: 100%;
 }
 
 .syllableBtn:hover {
-  border-color: var(--color-grape);
-  color: var(--color-grape);
+  border-color: var(--color-vanilla);
 }
 
 /* Only drawn for non-Latin groups — see the comment at the call site. */
