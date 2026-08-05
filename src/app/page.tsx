@@ -1698,10 +1698,11 @@ export default function Home() {
   const gridGroups =
     variantSlots.length > 0
       ? [
-          { id: "grp-basic", label: "Jamo", count: BASIC_JAMO.length, first: gridSlots[0]?.name },
+          { id: "grp-basic", label: "Jamo · the basics", example: "ㄱ", count: BASIC_JAMO.length, first: gridSlots[0]?.name },
           ...JAMO_VARIANTS.map((v) => ({
             id: `grp-${v.role}`,
             label: v.label,
+            example: v.example,
             count: BASIC_CONSONANTS.length,
             first: variantName(BASIC_CONSONANTS[0], v.role),
           })),
@@ -5559,6 +5560,10 @@ export default function Home() {
         <div className={styles.gridWrap} data-tour="grid">
           {gridGroups.length > 0 && (
             <div className={styles.gridJumps}>
+              {/* Underlined text alone was read as four labels, not four
+                  destinations — the row needs to say what it is before the
+                  words in it mean anything. */}
+              <span className={styles.gridJumpsLabel}>Jump to</span>
               {gridGroups.map((g) => (
                 <button
                   key={g.id}
@@ -5566,6 +5571,7 @@ export default function Home() {
                   className={styles.gridJump}
                   onClick={() => scrollGroupIntoView(g.id)}
                 >
+                  <span className={styles.gridJumpExample}>{g.example}</span>
                   {g.label}
                 </button>
               ))}
@@ -5696,6 +5702,7 @@ export default function Home() {
               return heading ? (
                 <Fragment key={`sec:${cellKey}`}>
                   <h3 id={heading.id} className={styles.gridSectionHeading}>
+                    <span className={styles.gridJumpExample}>{heading.example}</span>
                     {heading.label} <span className={styles.gridSectionCount}>({heading.count})</span>
                   </h3>
                   {cell}
@@ -6036,7 +6043,20 @@ export default function Home() {
                 </SettingsSection>
               )}
 
+              {/* Hangul never touches these four numbers: its glyphs go through
+                  emTransform, which maps the em box onto the font's em square and
+                  advances one em per syllable. Leaving four live-looking sliders
+                  in the panel would be four controls that do nothing — but
+                  removing the section outright leaves no answer to "where did
+                  Metrics go?", so the section stays and says why. */}
               <SettingsSection id="metrics" title="Metrics" defaultOpen={false} tourId="metrics">
+                {activeScript === "hangul" ? (
+                  <p className={styles.settingsNote}>
+                    Hangul has no baseline to sit on. Every syllable fills the em square and advances exactly one
+                    em — that uniform advance is how Korean is set. Ascender, x-height, baseline and descender
+                    govern this font&rsquo;s Latin letters only.
+                  </p>
+                ) : (
                 <div className={styles.sliders}>
                   <label className={styles.sliderRow}>
                     <span>Ascender</span>
@@ -6097,6 +6117,7 @@ export default function Home() {
                     <span className={styles.val}>{metrics.descender.toFixed(2)}</span>
                   </label>
                 </div>
+                )}
               </SettingsSection>
             </>
           )}

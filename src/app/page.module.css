@@ -843,6 +843,17 @@
   text-align: right;
 }
 
+/* Explanatory text inside a settings section, standing where a control would
+   be if the active script had one. Inherits the panel's vanilla on purpose —
+   --color-text resolves to the panel's own background colour. */
+.settingsNote {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.7;
+  margin: 0;
+}
+
 .nameInput {
   font-family: var(--font-sans);
   font-size: 12px;
@@ -1129,6 +1140,22 @@
 .gridJump:hover {
   color: var(--color-grape);
   opacity: 1;
+}
+
+.gridJumpsLabel {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  color: var(--color-blueberry);
+  opacity: 0.45;
+}
+
+/* The example syllable, set larger than the label beside it: at 12px a
+   Hangul block is a smudge, and the whole point is that you recognise the
+   shape without reading. */
+.gridJumpExample {
+  font-size: 1rem;
+  margin-right: 5px;
+  vertical-align: -1px;
 }
 
 /* Syllable preview — composed from the drawn jamo, never stored anywhere.

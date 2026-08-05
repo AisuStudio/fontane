@@ -180,6 +180,10 @@ export type JamoRole = "initV" | "initH" | "fin";
 export type JamoVariant = {
   role: JamoRole;
   label: string;
+  // A syllable that shows the position, e.g. 각 for the batchim. Faster than
+  // any wording: "below the vowel" has to be read and pictured, 각 already is
+  // the picture. Shown next to the label wherever the group is named.
+  example: string;
   // The slot's own size, as fractions of the em. BOTH dimensions matter, not
   // just their ratio: a cell is drawn at cellSize x these fractions, so every
   // variant cell maps onto its slot by the SAME factor (em / cellSize). That
@@ -207,10 +211,14 @@ function slotSize(cls: LayoutClass, which: "initial" | "final"): { w: number; h:
   return { w: rect.w, h: rect.h };
 }
 
+// Labels name the position, not the linguistics: "beside a vertical vowel" is
+// accurate and unreadable — you have to know what a vertical vowel is before
+// the sentence tells you anything. Where the consonant sits is the whole point,
+// so that is what it says, with a syllable to point at.
 export const JAMO_VARIANTS: JamoVariant[] = [
-  { role: "initV", label: "Initial · beside a vertical vowel", ...slotSize("V", "initial") },
-  { role: "initH", label: "Initial · above a wide vowel", ...slotSize("H", "initial") },
-  { role: "fin", label: "Final · batchim", ...slotSize("VT", "final") },
+  { role: "initV", label: "Initial · left of the vowel", example: "가", ...slotSize("V", "initial") },
+  { role: "initH", label: "Initial · above the vowel", example: "고", ...slotSize("H", "initial") },
+  { role: "fin", label: "Final · under the syllable", example: "각", ...slotSize("VT", "final") },
 ];
 
 // Variants are named, not encoded: "ㄱ.fin" is not a single codepoint, so
