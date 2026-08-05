@@ -207,6 +207,20 @@ const VECTOR_TOOLS = new Set<DrawTool>(["vector", "vectorAdd", "vectorDelete", "
 // Calligraphy belongs here too, but shows its own nib panel instead of the
 // brush one — see the Stroke section in the sidebar.
 const STROKE_TOOLS = new Set<DrawTool>(["pen", "brush", "calligraphy", "eraser", "nudge", "anchor"]);
+
+// The one space every Grid glyph is drawn and stored in. Its value is
+// arbitrary — it is a resolution, not a size — but it must never change: it is
+// the unit every glyph's recorded cellWidth/cellHeight is expressed in, and
+// moving it would re-weight every letter ever drawn. 240 was the old Cell size
+// slider's maximum, so nothing existing exceeds it.
+const CANONICAL_CELL = 240;
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 1.5;
+const DEFAULT_ZOOM = 0.375; // 90px, the cell size this replaced defaulted to
+
+function clampZoom(z: number): number {
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(z * 40) / 40));
+}
 // The three tools that lay down ink with the active brush/nib — the ones
 // whose OS cursor gets replaced by the true-size, true-angle brush-shape ring
 // (see drawBrushCursor), since Eraser/Nudge/Anchor have no brush shape to show.
@@ -1270,14 +1284,43 @@ export default function Home() {
   }
 
   const [metrics, setMetrics] = useState<Metrics>(() => loadMetrics());
-  const [cellSize, setCellSize] = useState(() => {
-    if (typeof window === "undefined") return 90;
-    return Number(window.localStorage.getItem("fontane.cellSize.v1") ?? window.localStorage.getItem("glypher.cellSize.v1")) || 90;
+
+  // Zoom, not cell size.
+  //
+  // A glyph records the cell it was drawn in, and display rescales it — points
+  // AND stroke width — to whatever the cell measures now. So as long as the
+  // drawing space could be resized, the size of that space at drawing time
+  // silently fixed the letter's weight relative to itself: two letters drawn
+  // at 80 and at 210 keep a 2.6x weight difference for good, through every
+  // export, from a slider that never mentions weight.
+  //
+  // Everything is now drawn in ONE space, CANONICAL_CELL, and the slider only
+  // changes how large that space is displayed. The anchor machinery
+  // (toAnchorSpace/fromAnchorSpace) already did the arithmetic a zoom needs —
+  // it was just being told a different answer per glyph. One answer for
+  // everyone, and a second stroke weight has nowhere to come from.
+  const [zoom, setZoom] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_ZOOM;
+    // Carry the old preference over: someone who had cells at 210 keeps
+    // seeing them that big, it is just no longer what their letters are
+    // measured in.
+    const legacy = Number(
+      window.localStorage.getItem("fontane.cellSize.v1") ?? window.localStorage.getItem("glypher.cellSize.v1")
+    );
+    const stored = Number(window.localStorage.getItem("fontane.gridZoom.v1"));
+    if (stored > 0) return stored;
+    return legacy > 0 ? clampZoom(legacy / CANONICAL_CELL) : DEFAULT_ZOOM;
   });
 
-  function updateCellSize(size: number) {
-    setCellSize(size);
-    window.localStorage.setItem("fontane.cellSize.v1", String(size));
+  // What a cell measures on screen right now. Kept under the old name because
+  // every consumer of it — cellSizeForSlot, the width handle, the variant
+  // cells — wants exactly this: displayed pixels.
+  const cellSize = Math.round(CANONICAL_CELL * zoom);
+
+  function updateZoom(next: number) {
+    const z = clampZoom(next);
+    setZoom(z);
+    window.localStorage.setItem("fontane.gridZoom.v1", String(z));
   }
 
   // A ratio, not an absolute pixel value — wide letters like "m" or "@" need
@@ -4245,10 +4288,16 @@ export default function Home() {
     // whatever other strokes it already has — even if Cell size/width has
     // changed since those were drawn. See fromAnchorSpace/toAnchorSpace.
     const existingGlyph = glyphsRef.current.find((g) => g.kind === slot.kind && g.name === slot.name);
+    // A new glyph's anchor is the canonical space, not the pixels this cell
+    // happens to occupy at the current zoom — that is the whole point of the
+    // zoom rewrite. An existing glyph keeps whatever anchor it already has,
+    // including the pre-zoom ones, so nothing already drawn moves.
+    const anchorWidth = existingGlyph?.cellWidth ?? currentCellWidth / zoom;
+    const anchorHeight = existingGlyph?.cellHeight ?? currentCellHeight / zoom;
     const anchoredPoints = toAnchorSpace(
       stroke.points,
-      existingGlyph?.cellWidth,
-      existingGlyph?.cellHeight,
+      anchorWidth,
+      anchorHeight,
       currentCellWidth,
       currentCellHeight,
       keepProportions
@@ -4286,8 +4335,8 @@ export default function Home() {
         createdAt: Date.now(),
         leftBearing: DEFAULT_LEFT_BEARING,
         rightBearing: DEFAULT_RIGHT_BEARING,
-        cellWidth: currentCellWidth,
-        cellHeight: currentCellHeight,
+        cellWidth: anchorWidth,
+        cellHeight: anchorHeight,
         ...(slot.kind === "base" ? { unicode: unicodeFor(slot.name) } : {}),
         ...(slot.kind === "ligature" ? { components: slot.components ?? [] } : {}),
         ...(slot.kind === "alternate" ? { alternateOf: slot.alternateOf } : {}),
@@ -4370,11 +4419,17 @@ export default function Home() {
     // current-cell pixel space, the store keeps everything in the glyph's own
     // fixed anchor space so a later Cell size/width change rescales a glyph's
     // shapes and strokes together instead of drifting them apart.
+    // Same canonical anchor a first stroke would establish (see
+    // handleGridStroke) — a glyph that starts life as vector shapes must land
+    // in the same space as one that starts as ink, or the two would carry
+    // different weights the moment both exist.
+    const anchorWidth = glyph?.cellWidth ?? currentCellWidth / zoom;
+    const anchorHeight = glyph?.cellHeight ?? currentCellHeight / zoom;
     const anchored = shapes.map((s) =>
       vectorShapeAcrossAnchorSpace(
         s,
-        glyph?.cellWidth,
-        glyph?.cellHeight,
+        anchorWidth,
+        anchorHeight,
         currentCellWidth,
         currentCellHeight,
         keepProportions,
@@ -4433,8 +4488,8 @@ export default function Home() {
         createdAt: Date.now(),
         leftBearing: DEFAULT_LEFT_BEARING,
         rightBearing: DEFAULT_RIGHT_BEARING,
-        cellWidth: currentCellWidth,
-        cellHeight: currentCellHeight,
+        cellWidth: anchorWidth,
+        cellHeight: anchorHeight,
         ...(slot.kind === "base" ? { unicode: unicodeFor(slot.name) } : {}),
         ...(slot.kind === "ligature" ? { components: slot.components ?? [] } : {}),
         ...(slot.kind === "alternate" ? { alternateOf: slot.alternateOf } : {}),
@@ -4456,6 +4511,12 @@ export default function Home() {
     if (updates.length === 0) return;
     pushUndoSnapshot();
     const glyph = glyphsRef.current.find((g) => g.kind === slot.kind && g.name === slot.name);
+    // A glyph with no anchor yet (Free-tagged, being promoted below) gets the
+    // canonical one, so the points written back are stored in the same space
+    // every Grid-drawn glyph uses rather than in whatever pixels the current
+    // zoom happens to be showing.
+    const anchorWidth = glyph?.cellWidth ?? currentCellWidth / zoom;
+    const anchorHeight = glyph?.cellHeight ?? currentCellHeight / zoom;
     for (const { id, points: rawPoints, widthScale } of updates) {
       const idx = completedRef.current.findIndex((s) => s.id === id);
       if (idx === -1) continue;
@@ -4465,8 +4526,8 @@ export default function Home() {
       // expanding the whole glyph consistently on every future render.
       const points = toAnchorSpace(
         rawPoints,
-        glyph?.cellWidth,
-        glyph?.cellHeight,
+        anchorWidth,
+        anchorHeight,
         currentCellWidth,
         currentCellHeight,
         keepProportions
@@ -4487,7 +4548,7 @@ export default function Home() {
     setGlyphs((gs) =>
       gs.map((g) =>
         g.kind === slot.kind && g.name === slot.name && !(g.cellWidth && g.cellHeight)
-          ? { ...g, cellWidth: currentCellWidth, cellHeight: currentCellHeight }
+          ? { ...g, cellWidth: anchorWidth, cellHeight: anchorHeight }
           : g
       )
     );
@@ -6211,16 +6272,16 @@ export default function Home() {
                   Lock Bearings
                 </button>
                 <label className={styles.sliderRow}>
-                  <span>Cell size</span>
+                  <span>Zoom</span>
                   <input
                     type="range"
-                    min={60}
-                    max={240}
-                    step={10}
-                    value={cellSize}
-                    onChange={(e) => updateCellSize(Number(e.target.value))}
+                    min={MIN_ZOOM}
+                    max={MAX_ZOOM}
+                    step={0.025}
+                    value={zoom}
+                    onChange={(e) => updateZoom(Number(e.target.value))}
                   />
-                  <span className={styles.val}>{cellSize}</span>
+                  <span className={styles.val}>{Math.round(zoom * 100)}%</span>
                 </label>
                 {/* Only offered once it can actually have happened: letters
                     drawn at two different cell sizes carry two different
