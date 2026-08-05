@@ -163,6 +163,88 @@ export const DEFAULT_LAYOUT: LayoutTable = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Context variants — the same consonant drawn for the place it actually sits
+// ---------------------------------------------------------------------------
+//
+// Scaling one drawing into every slot makes the stroke weight follow the slot:
+// a batchim squeezed to 56% of the initial's size comes out 56% as heavy. Real
+// Korean faces don't shrink, they draw — the batchim is SMALLER, not LIGHTER,
+// and it isn't even the same shape.
+//
+// So a consonant can be drawn up to three times, once per context. Anything
+// not drawn falls back to the basic jamo, scaled as before: coverage never
+// drops, quality rises per drawing.
+export type JamoRole = "initV" | "initH" | "fin";
+
+export type JamoVariant = {
+  role: JamoRole;
+  label: string;
+  // The slot's own size, as fractions of the em. BOTH dimensions matter, not
+  // just their ratio: a cell is drawn at cellSize x these fractions, so every
+  // variant cell maps onto its slot by the SAME factor (em / cellSize). That
+  // shared factor is what keeps the stroke weight even across the parts of a
+  // syllable — give every cell the same width instead and a batchim, whose
+  // slot is the widest, would come out ~46% heavier than an initial.
+  w: number;
+  h: number;
+};
+
+// Which layout classes each context covers. A consonant beside an upright
+// vowel is tall and narrow; above a wide vowel it is short and wide; a batchim
+// is a wide band under everything.
+const VARIANT_CLASSES: Record<JamoRole, LayoutClass[]> = {
+  initV: ["V", "VT"],
+  initH: ["H", "HT", "M", "MT"],
+  fin: ["VT", "HT", "MT"],
+};
+
+// Derived from the layout table rather than typed out, so a cell can't end up
+// shaped unlike the slot it feeds. The representative class is the first one
+// the context covers.
+function slotSize(cls: LayoutClass, which: "initial" | "final"): { w: number; h: number } {
+  const rect = which === "initial" ? DEFAULT_LAYOUT[cls].initial : DEFAULT_LAYOUT[cls].final!;
+  return { w: rect.w, h: rect.h };
+}
+
+export const JAMO_VARIANTS: JamoVariant[] = [
+  { role: "initV", label: "Initial · beside a vertical vowel", ...slotSize("V", "initial") },
+  { role: "initH", label: "Initial · above a wide vowel", ...slotSize("H", "initial") },
+  { role: "fin", label: "Final · batchim", ...slotSize("VT", "final") },
+];
+
+// Variants are named, not encoded: "ㄱ.fin" is not a single codepoint, so
+// unicodeFor() gives it no cmap entry and it can't be typed — exactly right
+// for something that only ever appears inside a composed syllable. And it is
+// kind "base", not "alternate", so the calt rotation in exportFont.ts leaves
+// it alone.
+export function variantName(jamo: string, role: JamoRole): string {
+  return `${jamo}.${role}`;
+}
+
+export function allVariantSlots(): { name: string; base: string; role: JamoRole; w: number; h: number }[] {
+  return JAMO_VARIANTS.flatMap((v) =>
+    BASIC_CONSONANTS.map((jamo) => ({
+      name: variantName(jamo, v.role),
+      base: jamo,
+      role: v.role,
+      w: v.w,
+      h: v.h,
+    }))
+  );
+}
+
+// Which context a given slot in a given class is, or null where no variant
+// exists (vowels, for now).
+function roleFor(cls: LayoutClass, slot: "initial" | "medial" | "final"): JamoRole | null {
+  if (slot === "final") return VARIANT_CLASSES.fin.includes(cls) ? "fin" : null;
+  if (slot === "initial") {
+    if (VARIANT_CLASSES.initV.includes(cls)) return "initV";
+    if (VARIANT_CLASSES.initH.includes(cls)) return "initH";
+  }
+  return null;
+}
+
 // Optical size correction, applied after a jamo has been fitted to its slot.
 //
 // A fit-inside rule scales by whichever axis runs out first, which is right
@@ -275,8 +357,15 @@ function splitRow(rect: Rect, parts: string[]): Rect[] {
 }
 
 export type JamoPlacement = {
-  jamo: string; // always one of BASIC_JAMO — never a compound
+  // The glyph name to actually draw: a context variant when one has been
+  // drawn, otherwise the basic jamo. Resolved here so the export and the
+  // preview can't disagree about which drawing a syllable uses.
+  jamo: string;
+  base: string; // always one of BASIC_JAMO — never a compound
   role: "initial" | "medial" | "final";
+  // Set only when `jamo` is a drawn variant. Consumers place a variant by its
+  // CELL and a basic jamo by its INK — see the comment in hangulCompose.ts.
+  variant?: JamoRole;
   rect: Rect; // where it goes in the unit em box, y down
   // Optical correction for this shape — see JAMO_OPTICAL_WEIGHT. Carried on
   // the placement so both consumers (export and preview) apply it without
@@ -287,7 +376,14 @@ export type JamoPlacement = {
 // The one function the rest of the app calls. Returns null for anything that
 // isn't a Hangul syllable, so callers can use it as their own "is this
 // composed?" test without a second range check.
-export function placementFor(codepoint: number, layout: LayoutTable = DEFAULT_LAYOUT): JamoPlacement[] | null {
+export function placementFor(
+  codepoint: number,
+  layout: LayoutTable = DEFAULT_LAYOUT,
+  // "does a glyph by this name exist and have ink" — supplied by whoever holds
+  // the document. Omitted means "no variants", which is what every caller saw
+  // before variants existed.
+  hasGlyph?: (name: string) => boolean
+): JamoPlacement[] | null {
   const parts = decompose(codepoint);
   if (!parts) return null;
   const shape = MEDIALS[parts.medial];
@@ -298,34 +394,38 @@ export function placementFor(codepoint: number, layout: LayoutTable = DEFAULT_LA
 
   const weightOf = (jamo: string) => JAMO_OPTICAL_WEIGHT[jamo] ?? 1;
 
+  // Resolves one slot to the drawing it should use. With no `hasGlyph` the
+  // answer is always the basic jamo, which is what every caller got before
+  // variants existed — so this stays backwards compatible by construction.
+  function place(base: string, slot: "initial" | "medial" | "final", rect: Rect): JamoPlacement {
+    const role = roleFor(cls!, slot);
+    const name = role ? variantName(base, role) : null;
+    if (role && name && hasGlyph?.(name)) {
+      // A drawn variant already has the size and weight it should have, so it
+      // gets none of the compensation the scaled fallback needs.
+      return { jamo: name, base, role: slot, variant: role, rect, weight: 1 };
+    }
+    return { jamo: base, base, role: slot, rect, weight: weightOf(base) };
+  }
+
   const initials = consonantParts(parts.initial);
   splitRow(box.initial, initials).forEach((rect, i) => {
-    out.push({ jamo: initials[i], role: "initial", rect, weight: weightOf(initials[i]) });
+    out.push(place(initials[i], "initial", rect));
   });
 
   if (shape.horizontal && box.medialH) {
-    out.push({
-      jamo: shape.horizontal,
-      role: "medial",
-      rect: box.medialH,
-      weight: weightOf(shape.horizontal),
-    });
+    out.push(place(shape.horizontal, "medial", box.medialH));
   }
   if (shape.vertical && box.medialV) {
     splitRow(box.medialV, shape.vertical).forEach((rect, i) => {
-      out.push({
-        jamo: shape.vertical![i],
-        role: "medial",
-        rect,
-        weight: weightOf(shape.vertical![i]),
-      });
+      out.push(place(shape.vertical![i], "medial", rect));
     });
   }
 
   if (parts.t !== 0 && box.final) {
     const finals = consonantParts(parts.final);
     splitRow(box.final, finals).forEach((rect, i) => {
-      out.push({ jamo: finals[i], role: "final", rect, weight: weightOf(finals[i]) });
+      out.push(place(finals[i], "final", rect));
     });
   }
 

@@ -6,7 +6,7 @@ import styles from "./page.module.css";
 import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokeKind, type StrokePoint } from "@/lib/strokes";
 import { nibPolygon, type Nib } from "@/lib/calligraphy";
 import { loadGlyphs, saveGlyphs, unicodeFor, nextAlternateName, type Glyph, type GlyphKind } from "@/lib/glyphs";
-import { BASIC_JAMO, coverage, frequentSyllables, isHangulChar } from "@/lib/hangul";
+import { BASIC_JAMO, allVariantSlots, coverage, frequentSyllables, isHangulChar } from "@/lib/hangul";
 import { HANGUL_EM, composeHangul, composeSyllable, jamoFrom } from "@/lib/hangulCompose";
 import { anyPointInPolygon, pointInPolygon } from "@/lib/geometry";
 import {
@@ -796,6 +796,26 @@ function compileDocument(
 // src/lib/charsets.ts.
 function cellAspectFor(script: ScriptId): number {
   return scriptById(script).aspect;
+}
+
+// A context variant is drawn in a cell shaped like the slot it will fill: the
+// batchim cell is a wide band, the beside-a-vertical-vowel cell is tall and
+// narrow. That is the entire mechanism by which variants keep their stroke
+// weight — composition maps cell to slot, so a cell already shaped like the
+// slot needs no squeezing. Draw a batchim in a square cell and you're back to
+// shrinking a drawing to fit, which is what variants exist to stop.
+// Returns the cell's size in CSS px for a slot. A variant cell is cellSize
+// times its slot's own fractions of the em, so every variant cell maps onto
+// its slot by the same factor — see JamoVariant.
+function cellSizeForSlot(
+  name: string,
+  script: ScriptId,
+  cellSize: number,
+  widthRatio: number
+): { width: number; height: number } {
+  const variant = allVariantSlots().find((v) => v.name === name);
+  if (variant) return { width: cellSize * variant.w, height: cellSize * variant.h };
+  return { width: cellSize * widthRatio, height: cellSize * cellAspectFor(script) };
 }
 
 // Note on "aspect 1" for Hangul: it makes the cell's OUTER box square, so the
@@ -1635,10 +1655,20 @@ export default function Home() {
   // filed by what they're actually written in.
   const slotScript = (name: string): ScriptId => (isHangulChar(name) ? "hangul" : "latin");
 
+  // The context variants, after the basics: a consonant drawn again for the
+  // place it actually sits, so composition can stop shrinking one drawing into
+  // every slot. Every one of them is optional — an undrawn variant falls back
+  // to the scaled basic, which is what the font does today.
+  const variantSlots: GridSlot[] =
+    activeScript === "hangul" && activeSetIds.has("hangul-jamo")
+      ? allVariantSlots().map((v): GridSlot => ({ name: v.name, kind: "base" }))
+      : [];
+
   const gridSlots: GridSlot[] = [
     ...CHARACTER_SETS.filter((s) => activeSetIds.has(s.id) && scriptOf(s) === activeScript)
       .flatMap((s) => s.chars)
       .map((name): GridSlot => ({ name, kind: "base" })),
+    ...variantSlots,
     ...taggedSlots.filter((s) => slotScript(s.name) === activeScript),
     ...extraGridSlots.filter((s) => slotScript(s.name) === activeScript),
   ];
@@ -1670,6 +1700,12 @@ export default function Home() {
     .join("");
   const hangulCoverage = useMemo(() => coverage([...drawnJamoKey]), [drawnJamoKey]);
   const jamoDrawn = [...drawnJamoKey].length;
+  // Variants are quality, not coverage — the syllable count must not move when
+  // one is drawn, so they're counted separately and never fed to coverage().
+  const variantNames = new Set(allVariantSlots().map((v) => v.name));
+  const variantsDrawn = glyphs.filter(
+    (g) => variantNames.has(g.name) && (g.strokeIds.length > 0 || (g.vectorShapeIds?.length ?? 0) > 0)
+  ).length;
   // First-run onboarding: with a totally empty project, the very first Grid
   // slot gets a highlight + hint bubble (see GridCell's firstStepHint) so
   // there's an obvious place to draw instead of 50+ equally-blank cells.
@@ -5387,8 +5423,8 @@ export default function Home() {
           })}
           {activeScript === "hangul" && (
             <span className={styles.scriptTabNote}>
-              {jamoDrawn} / {BASIC_JAMO.length} Jamo · {hangulCoverage.covered.toLocaleString("de-DE")} von{" "}
-              {hangulCoverage.total.toLocaleString("de-DE")} Silben
+              {jamoDrawn} / {BASIC_JAMO.length} Jamo · {variantsDrawn} / {allVariantSlots().length} Varianten ·{" "}
+              {hangulCoverage.covered.toLocaleString("de-DE")} von {hangulCoverage.total.toLocaleString("de-DE")} Silben
             </span>
           )}
         </div>
@@ -5488,11 +5524,12 @@ export default function Home() {
                     .filter((s): s is Stroke => Boolean(s))
                 : [];
               const needsFit = glyph && !(glyph.cellWidth && glyph.cellHeight);
-              const cellHeightPx = cellSize * cellAspectFor(activeScript);
+              const slotSize = cellSizeForSlot(name, activeScript, cellSize, glyph?.widthRatio ?? cellWidthRatio);
+              const cellHeightPx = slotSize.height;
               // A glyph's own widthRatio (dragged per-cell — see the width
               // handle in GridCell) overrides the global Width slider just
               // for this cell; everything else still follows cellWidthRatio.
-              const effectiveWidthPx = (glyph?.widthRatio ?? cellWidthRatio) * cellSize;
+              const effectiveWidthPx = slotSize.width;
               // The canvas's own measured size (once GridCell has reported
               // in) — not the nominal effectiveWidthPx/cellHeightPx, which the
               // label bar underneath already eats a few px of. Using the
@@ -5583,6 +5620,7 @@ export default function Home() {
                   onBearingsChange={(left, right) => handleBearingsChange(slot, left, right)}
                   lockBearings={lockBearings}
                   guides={scriptById(activeScript).guides}
+                  referenceChar={allVariantSlots().find((v) => v.name === name)?.base}
                   showReferenceGlyph={showReferenceGlyph}
                   onResize={(width, height) => handleCellResize(cellKey, width, height)}
                   widthPx={effectiveWidthPx}

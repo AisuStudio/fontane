@@ -4,7 +4,7 @@ import type { Metrics } from "./metrics";
 import type { VectorShape } from "./vectorShapes";
 import { flattenVectorShape } from "./contour";
 import { placementFor } from "./hangul";
-import { fitInSlot } from "./hangulCompose";
+import { partTransform } from "./hangulCompose";
 
 // A shared row-of-text pixel space for the Animate preview/export — not a
 // real font em, just fixed constants big enough that every glyph (Grid- or
@@ -138,7 +138,9 @@ export function layoutText(
     // Korean composes rather than looks up: 한 is one codepoint with no glyph
     // of its own, built on the spot from the jamo that were drawn. Standalone
     // jamo fall through to the ordinary path below — they DO have glyphs.
-    const syllable = placementFor(char.codePointAt(0)!);
+    // Same resolution the export does: a context variant when one has been
+    // drawn, the basic jamo otherwise.
+    const syllable = placementFor(char.codePointAt(0)!, undefined, (name) => baseByName.has(name));
     if (syllable) {
       const parts = syllable.map((p) => ({ placement: p, glyph: baseByName.get(p.jamo) }));
       if (parts.some((p) => !p.glyph)) {
@@ -166,17 +168,23 @@ export function layoutText(
         ]);
         if (!bbox) return; // jamo tagged but empty — skip this part, not the syllable
 
-        // Same rule the export uses (fitInSlot), just in line pixels instead
-        // of font units, so what you type is what you get.
-        const fit = fitInSlot(bbox, placement.rect, HANGUL_EM_SIZE, "uniform", placement.weight);
+        // Same rule the export uses (partTransform), just in line pixels
+        // instead of font units, so what you type is what you get — including
+        // the variant branch, which places by cell rather than by ink.
+        const t = partTransform(
+          placement,
+          bbox,
+          { contours: [], cellWidth: jamo!.cellWidth, cellHeight: jamo!.cellHeight },
+          HANGUL_EM_SIZE
+        );
         entries.push({
           kind: "glyph",
           glyph: jamo!,
           strokeSets: jamoStrokes,
           vectorShapes: jamoShapes,
-          scale: fit.sx,
-          offsetX: cursorX + fit.originX - bbox.xmin * fit.sx,
-          offsetY: HANGUL_EM_TOP + fit.originY - bbox.ymin * fit.sy,
+          scale: t.scale,
+          offsetX: cursorX + t.dx,
+          offsetY: HANGUL_EM_TOP + t.dy,
           // Every part after the first counts for zero typed characters and
           // zero width. The caret index (counted in characters, see
           // EditorPanel) then still lines up after a syllable made of three

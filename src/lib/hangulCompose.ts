@@ -15,7 +15,15 @@
 // at a time, in the preview.
 
 import type { CompiledDocument, CompiledGlyph } from "./exportFont";
-import { BASIC_JAMO, SYLLABLE_BASE, SYLLABLE_LAST, frequentSyllables, placementFor, type LayoutTable } from "./hangul";
+import {
+  BASIC_JAMO,
+  SYLLABLE_BASE,
+  SYLLABLE_LAST,
+  frequentSyllables,
+  placementFor,
+  type JamoPlacement,
+  type LayoutTable,
+} from "./hangul";
 
 // The composed em box, in the same y-down space the compiled contours already
 // use. Paired with emTransform() in exportFont.ts this maps 1:1 onto a
@@ -168,23 +176,86 @@ export function hangulGlyphName(codepoint: number): string {
   return `uni${codepoint.toString(16).toUpperCase().padStart(4, "0")}`;
 }
 
-export type JamoSource = Map<string, Command[][]>;
+// A drawing plus the cell it was made in. The cell matters for variants: they
+// are placed by their cell, not by their ink — see partTransform.
+export type JamoDrawing = { contours: Command[][]; cellWidth?: number; cellHeight?: number };
+export type JamoSource = Map<string, JamoDrawing>;
 
-// Pulls the drawn basic jamo out of a compiled document. Anything else in the
-// document (Latin, ligatures, half-finished cells with no contours) is
-// ignored — this is only ever asked for the 24 shapes composition needs.
+const VARIANT_NAME_RE = /^(.)\.(initV|initH|fin)$/u;
+
+function isJamoName(name: string): boolean {
+  if (BASIC_JAMO.includes(name)) return true;
+  const m = VARIANT_NAME_RE.exec(name);
+  return Boolean(m && BASIC_JAMO.includes(m[1]));
+}
+
+// Pulls the drawn jamo — basics and context variants alike — out of a compiled
+// document. Anything else (Latin, ligatures, half-finished cells with no
+// contours) is ignored.
 export function jamoFrom(doc: CompiledDocument): JamoSource {
   const source: JamoSource = new Map();
   for (const g of doc.glyphs) {
     if (g.kind !== "base" || !g.contours.length) continue;
-    if (!BASIC_JAMO.includes(g.name)) continue;
-    source.set(g.name, g.contours.map(parsePath));
+    if (!isJamoName(g.name)) continue;
+    source.set(g.name, {
+      contours: g.contours.map(parsePath),
+      cellWidth: g.cellWidth,
+      cellHeight: g.cellHeight,
+    });
   }
   return source;
 }
 
+// Only the 24 basics — the variants are a refinement on top and shouldn't
+// inflate the "how much is drawn" count.
 export function drawnJamoCount(doc: CompiledDocument): number {
-  return jamoFrom(doc).size;
+  return [...jamoFrom(doc).keys()].filter((n) => BASIC_JAMO.includes(n)).length;
+}
+
+// Where one part of a syllable goes, as a single scale plus an offset.
+//
+// The two branches are the whole point of context variants:
+//
+//   A VARIANT is placed by its CELL. It was drawn in a cell shaped like the
+//   slot it fills, so mapping cell → slot is a near-identity — and because
+//   every cell derives from the same cellSize, every part of a syllable comes
+//   out at nearly the same scale, which is what keeps the stroke weight even.
+//
+//   A BASIC jamo is placed by its INK, fitted into the slot. That's the
+//   fallback, and it's exactly where the weight problem lives: a jamo squeezed
+//   into a batchim band comes out at ~56% scale, and its strokes with it.
+export function partTransform(
+  placement: JamoPlacement,
+  ink: InkBounds,
+  drawing: JamoDrawing,
+  emSize: number,
+  fit: FitMode = "uniform"
+): { scale: number; dx: number; dy: number } {
+  const rect = placement.rect;
+  if (placement.variant && drawing.cellWidth && drawing.cellHeight) {
+    const dstW = rect.w * emSize;
+    const dstH = rect.h * emSize;
+    // Cell-to-slot only pays off when the cell really is shaped like the slot.
+    // One context can cover several layout classes whose slots differ — the
+    // initial beside a vertical vowel is 0.52 x 0.78 of the em without a
+    // batchim and 0.50 x 0.54 with one — and forcing a tall cell into the
+    // shorter slot shrinks it to 60% of what the ink fit would have given.
+    // That would make a drawn variant WORSE than no variant, so a cell whose
+    // proportions are off by more than a sixth falls back to the ink fit.
+    const ratio = drawing.cellHeight / drawing.cellWidth / (rect.h / rect.w);
+    if (Math.abs(Math.log(ratio)) < 0.16) {
+      // Contain, not fill: the cell is only ever shrunk to fit, never
+      // stretched, so a jamo can't be distorted by a slot it nearly matches.
+      const scale = Math.min(dstW / drawing.cellWidth, dstH / drawing.cellHeight);
+      return {
+        scale,
+        dx: rect.x * emSize + (dstW - drawing.cellWidth * scale) / 2,
+        dy: rect.y * emSize + (dstH - drawing.cellHeight * scale) / 2,
+      };
+    }
+  }
+  const f = fitInSlot(ink, rect, emSize, fit, placement.weight);
+  return { scale: f.sx, dx: f.originX - ink.xmin * f.sx, dy: f.originY - ink.ymin * f.sy };
 }
 
 // One syllable's contours, in the em box. Returns null when any jamo it needs
@@ -196,15 +267,17 @@ export function composeSyllable(
   fit: FitMode = "uniform",
   layout?: LayoutTable
 ): string[] | null {
-  const placements = placementFor(codepoint, layout);
+  const placements = placementFor(codepoint, layout, (name) => source.has(name));
   if (!placements) return null;
   const out: string[] = [];
   for (const p of placements) {
-    const contours = source.get(p.jamo);
-    if (!contours) return null;
-    const bbox = boundsOf(contours);
+    const drawing = source.get(p.jamo);
+    if (!drawing) return null;
+    const bbox = boundsOf(drawing.contours);
     if (!bbox) return null;
-    for (const cmds of applyTransform(contours, fitTransform(bbox, p.rect, fit, p.weight))) {
+    const t = partTransform(p, bbox, drawing, HANGUL_EM, fit);
+    const apply = { x: (x: number) => x * t.scale + t.dx, y: (y: number) => y * t.scale + t.dy };
+    for (const cmds of applyTransform(drawing.contours, apply)) {
       out.push(serializePath(cmds));
     }
   }
@@ -214,11 +287,11 @@ export function composeSyllable(
 // A jamo as its own glyph in the em box — same box as the syllables, so a
 // standalone ㄱ and the ㄱ inside 가 come out at a consistent weight.
 function composeStandalone(jamo: string, source: JamoSource): string[] | null {
-  const contours = source.get(jamo);
-  if (!contours) return null;
-  const bbox = boundsOf(contours);
+  const drawing = source.get(jamo);
+  if (!drawing) return null;
+  const bbox = boundsOf(drawing.contours);
   if (!bbox) return null;
-  return applyTransform(contours, fitTransform(bbox, STANDALONE_RECT, "uniform")).map(serializePath);
+  return applyTransform(drawing.contours, fitTransform(bbox, STANDALONE_RECT, "uniform")).map(serializePath);
 }
 
 // A syllable expressed as references to the jamo glyphs instead of copies of
@@ -255,13 +328,13 @@ export function composeSyllableParts(
   fit: FitMode = "uniform",
   layout?: LayoutTable
 ): HangulPart[] | null {
-  const placements = placementFor(codepoint, layout);
+  const placements = placementFor(codepoint, layout, (name) => source.has(name));
   if (!placements) return null;
   const parts: HangulPart[] = [];
   for (const p of placements) {
-    const contours = source.get(p.jamo);
-    if (!contours) return null;
-    const bbox = boundsOf(contours);
+    const drawing = source.get(p.jamo);
+    if (!drawing) return null;
+    const bbox = boundsOf(drawing.contours);
     if (!bbox) return null;
     const target = fitTransform(bbox, p.rect, fit, p.weight);
     const standalone = fitTransform(bbox, STANDALONE_RECT, "uniform");
@@ -316,8 +389,9 @@ export function composeHangul(doc: CompiledDocument, options: ComposeOptions = {
   // cells are Latin-sized canvases, and re-emitting them in the em box is
   // what makes a standalone ㄱ match the ㄱ inside a syllable.
   const jamoNames = new Set(source.keys());
+  const standalone = [...source.keys()].filter((n) => BASIC_JAMO.includes(n));
   const rest = doc.glyphs.filter((g) => !jamoNames.has(g.name));
-  for (const jamo of source.keys()) {
+  for (const jamo of standalone) {
     const contours = composeStandalone(jamo, source);
     if (!contours) continue;
     composed.push({

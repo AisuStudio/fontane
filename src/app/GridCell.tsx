@@ -610,6 +610,10 @@ type Props = {
   // "em" is Hangul's square, which has no baseline and no bearings at all —
   // every syllable advances by one full em, so there is nothing to drag.
   guides?: "baseline" | "em";
+  // What the faint backdrop should show. Defaults to `label`, which is right
+  // everywhere except a context-variant cell: its label is "ㄱ.fin", and the
+  // shape to orient against is the plain ㄱ.
+  referenceChar?: string;
   // Faint backdrop letterform (Comic Sans) behind the guides/ink, sized off
   // this cell's own metrics — an orientation aid, not part of the glyph
   // itself; never persisted, never exported. See src/lib/referenceGlyph.ts.
@@ -667,6 +671,7 @@ export default function GridCell({
   onBearingsChange,
   lockBearings = false,
   guides = "baseline",
+  referenceChar,
   showReferenceGlyph = false,
   onResize,
   widthPx,
@@ -694,6 +699,7 @@ export default function GridCell({
   const onBearingsChangeRef = useRef(onBearingsChange);
   const lockBearingsRef = useRef(lockBearings);
   const guidesRef = useRef(guides);
+  const referenceCharRef = useRef(referenceChar ?? label);
   const showReferenceGlyphRef = useRef(showReferenceGlyph);
   const onResizeRef = useRef(onResize);
   const draggingRef = useRef<"left" | "right" | null>(null);
@@ -784,6 +790,7 @@ export default function GridCell({
   onBearingsChangeRef.current = onBearingsChange;
   lockBearingsRef.current = lockBearings;
   guidesRef.current = guides;
+  referenceCharRef.current = referenceChar ?? label;
   showReferenceGlyphRef.current = showReferenceGlyph;
   onResizeRef.current = onResize;
   cellDimsRef.current = { width: widthPx, height: heightPx };
@@ -865,7 +872,7 @@ export default function GridCell({
           metricsRef.current,
           bearingsRef.current.leftBearing,
           bearingsRef.current.rightBearing,
-          label,
+          referenceCharRef.current,
           guidesRef.current
         );
       }
@@ -1940,7 +1947,7 @@ export default function GridCell({
       drawGuides(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing, lockBearings);
     }
     if (showReferenceGlyph && strokes.length === 0 && vectorShapes.length === 0) {
-      drawReferenceGlyph(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing, label, guides);
+      drawReferenceGlyph(ctx, canvas.clientWidth, canvas.clientHeight, metrics, leftBearing, rightBearing, referenceChar ?? label, guides);
     }
     for (const s of strokes) {
       const color = selectedIdsRef.current.has(s.id) ? SELECTED_COLOR : CELL_COLOR;
@@ -1950,7 +1957,7 @@ export default function GridCell({
     // editingShapeIdRef is guaranteed null by the guard above, so this only
     // ever draws the resting state (every shape's outline, no handles).
     if (tool === "vector") drawVectorAffordances(ctx, vectorShapes, null);
-  }, [strokes, vectorShapes, tool, metrics, leftBearing, rightBearing, lockBearings, guides, strokeOptions, nib, showReferenceGlyph, label]);
+  }, [strokes, vectorShapes, tool, metrics, leftBearing, rightBearing, lockBearings, guides, strokeOptions, nib, showReferenceGlyph, label, referenceChar]);
 
   const unicode = unicodeFor(label);
 
