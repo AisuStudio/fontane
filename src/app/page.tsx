@@ -2056,6 +2056,33 @@ export default function Home() {
     return out;
   }, [exportDoc, activeScript]);
 
+  // Whether this script's letters currently carry DIFFERENT stroke weights
+  // relative to their own size — which is what a reader sees, and what the
+  // Cell size slider quietly causes.
+  //
+  // Rendered width is settings.size x widthScale x (currentCell / anchorCell),
+  // so a glyph's weight relative to its cell is widthScale / anchorCell. Even
+  // means that ratio matches everywhere. Testing the ratio rather than the
+  // anchor is what lets the offer disappear once it has been taken up.
+  const mixedDrawWeights = useMemo(() => {
+    const byId = new Map(completedRef.current.map((s) => [s.id, s]));
+    const seen = new Set<number>();
+    for (const g of glyphs) {
+      if (g.strokeIds.length === 0 || !g.cellWidth || !g.cellHeight) continue;
+      if (slotScript(g.name) !== activeScript) continue;
+      const anchor = Math.sqrt(g.cellWidth * g.cellHeight);
+      for (const id of g.strokeIds) {
+        const s = byId.get(id);
+        if (!s) continue;
+        seen.add(Math.round(((s.widthScale ?? 1) / anchor) * 1e5));
+        if (seen.size > 1) return true;
+      }
+    }
+    return false;
+    // completedRef is a ref by design (strokes don't drive renders); glyphs
+    // changing is what re-runs this, and every write to one writes the other.
+  }, [glyphs, activeScript]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -4269,6 +4296,53 @@ export default function Home() {
     });
   }
 
+  // Undo the one thing the Cell size slider silently does to stroke weight.
+  //
+  // A glyph stores the cell size it was drawn at, and display rescales it to
+  // whatever the cell measures now — points AND width (anchorSpaceWidthScale).
+  // So the pen's weight RELATIVE TO THE LETTER is fixed at drawing time by the
+  // cell size: draw one syllable at cell 80 and the next at 210 and the first
+  // one keeps a 2.6x heavier stroke forever, through every export. Nothing in
+  // the UI says so, and for a font — where one weight across the alphabet is
+  // the whole job — it is the most expensive kind of invisible.
+  //
+  // This rewrites each glyph's widthScale to A/reference, which is the value
+  // that would have made every glyph weigh the same regardless of the cell it
+  // was drawn in. Geometry is untouched; only thickness moves.
+  //
+  // It overwrites a widthScale the Scale tool may have baked deliberately —
+  // there is no way to tell the two apart after the fact — so it is a button
+  // someone presses, never something that runs on its own. Undo covers it.
+  function evenOutStrokeWeights() {
+    const reference = cellSize;
+    const mine = glyphs.filter(
+      (g) => slotScript(g.name) === activeScript && g.cellWidth && g.cellHeight && g.strokeIds.length > 0
+    );
+    const wanted = new Map<string, number>();
+    for (const g of mine) {
+      // Geometric mean of the anchor's two axes — the same convention
+      // anchorSpaceWidthScale uses to turn a two-axis rescale into one width
+      // factor, so this cancels it exactly instead of approximately.
+      const anchor = Math.sqrt((g.cellWidth as number) * (g.cellHeight as number));
+      for (const id of g.strokeIds) wanted.set(id, anchor / reference);
+    }
+    if (wanted.size === 0) return;
+    const changed = completedRef.current.some(
+      (s) => wanted.has(s.id) && Math.abs((s.widthScale ?? 1) - (wanted.get(s.id) as number)) > 1e-6
+    );
+    if (!changed) return;
+    pushUndoSnapshot();
+    completedRef.current = completedRef.current.map((s) =>
+      wanted.has(s.id) ? { ...s, widthScale: wanted.get(s.id) as number } : s
+    );
+    outlinesRef.current = completedRef.current.map((s) => strokeOutline(s, settingsRef.current));
+    saveStrokes(completedRef.current);
+    // Strokes live in a ref, so nothing re-renders on its own — and the count
+    // is unchanged, so setStrokeCount wouldn't either. Same handle
+    // handleGridStrokesChange uses: a fresh glyphs array.
+    setGlyphs((gs) => [...gs]);
+  }
+
   // GridCell's Vector tool reports this cell's ENTIRE shape list on every
   // commit (anchor placed, path closed, handle dragged, anchor/shape deleted)
   // rather than a delta — the cell owns the live anchors, this owns
@@ -6148,6 +6222,20 @@ export default function Home() {
                   />
                   <span className={styles.val}>{cellSize}</span>
                 </label>
+                {/* Only offered once it can actually have happened: letters
+                    drawn at two different cell sizes carry two different
+                    stroke weights, and nothing else in the UI admits that. */}
+                {mixedDrawWeights && (
+                  <>
+                    <p className={styles.settingsNote}>
+                      Some letters were drawn at a different cell size, so they carry a heavier or lighter stroke than
+                      the rest. Geometry stays as drawn.
+                    </p>
+                    <button type="button" className={styles.clearBtn} onClick={evenOutStrokeWeights}>
+                      Even out stroke weights
+                    </button>
+                  </>
+                )}
                 <label className={styles.sliderRow}>
                   <span>Width</span>
                   <input
