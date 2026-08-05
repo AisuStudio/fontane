@@ -529,37 +529,43 @@
   cursor: default;
 }
 
-/* Script tabs (Latin | Hangul), a second row under the view tabs. Smaller
-   and flatter than .viewTab on purpose: this is a switch inside the Grid,
-   not a switch between views, and two rows of identical folder tabs would
-   read as one confused navigation. */
+/* Script tabs (Latin | Hangul), a second row under the view tabs. Flat, not
+   folder-shaped: this is a switch inside the Grid, not a switch between
+   views, and two rows of identical folder tabs would read as one confused
+   navigation. The shape carries that distinction — the size no longer does.
+   A row you use on every visit has to be readable first, so these sit a
+   notch above .viewTab and clear it by a full --sp-md instead of hugging it. */
 .scriptTabs {
   display: flex;
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
-  padding: var(--sp-xs) var(--sp-sm) 0;
+  padding: var(--sp-md) var(--sp-sm) 0;
 }
 
 .scriptTab {
   font-family: var(--font-sans);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 400;
-  padding: 3px 12px;
+  padding: 5px 14px;
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--color-hazelnut);
+  /* Hazelnut on vanilla is two neighbours on the same value step — legible
+     as a label, not as something you are meant to click. */
+  color: var(--color-blueberry);
+  opacity: 0.65;
   cursor: pointer;
 }
 
 .scriptTab:hover:not(.scriptTabActive) {
-  color: var(--color-blueberry);
+  opacity: 1;
 }
 
 .scriptTabActive {
-  background: var(--color-hazelnut);
+  background: var(--color-blueberry);
   color: var(--color-vanilla);
+  opacity: 1;
   font-weight: 700;
   cursor: default;
 }
@@ -569,9 +575,10 @@
    the surprising part. */
 .scriptTabNote {
   font-family: var(--font-sans);
-  font-size: 0.6875rem;
-  color: var(--color-hazelnut);
-  margin-left: var(--sp-sm);
+  font-size: 0.75rem;
+  color: var(--color-blueberry);
+  opacity: 0.6;
+  margin-left: var(--sp-md);
 }
 
 .canvasWrap {
@@ -1106,11 +1113,14 @@
 
 .gridJump {
   font-family: var(--font-sans);
-  font-size: 11px;
+  font-size: 0.75rem;
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--color-hazelnut);
+  /* Same value as .scriptTabNote, a step under the tabs above: the row you
+     switch with should outrank the row you jump with. */
+  color: var(--color-blueberry);
+  opacity: 0.6;
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -1118,6 +1128,7 @@
 
 .gridJump:hover {
   color: var(--color-grape);
+  opacity: 1;
 }
 
 /* Syllable preview — composed from the drawn jamo, never stored anywhere.
