@@ -16,13 +16,20 @@
 
 import type { CompiledDocument, CompiledGlyph } from "./exportFont";
 import {
+  BASIC_CONSONANTS,
   BASIC_JAMO,
+  BASIC_VOWELS,
+  DEFAULT_LAYOUT,
+  JAMO_OPTICAL_WEIGHT,
   SYLLABLE_BASE,
   SYLLABLE_LAST,
+  emBox,
   frequentSyllables,
+  layoutClassFor,
   placementFor,
   type JamoPlacement,
   type LayoutTable,
+  type Rect,
 } from "./hangul";
 
 // The composed em box, in the same y-down space the compiled contours already
@@ -256,6 +263,44 @@ export function partTransform(
   }
   const f = fitInSlot(ink, rect, emSize, fit, placement.weight);
   return { scale: f.sx, dx: f.originX - ink.xmin * f.sx, dy: f.originY - ink.ymin * f.sy };
+}
+
+// The slots a basic jamo actually has to fit into. Consonants get all three
+// contexts; a vowel keeps to the orientation it is written in.
+function contextRectsFor(jamo: string): Rect[] {
+  if (BASIC_CONSONANTS.includes(jamo)) {
+    return [DEFAULT_LAYOUT.V.initial, DEFAULT_LAYOUT.H.initial, DEFAULT_LAYOUT.VT.final!];
+  }
+  if (!BASIC_VOWELS.includes(jamo)) return [];
+  const cls = layoutClassFor(jamo, false);
+  const rect = cls === "V" ? DEFAULT_LAYOUT.V.medialV : DEFAULT_LAYOUT.H.medialH;
+  return rect ? [rect] : [];
+}
+
+// How much of its drawn stroke weight a basic jamo keeps once it is composed.
+//
+// 1.0 is "as heavy as if it had been drawn inside a syllable" — the reference
+// is not arbitrary: a syllable cell maps onto the em directly, so a stroke
+// drawn there arrives at full width, while a jamo drawn alone is fitted by its
+// ink into a slot and takes its stroke weight down with it. fitInSlot's factor
+// depends on the jamo's own SHAPE as well as the slot, which is exactly why
+// this is a range and not a number, and why no single slider can flatten it.
+//
+// Lives here rather than in the component for the same reason fitInSlot is
+// exported: two copies of this arithmetic would drift, and the drift would
+// show up as the badge lying about the font.
+export function composedScaleRange(jamo: string, drawing: JamoDrawing): { min: number; max: number } | null {
+  if (!drawing.cellWidth || !drawing.cellHeight) return null;
+  const ink = boundsOf(drawing.contours);
+  if (!ink) return null;
+  const rects = contextRectsFor(jamo);
+  if (rects.length === 0) return null;
+  const emPx = emBox(drawing.cellWidth, drawing.cellHeight).size;
+  const weight = JAMO_OPTICAL_WEIGHT[jamo] ?? 1;
+  const scales = rects.map(
+    (r) => (fitInSlot(ink, r, HANGUL_EM, "uniform", weight).sx * emPx) / HANGUL_EM
+  );
+  return { min: Math.min(...scales), max: Math.max(...scales) };
 }
 
 // One syllable's contours, in the em box. Returns null when any jamo it needs

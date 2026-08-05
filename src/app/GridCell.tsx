@@ -649,6 +649,11 @@ type Props = {
   // plus a small callout. Disappears on its own once any glyph exists
   // anywhere, since the parent stops passing it — no dismiss state needed.
   firstStepHint?: string;
+  // A short read-out in the label bar — today "composes at 29-55%", the share
+  // of its drawn stroke weight this jamo keeps once it is fitted into a
+  // syllable's slots. Sits next to the codepoint rather than over the drawing:
+  // it is a fact about the cell, not an instruction in it.
+  note?: string;
 };
 
 export default function GridCell({
@@ -679,6 +684,7 @@ export default function GridCell({
   onWidthCommit,
   onWidthReset,
   firstStepHint,
+  note,
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -2026,6 +2032,7 @@ export default function GridCell({
       <canvas ref={canvasRef} className={styles.gridCellCanvas} tabIndex={-1} style={{ outline: "none" }} />
       <div className={styles.gridCellLabelBar}>
         <span className={styles.gridCellLabelChar}>{label}</span>
+        {note && <span className={styles.gridCellLabelNote}>{note}</span>}
         {unicode && <span className={styles.gridCellLabelUnicode}>{unicode}</span>}
       </div>
       {/* Always rendered (never conditional on whether a glyph exists) —

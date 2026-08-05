@@ -1142,6 +1142,79 @@
   opacity: 1;
 }
 
+/* The step bar. Chips, not folder tabs: the script row above already uses the
+   flat-pill idiom for "switch what you're looking at", and a third row of a
+   third shape would be a third navigation to learn. */
+.gridSteps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-sm);
+  align-items: center;
+  padding: var(--sp-sm) var(--sp-sm) 0;
+}
+
+.gridStep {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-blueberry);
+  opacity: 0.65;
+  cursor: pointer;
+}
+
+.gridStep:hover:not(.gridStepActive) {
+  opacity: 1;
+  border-color: var(--color-hazelnut);
+}
+
+.gridStepActive {
+  background: var(--color-blueberry);
+  border-color: var(--color-blueberry);
+  color: var(--color-vanilla);
+  opacity: 1;
+  cursor: default;
+}
+
+/* The step number carries the recommended order on its own — that is the
+   entire "do this first" message, and it needs no badge. */
+.gridStepIndex {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  opacity: 0.55;
+}
+
+.gridStepLabel {
+  font-weight: 700;
+}
+
+.gridStepMeta {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+/* Where the flow points next — not where you are allowed to click. */
+.gridStepNext {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-grape);
+  font-weight: 700;
+}
+
+.gridStepGoal {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  color: var(--color-blueberry);
+  opacity: 0.6;
+  margin: var(--sp-xs) var(--sp-sm) 0;
+}
+
 .gridJumpsLabel {
   font-family: var(--font-sans);
   font-size: 0.75rem;
@@ -1355,6 +1428,16 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Pushed against the codepoint at the right end of the bar, in lemon rather
+   than hazelnut: this is the one number in the cell that says something is
+   off, and it should be findable by scanning the column. */
+.gridCellLabelNote {
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--color-lemon);
+  white-space: nowrap;
 }
 
 /* First-run onboarding: the one empty cell the user should draw in first.

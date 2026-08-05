@@ -17,7 +17,8 @@ import {
   isHangulChar,
   variantName,
 } from "@/lib/hangul";
-import { HANGUL_EM, composeHangul, composeSyllable, jamoFrom } from "@/lib/hangulCompose";
+import { HANGUL_STEPS, recommendedStepId } from "@/lib/hangulSteps";
+import { HANGUL_EM, composeHangul, composeSyllable, composedScaleRange, jamoFrom } from "@/lib/hangulCompose";
 import { anyPointInPolygon, pointInPolygon } from "@/lib/geometry";
 import {
   applyBrush,
@@ -1636,35 +1637,6 @@ export default function Home() {
   // with [] and clobber whatever was already in storage before the real data arrives.
   const [glyphs, setGlyphs] = useState<Glyph[]>(() => loadGlyphs());
 
-  // Every glyph already tagged (e.g. via Free's Assign panel) gets its own
-  // Grid cell automatically — no need to re-declare it via "Add Glyph" just
-  // to see/edit it here. That includes base glyphs whose name no active
-  // character set covers: a freely-named symbol like "Zeich_skull" (no
-  // unicode, since the name isn't a single codepoint) otherwise existed only
-  // in Free and was invisible in Grid. Base glyphs an active set DOES cover
-  // are skipped — that set already contributes their cell, and a second one
-  // would collide on the same key, the same reason addGridSlot() refuses
-  // them. Deduped against extraGridSlots by name+kind so a manually-added
-  // not-yet-drawn slot doesn't collide with the same slot once a glyph
-  // starts existing for it (same key either way).
-  const extraSlotKeys = new Set(extraGridSlots.map((s) => `${s.kind}:${s.name}`));
-  const activeSetChars = new Set(
-    CHARACTER_SETS.filter((s) => activeSetIds.has(s.id)).flatMap((s) => s.chars)
-  );
-  const taggedSlots: GridSlot[] = glyphs
-    .filter(
-      (g) =>
-        !extraSlotKeys.has(`${g.kind}:${g.name}`) && (g.kind !== "base" || !activeSetChars.has(g.name))
-    )
-    .map((g): GridSlot => ({ name: g.name, kind: g.kind, components: g.components, alternateOf: g.alternateOf }));
-
-  // Cells are per script, not one flat wall: Latin and Hangul cells have
-  // different proportions and different guides, so they can't share a grid
-  // even when the same font contains both. Fixed sets carry their script
-  // explicitly; user-created slots (tagged in Free, or added by hand) are
-  // filed by what they're actually written in.
-  const slotScript = (name: string): ScriptId => (isHangulChar(name) ? "hangul" : "latin");
-
   // The context variants, after the basics: a consonant drawn again for the
   // place it actually sits, so composition can stop shrinking one drawing into
   // every slot. Every one of them is optional — an undrawn variant falls back
@@ -1683,11 +1655,65 @@ export default function Home() {
       ? harvestSyllables().map((s): GridSlot => ({ name: s.char, kind: "base" }))
       : [];
 
+  // Every glyph already tagged (e.g. via Free's Assign panel) gets its own
+  // Grid cell automatically — no need to re-declare it via "Add Glyph" just
+  // to see/edit it here. That includes base glyphs whose name no active
+  // character set covers: a freely-named symbol like "Zeich_skull" (no
+  // unicode, since the name isn't a single codepoint) otherwise existed only
+  // in Free and was invisible in Grid. Base glyphs an active set DOES cover
+  // are skipped — that set already contributes their cell, and a second one
+  // would collide on the same key, the same reason addGridSlot() refuses
+  // them. Deduped against extraGridSlots by name+kind so a manually-added
+  // not-yet-drawn slot doesn't collide with the same slot once a glyph
+  // starts existing for it (same key either way).
+  const extraSlotKeys = new Set(extraGridSlots.map((s) => `${s.kind}:${s.name}`));
+  const activeSetChars = new Set(
+    CHARACTER_SETS.filter((s) => activeSetIds.has(s.id)).flatMap((s) => s.chars)
+  );
+  // Slots that aren't in any character set but are contributed above anyway —
+  // the 14 practice syllables and the 42 variants. Without this a drawn 각 or
+  // ㄱ.fin satisfies isHangulChar, so it came back a SECOND time as a tagged
+  // slot: two live cells for one glyph, colliding on the same React key. It
+  // went unnoticed while everything shared one long scroll; with steps the
+  // twin lands on a different page from the original.
+  const ownedSlotKeys = new Set(
+    [...syllableSlots, ...variantSlots].map((s) => `${s.kind}:${s.name}`)
+  );
+  const taggedSlots: GridSlot[] = glyphs
+    .filter(
+      (g) =>
+        !extraSlotKeys.has(`${g.kind}:${g.name}`) &&
+        !ownedSlotKeys.has(`${g.kind}:${g.name}`) &&
+        (g.kind !== "base" || !activeSetChars.has(g.name))
+    )
+    .map((g): GridSlot => ({ name: g.name, kind: g.kind, components: g.components, alternateOf: g.alternateOf }));
+
+  // Cells are per script, not one flat wall: Latin and Hangul cells have
+  // different proportions and different guides, so they can't share a grid
+  // even when the same font contains both. Fixed sets carry their script
+  // explicitly; user-created slots (tagged in Free, or added by hand) are
+  // filed by what they're actually written in.
+  const slotScript = (name: string): ScriptId => (isHangulChar(name) ? "hangul" : "latin");
+
+  // The cells that come from a switched-on character set — the 24 jamo for
+  // Hangul, A-Z and friends for Latin. Named rather than inlined because
+  // gridGroups below has to point at this list's first cell specifically: it
+  // used to read gridSlots[0], which meant "whatever happens to be first",
+  // and putting the syllables in front would have labelled a syllable "Jamo".
+  const setSlots: GridSlot[] = CHARACTER_SETS.filter(
+    (s) => activeSetIds.has(s.id) && scriptOf(s) === activeScript
+  )
+    .flatMap((s) => s.chars)
+    .map((name): GridSlot => ({ name, kind: "base" }));
+
+  // Syllables first. They are the optional part — the 24 jamo are what covers
+  // all 11.172 syllables — but they are where the stroke weight is set, and a
+  // jamo drawn alone can only be scaled INTO its slot afterwards, weight and
+  // all. Whatever is drawn first decides what everything else is measured
+  // against, so it had better be the thing that isn't distorted.
   const gridSlots: GridSlot[] = [
-    ...CHARACTER_SETS.filter((s) => activeSetIds.has(s.id) && scriptOf(s) === activeScript)
-      .flatMap((s) => s.chars)
-      .map((name): GridSlot => ({ name, kind: "base" })),
     ...syllableSlots,
+    ...setSlots,
     ...variantSlots,
     ...taggedSlots.filter((s) => slotScript(s.name) === activeScript),
     ...extraGridSlots.filter((s) => slotScript(s.name) === activeScript),
@@ -1709,7 +1735,6 @@ export default function Home() {
   const gridGroups =
     variantSlots.length > 0
       ? [
-          { id: "grp-basic", label: "Jamo · the basics", example: "ㄱ", count: BASIC_JAMO.length, first: gridSlots[0]?.name },
           {
             id: "grp-syllables",
             label: "Syllables · draw these whole",
@@ -1717,6 +1742,7 @@ export default function Home() {
             count: syllableSlots.length,
             first: syllableSlots[0]?.name,
           },
+          { id: "grp-basic", label: "Jamo · the basics", example: "ㄱ", count: BASIC_JAMO.length, first: setSlots[0]?.name },
           ...JAMO_VARIANTS.map((v) => ({
             id: `grp-${v.role}`,
             label: v.label,
@@ -1768,6 +1794,66 @@ export default function Home() {
   const variantsDrawn = glyphs.filter(
     (g) => variantNames.has(g.name) && (g.strokeIds.length > 0 || (g.vectorShapeIds?.length ?? 0) > 0)
   ).length;
+  // Same rule for the practice syllables, and the same reason: drawing 각 must
+  // not move the 11.172 either — a syllable that composes is already covered.
+  const syllableNames = new Set(syllableSlots.map((s) => s.name));
+  const syllablesDrawn = glyphs.filter(
+    (g) => syllableNames.has(g.name) && (g.strokeIds.length > 0 || (g.vectorShapeIds?.length ?? 0) > 0)
+  ).length;
+
+  // The grid as a sequence. Steps only exist where the groups do (Hangul with
+  // the Jamo set on); everywhere else gridSteps is empty, visibleGridSlots IS
+  // gridSlots, and nothing about Latin changes.
+  //
+  // The whole split is a filter on the render's INPUT — no per-group
+  // containers, no restructured map. Everything downstream (gridHeadingFor,
+  // cellSizeForSlot, scrollGroupIntoView) addresses cells by name, so it
+  // neither knows nor cares that fewer of them are on screen.
+  const gridSteps =
+    gridGroups.length > 0
+      ? HANGUL_STEPS.map((step) => ({
+          ...step,
+          slots:
+            step.id === "step-syllables"
+              ? syllableSlots
+              : step.id === "step-variants"
+                ? variantSlots
+                : // The jamo step also carries anything hand-made: tagged
+                  // glyphs and manually added slots are letters, and letters
+                  // belong with the letters. That also keeps the union of all
+                  // steps equal to gridSlots, which is the invariant that
+                  // stops a cell from vanishing.
+                  [
+                    ...setSlots,
+                    ...taggedSlots.filter((s) => slotScript(s.name) === activeScript),
+                    ...extraGridSlots.filter((s) => slotScript(s.name) === activeScript),
+                  ],
+          done:
+            step.id === "step-syllables" ? syllablesDrawn : step.id === "step-variants" ? variantsDrawn : jamoDrawn,
+          total:
+            step.id === "step-syllables"
+              ? syllableSlots.length
+              : step.id === "step-variants"
+                ? variantSlots.length
+                : BASIC_JAMO.length,
+        }))
+      : [];
+  const recommendedStep = recommendedStepId(
+    Object.fromEntries(gridSteps.map((s) => [s.id, { done: s.done, total: s.total }]))
+  );
+  // null = follow the recommendation. Clicking a chip pins it, so finishing a
+  // step doesn't yank the grid out from under someone who is still working in
+  // it. Deliberately not persisted, like topMode/drawStyle/activeScript: the
+  // recommendation is a better landing place than a step you already finished.
+  const [gridStep, setGridStep] = useState<string | null>(null);
+  const activeStep = gridSteps.find((s) => s.id === (gridStep ?? recommendedStep)) ?? gridSteps[0] ?? null;
+  const visibleGridSlots = activeStep ? activeStep.slots : gridSlots;
+  // Arriving at a new step halfway down the previous one's scroll shows a
+  // random row of cells and no heading.
+  const gridScrollRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (gridScrollRef.current) gridScrollRef.current.scrollTop = 0;
+  }, [activeStep?.id]);
   // First-run onboarding: with a totally empty project, the very first Grid
   // slot gets a highlight + hint bubble (see GridCell's firstStepHint) so
   // there's an obvious place to draw instead of 50+ equally-blank cells.
@@ -1780,8 +1866,8 @@ export default function Home() {
   const [firstStepReady, setFirstStepReady] = useState(false);
   useEffect(() => setFirstStepReady(true), []);
   const firstStepCellKey =
-    firstStepReady && glyphs.length === 0 && gridSlots.length > 0
-      ? `${gridSlots[0].kind}:${gridSlots[0].name}`
+    firstStepReady && glyphs.length === 0 && visibleGridSlots.length > 0
+      ? `${visibleGridSlots[0].kind}:${visibleGridSlots[0].name}`
       : null;
   const taggedIdsRef = useRef<Set<string>>(new Set());
   const taggedIdsVectorRef = useRef<Set<string>>(new Set());
@@ -1950,6 +2036,25 @@ export default function Home() {
     }
     return out;
   }, [exportDoc, syllableSeed]);
+
+  // What each drawn jamo keeps of its stroke weight once it is composed. The
+  // honest counterpart to the Syllables step: a jamo drawn alone is fitted by
+  // its ink into a slot, and the factor depends on its own shape as much as on
+  // the slot — so it is a range per cell, and no single control can flatten it.
+  // Reads the same compiled document the syllable preview does.
+  const jamoWeightNotes = useMemo(() => {
+    if (!exportDoc || activeScript !== "hangul") return new Map<string, string>();
+    const source = jamoFrom(exportDoc);
+    const out = new Map<string, string>();
+    for (const [name, drawing] of source) {
+      const range = composedScaleRange(name, drawing);
+      if (!range) continue;
+      const lo = Math.round(range.min * 100);
+      const hi = Math.round(range.max * 100);
+      out.set(name, lo === hi ? `composes at ${lo}%` : `composes at ${lo}–${hi}%`);
+    }
+    return out;
+  }, [exportDoc, activeScript]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -5576,27 +5681,67 @@ export default function Home() {
 
       {topMode === "draw" && drawStyle === "grid" && (
         <div className={styles.gridWrap} data-tour="grid">
-          {gridGroups.length > 0 && (
+          {/* One page per step instead of 94 cells in one scroll. Every chip
+              stays clickable: the recommended order (syllables first, because
+              that is where the weight comes from) and the required one (the 24
+              jamo, which are what covers all 11.172 syllables) genuinely
+              differ, and a lock would make the tool lie about which of the two
+              it is enforcing. The arrow says where the flow points; it doesn't
+              say where you may go. */}
+          {gridSteps.length > 0 && (
+            <div className={styles.gridSteps} role="tablist" aria-label="Steps">
+              {gridSteps.map((step, i) => {
+                const active = step.id === activeStep?.id;
+                return (
+                  <button
+                    key={step.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    aria-current={active ? "step" : undefined}
+                    className={`${styles.gridStep} ${active ? styles.gridStepActive : ""}`}
+                    onClick={() => setGridStep(step.id)}
+                  >
+                    <span className={styles.gridStepIndex}>{i + 1}</span>
+                    <span className={styles.gridJumpExample}>{step.example}</span>
+                    <span className={styles.gridStepLabel}>{step.label}</span>
+                    <span className={styles.gridStepMeta}>
+                      {step.done === step.total && step.total > 0 ? "✓ " : ""}
+                      {step.done} / {step.total}
+                    </span>
+                    {step.id === recommendedStep && !active && <span className={styles.gridStepNext}>next</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {activeStep && <p className={styles.gridStepGoal}>{activeStep.goal}</p>}
+          {/* The jump row survives, but only where it still has a job: two of
+              the three steps hold a single group, and one destination is not a
+              navigation. */}
+          {activeStep && activeStep.groupIds.length > 1 && (
             <div className={styles.gridJumps}>
               {/* Underlined text alone was read as four labels, not four
                   destinations — the row needs to say what it is before the
                   words in it mean anything. */}
               <span className={styles.gridJumpsLabel}>Jump to</span>
-              {gridGroups.map((g) => (
-                <button
-                  key={g.id}
-                  type="button"
-                  className={styles.gridJump}
-                  onClick={() => scrollGroupIntoView(g.id)}
-                >
-                  <span className={styles.gridJumpExample}>{g.example}</span>
-                  {g.label}
-                </button>
-              ))}
+              {gridGroups
+                .filter((g) => activeStep.groupIds.includes(g.id))
+                .map((g) => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    className={styles.gridJump}
+                    onClick={() => scrollGroupIntoView(g.id)}
+                  >
+                    <span className={styles.gridJumpExample}>{g.example}</span>
+                    {g.label}
+                  </button>
+                ))}
             </div>
           )}
-          <div className={styles.grid}>
-            {gridSlots.map((slot) => {
+          <div className={styles.grid} ref={gridScrollRef}>
+            {visibleGridSlots.map((slot) => {
               const { name, kind } = slot;
               const cellKey = `${kind}:${name}`;
               // A full-width heading before the first cell of each group. In a
@@ -5714,6 +5859,7 @@ export default function Home() {
                   onWidthCommit={glyph ? (newWidthPx) => handleGlyphWidthChange(slot, newWidthPx) : undefined}
                   onWidthReset={() => handleGlyphWidthReset(slot)}
                   firstStepHint={cellKey === firstStepCellKey ? "Draw your first letter here" : undefined}
+                  note={jamoWeightNotes.get(name)}
                 />
               );
 
