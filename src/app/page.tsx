@@ -6036,107 +6036,6 @@ export default function Home() {
                 </label>
               </div>
               </SettingsSection>
-              {/* Collapsed by default, Glyphs' Font Info parallel: the four
-                  font metrics get set once early on and then mostly rest,
-                  unlike the cell-layout controls above them (still open by
-                  default, unlike Metrics — just also collapsible now, for
-                  consistency with every other group in this panel). */}
-              {/* Only in Hangul, and only once something has been drawn:
-                  this panel exists to show that 24 drawings became a
-                  writing system, which is meaningless with an empty grid. */}
-              {activeScript === "hangul" && syllablePreview.length > 0 && (
-                <SettingsSection id="syllables" title="Syllables" defaultOpen>
-                  <div className={styles.syllableGrid}>
-                    {syllablePreview.map((s) => (
-                      <div key={s.char} className={styles.syllableCell} title={s.char}>
-                        <svg viewBox={`0 0 ${HANGUL_EM} ${HANGUL_EM}`} className={styles.syllableSvg}>
-                          <path d={s.contours.join(" ")} fill="currentColor" fillRule="nonzero" />
-                        </svg>
-                      </div>
-                    ))}
-                  </div>
-                  <button type="button" className={styles.syllableBtn} onClick={() => setSyllableSeed((n) => n + 1)}>
-                    Other syllables
-                  </button>
-                </SettingsSection>
-              )}
-
-              {/* Hangul never touches these four numbers: its glyphs go through
-                  emTransform, which maps the em box onto the font's em square and
-                  advances one em per syllable. Leaving four live-looking sliders
-                  in the panel would be four controls that do nothing — but
-                  removing the section outright leaves no answer to "where did
-                  Metrics go?", so the section stays and says why. */}
-              <SettingsSection id="metrics" title="Metrics" defaultOpen={false} tourId="metrics">
-                {activeScript === "hangul" ? (
-                  <p className={styles.settingsNote}>
-                    Hangul has no baseline to sit on. Every syllable fills the em square and advances exactly one
-                    em — that uniform advance is how Korean is set. Ascender, x-height, baseline and descender
-                    govern this font&rsquo;s Latin letters only.
-                  </p>
-                ) : (
-                <div className={styles.sliders}>
-                  <label className={styles.sliderRow}>
-                    <span>Ascender</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={metrics.ascender}
-                      onChange={(e) => updateMetric("ascender", Math.min(Number(e.target.value), metrics.xHeight - 0.02))}
-                    />
-                    <span className={styles.val}>{metrics.ascender.toFixed(2)}</span>
-                  </label>
-                  <label className={styles.sliderRow}>
-                    <span>X-height</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={metrics.xHeight}
-                      onChange={(e) =>
-                        updateMetric(
-                          "xHeight",
-                          Math.min(Math.max(Number(e.target.value), metrics.ascender + 0.02), metrics.baseline - 0.02)
-                        )
-                      }
-                    />
-                    <span className={styles.val}>{metrics.xHeight.toFixed(2)}</span>
-                  </label>
-                  <label className={styles.sliderRow}>
-                    <span>Baseline</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={metrics.baseline}
-                      onChange={(e) =>
-                        updateMetric(
-                          "baseline",
-                          Math.min(Math.max(Number(e.target.value), metrics.xHeight + 0.02), metrics.descender - 0.02)
-                        )
-                      }
-                    />
-                    <span className={styles.val}>{metrics.baseline.toFixed(2)}</span>
-                  </label>
-                  <label className={styles.sliderRow}>
-                    <span>Descender</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={metrics.descender}
-                      onChange={(e) => updateMetric("descender", Math.max(Number(e.target.value), metrics.baseline + 0.02))}
-                    />
-                    <span className={styles.val}>{metrics.descender.toFixed(2)}</span>
-                  </label>
-                </div>
-                )}
-              </SettingsSection>
             </>
           )}
           {topMode === "draw" && drawStyle === "free" && (
@@ -6670,6 +6569,114 @@ export default function Home() {
                 )}
               </div>
             </SettingsSection>
+          )}
+          {/* Below Stroke, not above it: the pen is the control you reach
+              for on every visit, while the syllable readout and the four
+              font metrics get looked at once and then rest. */}
+          {topMode === "draw" && drawStyle === "grid" && (
+            <>
+            {/* Collapsed by default, Glyphs' Font Info parallel: the four
+                font metrics get set once early on and then mostly rest,
+                unlike the cell-layout controls above them (still open by
+                default, unlike Metrics — just also collapsible now, for
+                consistency with every other group in this panel). */}
+            {/* Only in Hangul, and only once something has been drawn:
+                this panel exists to show that 24 drawings became a
+                writing system, which is meaningless with an empty grid. */}
+            {activeScript === "hangul" && syllablePreview.length > 0 && (
+              <SettingsSection id="syllables" title="Syllables" defaultOpen>
+                <div className={styles.syllableGrid}>
+                  {syllablePreview.map((s) => (
+                    <div key={s.char} className={styles.syllableCell} title={s.char}>
+                      <svg viewBox={`0 0 ${HANGUL_EM} ${HANGUL_EM}`} className={styles.syllableSvg}>
+                        <path d={s.contours.join(" ")} fill="currentColor" fillRule="nonzero" />
+                      </svg>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" className={styles.syllableBtn} onClick={() => setSyllableSeed((n) => n + 1)}>
+                  Other syllables
+                </button>
+              </SettingsSection>
+            )}
+
+            {/* Hangul never touches these four numbers: its glyphs go through
+                emTransform, which maps the em box onto the font's em square and
+                advances one em per syllable. Leaving four live-looking sliders
+                in the panel would be four controls that do nothing — but
+                removing the section outright leaves no answer to "where did
+                Metrics go?", so the section stays and says why. */}
+            <SettingsSection id="metrics" title="Metrics" defaultOpen={false} tourId="metrics">
+              {activeScript === "hangul" ? (
+                <p className={styles.settingsNote}>
+                  Hangul has no baseline to sit on. Every syllable fills the em square and advances exactly one
+                  em — that uniform advance is how Korean is set. Ascender, x-height, baseline and descender
+                  govern this font&rsquo;s Latin letters only.
+                </p>
+              ) : (
+              <div className={styles.sliders}>
+                <label className={styles.sliderRow}>
+                  <span>Ascender</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={metrics.ascender}
+                    onChange={(e) => updateMetric("ascender", Math.min(Number(e.target.value), metrics.xHeight - 0.02))}
+                  />
+                  <span className={styles.val}>{metrics.ascender.toFixed(2)}</span>
+                </label>
+                <label className={styles.sliderRow}>
+                  <span>X-height</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={metrics.xHeight}
+                    onChange={(e) =>
+                      updateMetric(
+                        "xHeight",
+                        Math.min(Math.max(Number(e.target.value), metrics.ascender + 0.02), metrics.baseline - 0.02)
+                      )
+                    }
+                  />
+                  <span className={styles.val}>{metrics.xHeight.toFixed(2)}</span>
+                </label>
+                <label className={styles.sliderRow}>
+                  <span>Baseline</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={metrics.baseline}
+                    onChange={(e) =>
+                      updateMetric(
+                        "baseline",
+                        Math.min(Math.max(Number(e.target.value), metrics.xHeight + 0.02), metrics.descender - 0.02)
+                      )
+                    }
+                  />
+                  <span className={styles.val}>{metrics.baseline.toFixed(2)}</span>
+                </label>
+                <label className={styles.sliderRow}>
+                  <span>Descender</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={metrics.descender}
+                    onChange={(e) => updateMetric("descender", Math.max(Number(e.target.value), metrics.baseline + 0.02))}
+                  />
+                  <span className={styles.val}>{metrics.descender.toFixed(2)}</span>
+                </label>
+              </div>
+              )}
+            </SettingsSection>
+            </>
           )}
           </div>
         </aside>
