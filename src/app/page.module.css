@@ -1072,6 +1072,54 @@
   accent-color: var(--color-grape);
 }
 
+/* Group heading inside the cell grid. Full width on purpose: .grid is a
+   flex-wrap, so a 100%-wide item is simultaneously the line break that puts
+   the next group on its own row. */
+.gridSectionHeading {
+  flex-basis: 100%;
+  margin: var(--sp-lg) 0 2px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-hazelnut);
+}
+
+.gridSectionHeading:first-child {
+  margin-top: 0;
+}
+
+.gridSectionCount {
+  font-weight: 400;
+}
+
+/* Jump links to the groups — with 66 cells, scrolling to the batchim row is
+   otherwise a hunt. */
+.gridJumps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: var(--sp-xs) var(--sp-sm) 0;
+}
+
+.gridJump {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-hazelnut);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.gridJump:hover {
+  color: var(--color-grape);
+}
+
 /* Syllable preview — composed from the drawn jamo, never stored anywhere.
    Two rows of four in the settings panel's width. */
 .syllableGrid {

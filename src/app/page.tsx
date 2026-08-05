@@ -1,12 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import styles from "./page.module.css";
 import { clearStrokes, loadStrokes, saveStrokes, type Stroke, type StrokeKind, type StrokePoint } from "@/lib/strokes";
 import { nibPolygon, type Nib } from "@/lib/calligraphy";
 import { loadGlyphs, saveGlyphs, unicodeFor, nextAlternateName, type Glyph, type GlyphKind } from "@/lib/glyphs";
-import { BASIC_JAMO, allVariantSlots, coverage, frequentSyllables, isHangulChar } from "@/lib/hangul";
+import {
+  BASIC_CONSONANTS,
+  BASIC_JAMO,
+  JAMO_VARIANTS,
+  allVariantSlots,
+  coverage,
+  frequentSyllables,
+  isHangulChar,
+  variantName,
+} from "@/lib/hangul";
 import { HANGUL_EM, composeHangul, composeSyllable, jamoFrom } from "@/lib/hangulCompose";
 import { anyPointInPolygon, pointInPolygon } from "@/lib/geometry";
 import {
@@ -1682,6 +1691,40 @@ export default function Home() {
   const [scriptsReady, setScriptsReady] = useState(false);
   useEffect(() => setScriptsReady(true), []);
   const gridScripts = scriptsReady ? activeScripts(activeSetIds) : [DEFAULT_SCRIPT];
+
+  // Headings only where a wall of cells stops being self-explanatory: 66
+  // Hangul cells in one flow give no clue where the basics end and which
+  // context you're currently drawing. Latin keeps its single unlabelled grid.
+  const gridGroups =
+    variantSlots.length > 0
+      ? [
+          { id: "grp-basic", label: "Jamo", count: BASIC_JAMO.length, first: gridSlots[0]?.name },
+          ...JAMO_VARIANTS.map((v) => ({
+            id: `grp-${v.role}`,
+            label: v.label,
+            count: BASIC_CONSONANTS.length,
+            first: variantName(BASIC_CONSONANTS[0], v.role),
+          })),
+        ]
+      : [];
+  const gridHeadingFor = (name: string) => gridGroups.find((g) => g.first === name);
+
+  // Scrolls the grid to a group heading. Deliberately not scrollIntoView:
+  // that picks its own scroll container, and here it picked the window rather
+  // than the grid's own overflow, landing the target at the bottom edge
+  // instead of the top. Walking up to the real scroller and moving it by the
+  // measured delta is exact. Instant rather than smooth — the batchim group is
+  // ~1.600px down, and animating that far loses you.
+  function scrollGroupIntoView(id: string) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    let scroller: HTMLElement | null = el.parentElement;
+    while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) {
+      scroller = scroller.parentElement;
+    }
+    if (scroller) scroller.scrollTop += el.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    else el.scrollIntoView({ block: "start" });
+  }
 
   // "18 of 24 jamo drawn -> 6.412 of 11.172 syllables covered" is the whole
   // Hangul pitch in one line, and the only progress number that means
@@ -5423,8 +5466,9 @@ export default function Home() {
           })}
           {activeScript === "hangul" && (
             <span className={styles.scriptTabNote}>
-              {jamoDrawn} / {BASIC_JAMO.length} Jamo · {variantsDrawn} / {allVariantSlots().length} Varianten ·{" "}
-              {hangulCoverage.covered.toLocaleString("de-DE")} von {hangulCoverage.total.toLocaleString("de-DE")} Silben
+              {jamoDrawn} / {BASIC_JAMO.length} jamo · {variantsDrawn} / {allVariantSlots().length} variants ·{" "}
+              {hangulCoverage.covered.toLocaleString("en-US")} of {hangulCoverage.total.toLocaleString("en-US")}{" "}
+              syllables
             </span>
           )}
         </div>
@@ -5513,10 +5557,28 @@ export default function Home() {
 
       {topMode === "draw" && drawStyle === "grid" && (
         <div className={styles.gridWrap} data-tour="grid">
+          {gridGroups.length > 0 && (
+            <div className={styles.gridJumps}>
+              {gridGroups.map((g) => (
+                <button
+                  key={g.id}
+                  type="button"
+                  className={styles.gridJump}
+                  onClick={() => scrollGroupIntoView(g.id)}
+                >
+                  {g.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className={styles.grid}>
             {gridSlots.map((slot) => {
               const { name, kind } = slot;
               const cellKey = `${kind}:${name}`;
+              // A full-width heading before the first cell of each group. In a
+              // flex-wrap grid a 100%-wide item is also the line break, so the
+              // groups start on their own row without a second container.
+              const heading = gridHeadingFor(name);
               const glyph = glyphs.find((g) => g.kind === kind && g.name === name);
               const glyphStrokes = glyph
                 ? glyph.strokeIds
@@ -5587,7 +5649,7 @@ export default function Home() {
                     ]
                   : [];
               });
-              return (
+              const cell = (
                 <GridCell
                   key={cellKey}
                   label={name}
@@ -5629,6 +5691,17 @@ export default function Home() {
                   onWidthReset={() => handleGlyphWidthReset(slot)}
                   firstStepHint={cellKey === firstStepCellKey ? "Draw your first letter here" : undefined}
                 />
+              );
+
+              return heading ? (
+                <Fragment key={`sec:${cellKey}`}>
+                  <h3 id={heading.id} className={styles.gridSectionHeading}>
+                    {heading.label} <span className={styles.gridSectionCount}>({heading.count})</span>
+                  </h3>
+                  {cell}
+                </Fragment>
+              ) : (
+                cell
               );
             })}
           </div>
