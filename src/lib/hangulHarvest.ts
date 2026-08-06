@@ -227,6 +227,65 @@ export function harvestSlot(
   };
 }
 
+// The standalone jamo a drawn syllable also contains.
+//
+// Different from a batchim in one way that makes it easier, not harder: a
+// variant cell has to match the shape of the slot it will fill, because that
+// shared factor is what keeps the weight even. A standalone jamo matches
+// nothing — composition ink-fits it into whichever slot it lands in, and it is
+// also typeable on its own as U+3131 and friends. So it wants to fill its cell
+// exactly as a hand-drawn one would, which is what this does.
+//
+// What it therefore does NOT buy is weight: the initial and the vowel already
+// composed at ~100%, and they still go through the same fit afterwards. What
+// it buys is the drawing — 19 of the 24 jamo fall out of the practice sheet
+// (14 consonants, and the five upright vowels it rotates through), so they
+// need never be drawn twice.
+export function harvestJamo(
+  slots: HarvestSlot[],
+  strokes: HarvestStroke[],
+  assignment: Record<string, SlotKey>,
+  basics: readonly string[],
+  targetWidth: number,
+  targetHeight: number
+): HarvestResult[] {
+  const out: HarvestResult[] = [];
+  const target = emBox(targetWidth, targetHeight);
+  for (const slot of slots) {
+    // The batchim has its own home; a compound (ㄲ, ㄺ, ㅘ) is two basics
+    // written side by side and lifting it whole would put a pair into a cell
+    // meant for one shape.
+    if (slot.key === "final" || !basics.includes(slot.base)) continue;
+    const mine = strokes.filter((s) => assignment[s.id] === slot.key);
+    if (mine.length === 0) continue;
+    const ink = bounds(mine.flatMap((s) => s.points));
+    const w = ink.xmax - ink.xmin;
+    const h = ink.ymax - ink.ymin;
+    if (w <= 0 && h <= 0) continue;
+    // Fill the cell the way a drawn jamo does, with the same air around it
+    // the em box already implies.
+    const fill = 0.9;
+    const scale = Math.min(w > 0 ? (target.size * fill) / w : Infinity, h > 0 ? (target.size * fill) / h : Infinity);
+    const dx = target.x + (target.size - w * scale) / 2 - ink.xmin * scale;
+    const dy = target.y + (target.size - h * scale) / 2 - ink.ymin * scale;
+    out.push({
+      name: slot.base,
+      role: "fin", // unused for a standalone jamo; the name is the whole identity
+      base: slot.base,
+      cellWidth: targetWidth,
+      cellHeight: targetHeight,
+      strokes: mine.map((s) => ({
+        id: s.id,
+        points: s.points.map((p) => [p[0] * scale + dx, p[1] * scale + dy, p[2] ?? 0.5]),
+        // Thickness travels with the geometry, exactly as in harvestSlot —
+        // otherwise a jamo scaled up to fill its cell arrives too thin.
+        widthScale: (s.widthScale ?? 1) * scale,
+      })),
+    });
+  }
+  return out;
+}
+
 // Everything harvestable from one drawn syllable.
 export function harvestSyllable(
   char: string,

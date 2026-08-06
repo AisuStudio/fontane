@@ -26,6 +26,7 @@ import { HANGUL_STEPS, recommendedStepId } from "@/lib/hangulSteps";
 import { measureSyllable, summarise, type MeasuredSyllable } from "@/lib/hangulMeasure";
 import {
   assignStrokesDetailed,
+  harvestJamo,
   harvestSlots,
   harvestSyllable,
   type HarvestResult,
@@ -240,6 +241,7 @@ type HarvestRow = {
   assignment: ReturnType<typeof assignStrokesDetailed>;
   strays: number;
   results: HarvestResult[];
+  jamo: HarvestResult[];
 };
 
 const SLOT_COLOUR: Record<SlotKey, string> = {
@@ -2281,6 +2283,13 @@ export default function Home() {
   // the preview: every row here becomes one variant glyph, and seeing the
   // stroke counts before pressing anything is the only review this first
   // version offers.
+  // Jamo cells that already hold ink. A syllable can only donate to the ones
+  // still empty.
+  const drawnJamo = useMemo(
+    () => new Set(glyphs.filter((g) => g.strokeIds.length > 0 && BASIC_JAMO.includes(g.name)).map((g) => g.name)),
+    [glyphs]
+  );
+
   const harvestable = useMemo(() => {
     if (activeScript !== "hangul") return [] as HarvestRow[];
     const byId = new Map(completedRef.current.map((s) => [s.id, s]));
@@ -2315,10 +2324,22 @@ export default function Home() {
           // written straight to storage and has to land in the same space
           // every drawn glyph does, whatever the zoom happens to be.
           results: harvestSyllable(g.name, strokes, cw, ch, CANONICAL_CELL, undefined, batchimWeight),
+          // The standalone jamo the same syllable contains. Only ones nobody
+          // has drawn — overwriting a cell someone worked on would be the
+          // rudest thing this button could do, and the point is to spare
+          // drawing, not to replace it.
+          jamo: harvestJamo(
+            slots,
+            strokes,
+            Object.fromEntries(assignment.map((a) => [a.id, a.slot])),
+            BASIC_JAMO.filter((j) => !drawnJamo.has(j)),
+            CANONICAL_CELL,
+            CANONICAL_CELL * cellAspectFor("hangul")
+          ),
         };
       })
-      .filter((h) => h.results.length > 0);
-  }, [glyphs, activeScript, batchimWeight]);
+      .filter((h) => h.results.length > 0 || h.jamo.length > 0);
+  }, [glyphs, activeScript, batchimWeight, drawnJamo]);
 
   // Write the harvested parts out as variant glyphs.
   //
@@ -2328,7 +2349,14 @@ export default function Home() {
   function harvestBatchim() {
     if (harvestable.length === 0) return;
     pushUndoSnapshot();
-    const results = harvestable.flatMap((h) => h.results);
+    // First one wins for the jamo: the practice sheet rotates five vowels over
+    // fourteen syllables, so ㅏ turns up three times, and writing it three
+    // times would leave whichever syllable happened to be last.
+    const seenJamo = new Set<string>();
+    const results = harvestable.flatMap((h) => [
+      ...h.results,
+      ...h.jamo.filter((r) => !seenJamo.has(r.name) && (seenJamo.add(r.name), true)),
+    ]);
     const targets = new Set(results.map((r) => r.name));
     const sourceById = new Map(completedRef.current.map((s) => [s.id, s]));
     const supersededIds = new Set(
@@ -2369,9 +2397,10 @@ export default function Home() {
           rightBearing: DEFAULT_RIGHT_BEARING,
           cellWidth: r.cellWidth,
           cellHeight: r.cellHeight,
-          // Deliberately no unicode: "ㄱ.fin" is not a codepoint, so it gets
-          // no cmap entry and can never be typed — it only ever appears
-          // inside a composed syllable.
+          // A harvested jamo IS a codepoint and should be typeable like any
+          // other; "ㄱ.fin" is not, so unicodeFor gives it nothing and it
+          // stays reachable only from inside a composed syllable.
+          ...(unicodeFor(r.name) ? { unicode: unicodeFor(r.name) } : {}),
         })
       ),
     ]);
@@ -6140,7 +6169,7 @@ export default function Home() {
               <div className={styles.gridStepActions}>
                 {harvestable.length > 0 && (
                   <button type="button" className={styles.clearBtn} onClick={harvestBatchim}>
-                    Harvest {harvestable.length} batchim
+                    Harvest from {harvestable.length} syllables
                   </button>
                 )}
                 <button
@@ -7292,7 +7321,7 @@ export default function Home() {
                       </svg>
                       <span className={styles.harvestChar}>{h.char}</span>
                       <span>
-                        {h.results.map((r) => r.name).join(", ")}
+                        {[...h.results, ...h.jamo].map((r) => r.name).join(", ") || "—"}
                         {h.strays > 0 && <span className={styles.harvestStray}> · {h.strays} guessed</span>}
                       </span>
                       <span className={styles.val}>
@@ -7319,7 +7348,7 @@ export default function Home() {
                   Applies to what is already harvested as you drag.
                 </p>
                 <button type="button" className={styles.clearBtn} onClick={harvestBatchim}>
-                  Harvest {harvestable.length} batchim
+                  Harvest from {harvestable.length} syllables
                 </button>
                 {/* Measured against guessed, side by side. Every "guessed" marker
                     above is a stroke that fell outside a rectangle these numbers
