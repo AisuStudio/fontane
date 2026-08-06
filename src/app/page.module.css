@@ -1318,8 +1318,14 @@
   color: var(--color-grape);
 }
 
-.gridStepAction {
-  padding: var(--sp-xs) var(--sp-sm) 0;
+/* Beside the path, not under it — and pushed to the far end so the circles
+   keep reading as a sequence instead of ending in a button. */
+.gridStepActions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  margin-left: auto;
+  margin-top: 6px;
 }
 
 .gridStepGoal {

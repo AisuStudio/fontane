@@ -6088,6 +6088,27 @@ export default function Home() {
                   </Fragment>
                 );
               })}
+              {/* The two things you do WITH the alphabet, kept beside the path
+                  rather than under it: the harvest is the step-3 action and
+                  belongs where step 3 is, and trying the font in running text
+                  is the only way to see whether any of this worked. */}
+              <div className={styles.gridStepActions}>
+                {harvestable.length > 0 && (
+                  <button type="button" className={styles.clearBtn} onClick={harvestBatchim}>
+                    Harvest {harvestable.length} batchim
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={styles.clearBtn}
+                  onClick={() => {
+                    const typer = VIEW_DEFS.find((v) => v.key === "editor");
+                    if (typer) selectView(typer);
+                  }}
+                >
+                  Try it in the Typer
+                </button>
+              </div>
             </div>
           )}
           {activeStep && (
@@ -6112,19 +6133,11 @@ export default function Home() {
           {/* The action belongs where the flow is, not only in the settings
               panel: someone standing in front of 14 empty batchim cells is
               exactly the person who needs to be told they fill themselves. */}
-          {activeStep?.id === "step-variants" && activeScript === "hangul" && (
-            <div className={styles.gridStepAction}>
-              {harvestable.length > 0 ? (
-                <button type="button" className={styles.clearBtn} onClick={harvestBatchim}>
-                  Harvest {harvestable.length} batchim from your syllables
-                </button>
-              ) : (
-                <span className={styles.gridStepGoal}>
-                  These fill themselves once you have drawn syllables in step 1 — they are not meant to be drawn by
-                  hand, which is why the band is so shallow.
-                </span>
-              )}
-            </div>
+          {activeStep?.id === "step-variants" && activeScript === "hangul" && harvestable.length === 0 && (
+            <p className={styles.gridStepGoal}>
+              These fill themselves once you have drawn syllables in step 1 — they are not meant to be drawn by hand,
+              which is why the band is so shallow.
+            </p>
           )}
           {/* The end of the path, said once and where it happens. The counters
               say 24 / 24; they don't say "and that is the whole writing
@@ -6545,8 +6558,13 @@ export default function Home() {
                     reconciles without complaint, and the filled treatment is the
                     same one the Base/Ligature/Alt toggle already uses for
                     "this one is active". */}
+                {/* Bearings are a Latin idea: the space either side of a
+                    letter, which is what sets its advance. A Hangul syllable
+                    advances exactly one em no matter what, so there are no
+                    bearing lines to lock and the button guards nothing. */}
                 <button
                   type="button"
+                  hidden={activeScript === "hangul"}
                   aria-pressed={lockBearings}
                   className={`${styles.clearBtn} ${lockBearings ? styles.toggleBtnOn : ""}`}
                   onClick={() => updateLockBearings(!lockBearings)}
@@ -6584,18 +6602,25 @@ export default function Home() {
                     </button>
                   </>
                 )}
-                <label className={styles.sliderRow}>
-                  <span>Width</span>
-                  <input
-                    type="range"
-                    min={0.5}
-                    max={2}
-                    step={0.05}
-                    value={cellWidthRatio}
-                    onChange={(e) => updateCellWidthRatio(Number(e.target.value))}
-                  />
-                  <span className={styles.val}>{cellWidthRatio.toFixed(2)}</span>
-                </label>
+                {/* A batchim cell takes both its dimensions from the slot it
+                    will fill (cellSizeForSlot's variant branch) — that shared
+                    factor is what keeps the stroke weight even, so Width is
+                    ignored there by construction. A control that cannot move
+                    what is on screen is worse than no control. */}
+                {activeStep?.id !== "step-variants" && (
+                  <label className={styles.sliderRow}>
+                    <span>Width</span>
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={2}
+                      step={0.05}
+                      value={cellWidthRatio}
+                      onChange={(e) => updateCellWidthRatio(Number(e.target.value))}
+                    />
+                    <span className={styles.val}>{cellWidthRatio.toFixed(2)}</span>
+                  </label>
+                )}
                 <label className={styles.sliderRow}>
                   <span>
                     <input
