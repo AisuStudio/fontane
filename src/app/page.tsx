@@ -9,6 +9,7 @@ import { loadGlyphs, saveGlyphs, unicodeFor, nextAlternateName, type Glyph, type
 import {
   BASIC_CONSONANTS,
   BASIC_JAMO,
+  DEFAULT_LAYOUT,
   EM_BOX_FRACTION,
   JAMO_VARIANTS,
   allVariantSlots,
@@ -20,6 +21,7 @@ import {
   variantName,
 } from "@/lib/hangul";
 import { HANGUL_STEPS, recommendedStepId } from "@/lib/hangulSteps";
+import { measureSyllable, summarise, type MeasuredSyllable } from "@/lib/hangulMeasure";
 import {
   assignStrokesDetailed,
   harvestSlots,
@@ -248,7 +250,7 @@ const STRAY_COLOUR = "#ff8b6b";
 
 const CANONICAL_CELL = 240;
 const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 1.5;
+const MAX_ZOOM = 3;
 const DEFAULT_ZOOM = 0.375; // 90px, the cell size this replaced defaulted to
 
 function clampZoom(z: number): number {
@@ -2179,6 +2181,27 @@ export default function Home() {
     const tightest = [...tooFatFor].sort((a, b) => batchimPenLimit(a) - batchimPenLimit(b))[0];
     return { fraction, carries, tooFatFor, tightest, tightestLimit: tightest ? batchimPenLimit(tightest) : 0 };
   }, [activeScript, zoom, settings.size]);
+
+  // What the drawn syllables say the layout actually is.
+  //
+  // DEFAULT_LAYOUT's numbers were eyeballed, and every "guessed" marker in the
+  // harvest list is a stroke falling outside a rectangle those numbers put in
+  // the wrong place. The drawings contain the real answer — this reads it and
+  // shows it next to the guess. Nothing is applied automatically: replacing
+  // the table changes where every one of the 11,172 syllables puts its parts.
+  const layoutMeasurement = useMemo(() => {
+    if (activeScript !== "hangul") return null;
+    const byId = new Map(completedRef.current.map((s) => [s.id, s]));
+    const measured: MeasuredSyllable[] = [];
+    for (const g of glyphs) {
+      if (!g.cellWidth || !g.cellHeight || g.strokeIds.length < 2) continue;
+      const strokes = g.strokeIds.map((id) => byId.get(id)).filter((s): s is Stroke => Boolean(s));
+      const m = measureSyllable(g.name, strokes, g.cellWidth, g.cellHeight);
+      if (m) measured.push(m);
+    }
+    if (measured.length === 0) return null;
+    return { measured, summary: summarise(measured) };
+  }, [glyphs, activeScript]);
 
   // How much weight to take out of a harvested batchim. Real Korean faces do
   // take a little out of a dense one so the syllable doesn't clot — 5-15% is
@@ -7228,6 +7251,34 @@ export default function Home() {
                 <button type="button" className={styles.clearBtn} onClick={harvestBatchim}>
                   Harvest {harvestable.length} batchim
                 </button>
+                {/* Measured against guessed, side by side. Every "guessed" marker
+                    above is a stroke that fell outside a rectangle these numbers
+                    placed; this is where they should have been. */}
+                {layoutMeasurement?.summary.final && (
+                  <>
+                    <div className={styles.settingsSubLabel}>Your layout vs the table</div>
+                    <ul className={styles.harvestList}>
+                      {(
+                        [
+                          ["batchim top", layoutMeasurement.summary.final.y, DEFAULT_LAYOUT.VT.final?.y ?? 0],
+                          ["batchim height", layoutMeasurement.summary.final.h, DEFAULT_LAYOUT.VT.final?.h ?? 0],
+                          ["initial width", layoutMeasurement.summary.initial?.w ?? 0, DEFAULT_LAYOUT.VT.initial.w],
+                          ["initial height", layoutMeasurement.summary.initial?.h ?? 0, DEFAULT_LAYOUT.VT.initial.h],
+                        ] as [string, number, number][]
+                      ).map(([label, mine, table]) => (
+                        <li key={label} className={styles.harvestRow}>
+                          <span>{label}</span>
+                          <span className={styles.val}>{mine.toFixed(2)}</span>
+                          <span className={styles.harvestStray}>{table.toFixed(2)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className={styles.settingsNote}>
+                      Read from {layoutMeasurement.summary.final.n} of your syllables (yours, then the table&rsquo;s
+                      guess). Nothing is applied — changing the table moves the parts of all 11,172 syllables.
+                    </p>
+                  </>
+                )}
               </SettingsSection>
             )}
 
