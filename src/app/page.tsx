@@ -20,7 +20,13 @@ import {
   variantName,
 } from "@/lib/hangul";
 import { HANGUL_STEPS, recommendedStepId } from "@/lib/hangulSteps";
-import { harvestSyllable, type HarvestResult } from "@/lib/hangulHarvest";
+import {
+  assignStrokesDetailed,
+  harvestSlots,
+  harvestSyllable,
+  type HarvestResult,
+  type SlotKey,
+} from "@/lib/hangulHarvest";
 import { HANGUL_EM, composeHangul, composeSyllable, composedScaleRange, jamoFrom } from "@/lib/hangulCompose";
 import { anyPointInPolygon, pointInPolygon } from "@/lib/geometry";
 import {
@@ -216,6 +222,30 @@ const STROKE_TOOLS = new Set<DrawTool>(["pen", "brush", "calligraphy", "eraser",
 // the unit every glyph's recorded cellWidth/cellHeight is expressed in, and
 // moving it would re-weight every letter ever drawn. 240 was the old Cell size
 // slider's maximum, so nothing existing exceeds it.
+// One colour per slot in the harvest map, so "which strokes did it think
+// belong to the batchim" is answerable at a glance instead of after an undo.
+// Warm orange is not a fourth slot — it marks a stroke no slot contained, put
+// somewhere by the nearest-centre fallback.
+// One drawn syllable, everything the Harvest panel needs to show and to write.
+type HarvestRow = {
+  char: string;
+  cw: number;
+  ch: number;
+  slots: ReturnType<typeof harvestSlots>;
+  strokes: Stroke[];
+  assignment: ReturnType<typeof assignStrokesDetailed>;
+  strays: number;
+  results: HarvestResult[];
+};
+
+const SLOT_COLOUR: Record<SlotKey, string> = {
+  initial: "#7aa2ff",
+  medialV: "#8fd6a0",
+  medialH: "#8fd6a0",
+  final: "#d8ff01",
+};
+const STRAY_COLOUR = "#ff8b6b";
+
 const CANONICAL_CELL = 240;
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 1.5;
@@ -2161,7 +2191,7 @@ export default function Home() {
   // stroke counts before pressing anything is the only review this first
   // version offers.
   const harvestable = useMemo(() => {
-    if (activeScript !== "hangul") return [] as { char: string; results: HarvestResult[] }[];
+    if (activeScript !== "hangul") return [] as HarvestRow[];
     const byId = new Map(completedRef.current.map((s) => [s.id, s]));
     // Deliberately NOT filtered against the practice sheet. Matching names
     // made the sheet's exact contents load-bearing, and reordering it (which
@@ -2174,20 +2204,26 @@ export default function Home() {
       .filter((g) => g.strokeIds.length > 0 && g.cellWidth && g.cellHeight)
       .map((g) => {
         const strokes = g.strokeIds.map((id) => byId.get(id)).filter((s): s is Stroke => Boolean(s));
+        const cw = g.cellWidth as number;
+        const ch = g.cellHeight as number;
+        const slots = harvestSlots(g.name, cw, ch);
+        const assignment = assignStrokesDetailed(slots, strokes);
         return {
           char: g.name,
+          cw,
+          ch,
+          slots,
+          strokes,
+          assignment,
+          // A stroke none of the slots actually contained. The nearest-centre
+          // fallback still placed it, which is right — losing ink silently
+          // would be worse — but it is a guess, and a guess is exactly what
+          // put a whole initial into the batchim cell.
+          strays: assignment.filter((a) => a.score === 0).length,
           // CANONICAL_CELL, not the displayed cell size: a harvested glyph is
           // written straight to storage and has to land in the same space
           // every drawn glyph does, whatever the zoom happens to be.
-          results: harvestSyllable(
-            g.name,
-            strokes,
-            g.cellWidth as number,
-            g.cellHeight as number,
-            CANONICAL_CELL,
-            undefined,
-            batchimWeight
-          ),
+          results: harvestSyllable(g.name, strokes, cw, ch, CANONICAL_CELL, undefined, batchimWeight),
         };
       })
       .filter((h) => h.results.length > 0);
@@ -7105,9 +7141,36 @@ export default function Home() {
                 <ul className={styles.harvestList}>
                   {harvestable.map((h) => (
                     <li key={h.char} className={styles.harvestRow}>
+                      <svg viewBox={`0 0 ${h.cw} ${h.ch}`} className={styles.harvestMap} aria-hidden="true">
+                        {h.slots.map((s) => (
+                          <rect
+                            key={s.key}
+                            x={s.rect.x}
+                            y={s.rect.y}
+                            width={s.rect.w}
+                            height={s.rect.h}
+                            className={styles.harvestSlotRect}
+                          />
+                        ))}
+                        {h.strokes.map((s) => {
+                          const a = h.assignment.find((x) => x.id === s.id);
+                          return (
+                            <polyline
+                              key={s.id}
+                              points={s.points.map((p) => `${p[0]},${p[1]}`).join(" ")}
+                              fill="none"
+                              stroke={!a || a.score === 0 ? STRAY_COLOUR : SLOT_COLOUR[a.slot]}
+                              strokeWidth={Math.max(h.cw, h.ch) * 0.035}
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          );
+                        })}
+                      </svg>
                       <span className={styles.harvestChar}>{h.char}</span>
                       <span>
                         {h.results.map((r) => r.name).join(", ")}
+                        {h.strays > 0 && <span className={styles.harvestStray}> · {h.strays} guessed</span>}
                       </span>
                       <span className={styles.val}>
                         {h.results.reduce((n, r) => n + r.strokes.length, 0)}

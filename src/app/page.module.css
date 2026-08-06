@@ -875,6 +875,28 @@
   white-space: nowrap;
 }
 
+/* The assignment, drawn. Slot rectangles as the layout table believes them to
+   be, the actual strokes on top, coloured by where they were filed. A stroke
+   in the wrong box is visible here in a second; without it the first sign is
+   a burst glyph after the write. */
+.harvestMap {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 3px;
+}
+
+.harvestSlotRect {
+  fill: none;
+  stroke: rgba(234, 232, 224, 0.28);
+  stroke-width: 1.5;
+}
+
+.harvestStray {
+  color: #ff8b6b;
+}
+
 .harvestChar {
   font-size: 16px;
   color: var(--color-vanilla);

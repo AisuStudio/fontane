@@ -109,8 +109,19 @@ function inside(r: Rect, x: number, y: number) {
 // stroke that lands in nothing (drawn well outside every slot) goes to the
 // nearest slot centre rather than being dropped — losing a stroke silently is
 // worse than putting it somewhere the user can correct.
-export function assignStrokes(slots: HarvestSlot[], strokes: HarvestStroke[]): Record<string, SlotKey> {
-  const out: Record<string, SlotKey> = {};
+export type StrokeAssignment = {
+  id: string;
+  slot: SlotKey;
+  // Fraction of the stroke's points that actually fell inside that slot. 0
+  // means nothing did and the nearest-centre fallback picked it — the case
+  // worth showing a user, because that is where a wrong slot comes from and
+  // where the layout table is being asked a question it was never measured
+  // to answer.
+  score: number;
+};
+
+export function assignStrokesDetailed(slots: HarvestSlot[], strokes: HarvestStroke[]): StrokeAssignment[] {
+  const out: StrokeAssignment[] = [];
   if (slots.length === 0) return out;
   for (const stroke of strokes) {
     if (stroke.points.length === 0) continue;
@@ -142,8 +153,14 @@ export function assignStrokes(slots: HarvestSlot[], strokes: HarvestStroke[]): R
       }
       best = nearest.key;
     }
-    out[stroke.id] = best;
+    out.push({ id: stroke.id, slot: best, score: bestScore });
   }
+  return out;
+}
+
+export function assignStrokes(slots: HarvestSlot[], strokes: HarvestStroke[]): Record<string, SlotKey> {
+  const out: Record<string, SlotKey> = {};
+  for (const a of assignStrokesDetailed(slots, strokes)) out[a.id] = a.slot;
   return out;
 }
 
