@@ -36,6 +36,14 @@ const LINE_GAP = 24; // breathing room between stacked lines, beyond each line's
 // above it.
 const TOP_PADDING = 48;
 
+// Selection highlight. Grape at low alpha rather than the platform blue: this
+// is paper, and the ink on it is the font's, so the marker should read as
+// something laid over the page rather than as a system widget.
+const SELECTION_COLOR = "rgba(81, 0, 255, 0.16)";
+// How far the highlight runs past a line's last glyph when the selection
+// continues onto the next line — the standard signal for "this carries on".
+const SELECTION_RUN_ON = 40;
+
 // The Editor's own placeholder line — deliberately NOT the Marketplace's
 // SAMPLE_TEXT: that one stays short and letters-only so published fonts stay
 // comparable side by side on the browse cards, while this one is a full
@@ -205,13 +213,63 @@ export default function EditorPanel({
   // preview.
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [caretIndex, setCaretIndex] = useState(0);
+  // The other end of the selection. Shift+arrow, shift+click and dragging all
+  // worked from the start — the textarea handles them natively — but nothing
+  // read selectionEnd, so selecting text looked like nothing happening.
+  const [selectionEnd, setSelectionEnd] = useState(0);
   const [caretVisible, setCaretVisible] = useState(true);
   // Which caret position the viewport was last scrolled to follow.
   const lastScrolledCaret = useRef(-1);
+  // The fixed end of a drag selection, or null when no drag is in progress.
+  const dragAnchor = useRef<number | null>(null);
+  // Where each line ended up, so a pointer position can be turned back into a
+  // character index. Written by the draw pass, which is the only thing that
+  // knows the answer — hit-testing must not lay the text out a second time.
+  const lineHitsRef = useRef<
+    { top: number; bottom: number; shiftX: number; startChar: number; steps: { advance: number; len: number }[] }[]
+  >([]);
   const sizeFactor = (fontSize * PT_TO_PX) / REFERENCE_CAP_HEIGHT_PX;
 
   function syncCaret(e: { currentTarget: HTMLTextAreaElement }) {
-    setCaretIndex(e.currentTarget.selectionStart ?? e.currentTarget.value.length);
+    const el = e.currentTarget;
+    setCaretIndex(el.selectionStart ?? el.value.length);
+    setSelectionEnd(el.selectionEnd ?? el.selectionStart ?? el.value.length);
+  }
+
+  // Pointer position -> character index, using the geometry the draw pass
+  // recorded. The textarea's own drag-select is useless here: its layout is a
+  // monospaced invisible column that has nothing to do with where the
+  // handwriting actually sits, so dragging in it selects the wrong letters.
+  function indexAtPoint(clientX: number, clientY: number): number | null {
+    const scrollEl = scrollRef.current;
+    const canvas = canvasRef.current;
+    if (!scrollEl || !canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const padLeft = parseFloat(getComputedStyle(canvas).paddingLeft) || 0;
+    const padTop = parseFloat(getComputedStyle(canvas).paddingTop) || 0;
+    const x = clientX - rect.left - padLeft;
+    const y = clientY - rect.top - padTop;
+    const lines = lineHitsRef.current;
+    if (lines.length === 0) return null;
+    // Above the first line lands at the very start, below the last at the very
+    // end — the same thing every text editor does when you drag past the edge.
+    let line = lines.find((l) => y >= l.top && y <= l.bottom);
+    if (!line) line = y < lines[0].top ? lines[0] : lines[lines.length - 1];
+    // Back out of canvas pixels into the line's own layout space: every line
+    // is drawn shifted right to clear its leftmost overshoot, then the whole
+    // thing scaled by the point size.
+    const localX = x / sizeFactor - line.shiftX;
+    let index = line.startChar;
+    let cursor = 0;
+    for (const step of line.steps) {
+      // Past the middle of an entry means the next gap is nearer — the
+      // half-advance rule, so clicking the right half of a letter puts the
+      // caret after it.
+      if (localX < cursor + step.advance / 2) return index;
+      cursor += step.advance;
+      index += step.len;
+    }
+    return index;
   }
 
   // Blink like a native caret, but never mid-blink right after the user just
@@ -260,8 +318,15 @@ export default function EditorPanel({
         height: number;
         minX: number;
         glyphInk: { strokeSets: BrushedStrokeSet[]; shapeRings: [number, number][][] }[];
+        // Where this line starts in the raw text, and how wide each entry is
+        // in char-index space. Enough to turn a character range into x
+        // positions (selection) and an x position back into a character
+        // (clicking and dragging) without laying anything out twice.
+        startChar: number;
+        steps: { advance: number; len: number }[];
       };
       const lines: LineGeometry[] = [];
+      let charCursor = 0;
 
       let remainingToCaret = caretIndex;
       let caretDrawn = false;
@@ -343,11 +408,20 @@ export default function EditorPanel({
           }
           remainingToCaret -= lineCharLength;
 
-          lines.push({ y: lineY, height: layout.height, minX, glyphInk });
+          lines.push({
+            y: lineY,
+            height: layout.height,
+            minX,
+            glyphInk,
+            startChar: charCursor,
+            steps: lineEntries.map((e) => ({ advance: e.advanceWidth, len: entryCharLength(e) })),
+          });
+          charCursor += lineCharLength;
           lineY += layout.height + LINE_GAP;
         }
 
         remainingToCaret -= 1; // the paragraph's own trailing "\n"
+        charCursor += 1; // ditto — the newline occupies an index of its own
       }
 
       // ---- Size the canvas to fit every line, never less than the visible box ----
@@ -359,6 +433,49 @@ export default function EditorPanel({
       canvas!.height = cssHeight * dpr;
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx!.clearRect(0, 0, cssWidth, cssHeight);
+
+      // ---- Selection, painted under the ink ----
+      //
+      // Drawn before pass 2 rather than inside it: the highlight has to sit
+      // behind every letter it covers, and pass 2 finishes each line's ink
+      // before moving to the next.
+      const selA = Math.min(caretIndex, selectionEnd);
+      const selB = Math.max(caretIndex, selectionEnd);
+      const hits: typeof lineHitsRef.current = [];
+      for (const line of lines) {
+        const shiftX = LEFT_MARGIN - Math.min(0, line.minX);
+        const top = line.y * sizeFactor;
+        const bottom = (line.y + line.height) * sizeFactor;
+        hits.push({ top, bottom, shiftX, startChar: line.startChar, steps: line.steps });
+
+        if (selB <= selA) continue;
+        const lineEnd = line.startChar + line.steps.reduce((n, s) => n + s.len, 0);
+        if (selB <= line.startChar || selA >= lineEnd) continue;
+        // Walk the line once, collecting the x span the selected characters
+        // cover. Entries are atomic — a ligature standing for three characters
+        // highlights whole or not at all.
+        let x = 0;
+        let index = line.startChar;
+        let x1: number | null = null;
+        let x2 = 0;
+        for (const step of line.steps) {
+          const covered = index < selB && index + step.len > selA;
+          if (covered && x1 === null) x1 = x;
+          if (covered) x2 = x + step.advance;
+          x += step.advance;
+          index += step.len;
+        }
+        // A selection reaching past this line's last character (it continues
+        // on the next one) should show that, so the highlight runs on a little
+        // past the final glyph rather than stopping flush against it.
+        if (x1 === null) continue;
+        if (selB > lineEnd) x2 += SELECTION_RUN_ON;
+        ctx!.save();
+        ctx!.fillStyle = SELECTION_COLOR;
+        ctx!.fillRect((x1 + shiftX) * sizeFactor, top, (x2 - x1) * sizeFactor, bottom - top);
+        ctx!.restore();
+      }
+      lineHitsRef.current = hits;
 
       // ---- Pass 2: draw, shifting each line right just enough to clear its own leftmost extent ----
       let caretX = 0;
@@ -447,7 +564,7 @@ export default function EditorPanel({
     const resizeObserver = new ResizeObserver(draw);
     resizeObserver.observe(scrollEl);
     return () => resizeObserver.disconnect();
-  }, [text, glyphs, strokes, metrics, settings, sizeFactor, caretIndex, caretVisible, useLigatures]);
+  }, [text, glyphs, strokes, metrics, settings, sizeFactor, caretIndex, selectionEnd, caretVisible, useLigatures]);
 
   return (
     <div className={styles.editorPanel}>
@@ -467,6 +584,40 @@ export default function EditorPanel({
           onKeyUp={syncCaret}
           onClick={syncCaret}
           onFocus={syncCaret}
+          // Dragging is driven off the handwriting's own geometry, not the
+          // textarea's. Its text is invisible and laid out nothing like the
+          // composed line — letting it select natively picks characters that
+          // have no relation to what the pointer is over.
+          onPointerDown={(e) => {
+            const el = textareaRef.current;
+            const at = indexAtPoint(e.clientX, e.clientY);
+            if (!el || at === null) return;
+            e.preventDefault(); // ...which also suppresses focus, so ask for it
+            el.focus();
+            const anchor = e.shiftKey ? (el.selectionStart ?? at) : at;
+            dragAnchor.current = anchor;
+            el.setSelectionRange(Math.min(anchor, at), Math.max(anchor, at));
+            setCaretIndex(el.selectionStart ?? at);
+            setSelectionEnd(el.selectionEnd ?? at);
+            el.setPointerCapture(e.pointerId);
+          }}
+          onPointerMove={(e) => {
+            const el = textareaRef.current;
+            const anchor = dragAnchor.current;
+            if (!el || anchor === null) return;
+            const at = indexAtPoint(e.clientX, e.clientY);
+            if (at === null) return;
+            el.setSelectionRange(Math.min(anchor, at), Math.max(anchor, at));
+            setCaretIndex(el.selectionStart ?? at);
+            setSelectionEnd(el.selectionEnd ?? at);
+          }}
+          onPointerUp={(e) => {
+            dragAnchor.current = null;
+            textareaRef.current?.releasePointerCapture(e.pointerId);
+          }}
+          onPointerCancel={() => {
+            dragAnchor.current = null;
+          }}
           // The input covers the canvas, so it is what the wheel reaches.
           // Hand the scroll to the viewport underneath, which is the thing
           // that actually has somewhere to go.
