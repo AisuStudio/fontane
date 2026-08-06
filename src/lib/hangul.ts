@@ -215,10 +215,24 @@ function slotSize(cls: LayoutClass, which: "initial" | "final"): { w: number; h:
 // accurate and unreadable — you have to know what a vertical vowel is before
 // the sentence tells you anything. Where the consonant sits is the whole point,
 // so that is what it says, with a syllable to point at.
+//
+// Only the batchim. There were three contexts here, and the initial ones were
+// dropped for two reasons that point the same way:
+//
+//   - There is nothing to fix. Measured against real drawings, an initial
+//     composes at ~100% of the syllable's other parts — its slot is nearly as
+//     large as the jamo cell, so scaling it barely scales anything. The
+//     batchim lands at 56-71%. All of the weight loss is in one place.
+//   - They could not be filled anyway. Harvesting an initial out of a drawn
+//     syllable gives one shaped for the class that syllable is in (VT:
+//     0.50 x 0.54), while an initV cell is shaped from class V (0.52 x 0.78).
+//     One cell cannot be both, and 28 cells nobody can fill are 28 invitations
+//     to fail.
+//
+// If an initial ever does turn out to need one, it comes back as TWO contexts,
+// with and without a batchim — which is the split that would actually work.
 export const JAMO_VARIANTS: JamoVariant[] = [
-  { role: "initV", label: "Initial · left of the vowel", example: "가", ...slotSize("V", "initial") },
-  { role: "initH", label: "Initial · above the vowel", example: "고", ...slotSize("H", "initial") },
-  { role: "fin", label: "Final · under the syllable", example: "각", ...slotSize("VT", "final") },
+  { role: "fin", label: "Batchim · under the syllable", example: "각", ...slotSize("VT", "final") },
 ];
 
 // Variants are named, not encoded: "ㄱ.fin" is not a single codepoint, so

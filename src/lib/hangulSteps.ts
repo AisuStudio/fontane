@@ -46,11 +46,11 @@ export const HANGUL_STEPS: GridStepDef[] = [
   },
   {
     id: "step-variants",
-    label: "Variants",
+    label: "Batchim",
     example: "각",
-    goal: "Optional refinement — a consonant drawn for the place it actually sits.",
+    goal: "Lifted out of your syllables — the one place a scaled jamo comes out too light.",
     required: false,
-    groupIds: ["grp-initV", "grp-initH", "grp-fin"],
+    groupIds: ["grp-fin"],
   },
 ];
 

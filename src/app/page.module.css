@@ -846,6 +846,41 @@
 /* Explanatory text inside a settings section, standing where a control would
    be if the active script had one. Inherits the panel's vanilla on purpose —
    --color-text resolves to the panel's own background colour. */
+/* One row per drawn syllable: what it is, what comes out of it, how many
+   strokes. The review before pressing the button — this first version has no
+   per-stroke correction, so the counts are how you notice a mis-assignment. */
+.harvestList {
+  list-style: none;
+  margin: var(--sp-sm) 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.harvestRow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--color-muted);
+  padding: 2px 0;
+}
+
+.harvestRow span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvestChar {
+  font-size: 16px;
+  color: var(--color-vanilla);
+  min-width: 20px;
+}
+
 .settingsNote {
   font-family: var(--font-sans);
   font-size: 12px;

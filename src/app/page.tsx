@@ -18,6 +18,7 @@ import {
   variantName,
 } from "@/lib/hangul";
 import { HANGUL_STEPS, recommendedStepId } from "@/lib/hangulSteps";
+import { harvestSyllable, type HarvestResult } from "@/lib/hangulHarvest";
 import { HANGUL_EM, composeHangul, composeSyllable, composedScaleRange, jamoFrom } from "@/lib/hangulCompose";
 import { anyPointInPolygon, pointInPolygon } from "@/lib/geometry";
 import {
@@ -2118,6 +2119,100 @@ export default function Home() {
     }
     return out;
   }, [exportDoc, activeScript]);
+
+  // How much weight to take out of a harvested batchim. Real Korean faces do
+  // take a little out of a dense one so the syllable doesn't clot — 5-15% is
+  // the range designers work in. 1 = none, which is the honest default: it is
+  // a design decision, not a correction.
+  const [batchimLighten, setBatchimLighten] = useState(1);
+
+  // What could be lifted out of the syllables that are actually drawn. Also
+  // the preview: every row here becomes one variant glyph, and seeing the
+  // stroke counts before pressing anything is the only review this first
+  // version offers.
+  const harvestable = useMemo(() => {
+    if (activeScript !== "hangul") return [] as { char: string; results: HarvestResult[] }[];
+    const wanted = new Set(harvestSyllables().map((s) => s.char));
+    const byId = new Map(completedRef.current.map((s) => [s.id, s]));
+    return glyphs
+      .filter((g) => wanted.has(g.name) && g.strokeIds.length > 0 && g.cellWidth && g.cellHeight)
+      .map((g) => {
+        const strokes = g.strokeIds.map((id) => byId.get(id)).filter((s): s is Stroke => Boolean(s));
+        return {
+          char: g.name,
+          // CANONICAL_CELL, not the displayed cell size: a harvested glyph is
+          // written straight to storage and has to land in the same space
+          // every drawn glyph does, whatever the zoom happens to be.
+          results: harvestSyllable(
+            g.name,
+            strokes,
+            g.cellWidth as number,
+            g.cellHeight as number,
+            CANONICAL_CELL,
+            undefined,
+            batchimLighten
+          ),
+        };
+      })
+      .filter((h) => h.results.length > 0);
+  }, [glyphs, activeScript, batchimLighten]);
+
+  // Write the harvested parts out as variant glyphs.
+  //
+  // Replaces rather than appends: harvesting twice must not stack two copies
+  // of the same batchim in one cell, and redrawing a syllable and harvesting
+  // again should simply supersede what the last run produced.
+  function harvestBatchim() {
+    if (harvestable.length === 0) return;
+    pushUndoSnapshot();
+    const results = harvestable.flatMap((h) => h.results);
+    const targets = new Set(results.map((r) => r.name));
+    const sourceById = new Map(completedRef.current.map((s) => [s.id, s]));
+    const supersededIds = new Set(
+      glyphsRef.current.filter((g) => targets.has(g.name)).flatMap((g) => g.strokeIds)
+    );
+    const stamp = Date.now();
+    const made: Stroke[] = [];
+    const idsByName = new Map<string, string[]>();
+    results.forEach((r, ri) => {
+      r.strokes.forEach((s, si) => {
+        const id = `harvest-${stamp}-${ri}-${si}`;
+        made.push({
+          id,
+          points: s.points as StrokePoint[],
+          createdAt: stamp,
+          widthScale: s.widthScale,
+          // The source stroke's tool travels with it — a calligraphy batchim
+          // has to keep being inked by the nib, not the pen.
+          ...(sourceById.get(s.id)?.kind ? { kind: sourceById.get(s.id)!.kind } : {}),
+        });
+        idsByName.set(r.name, [...(idsByName.get(r.name) ?? []), id]);
+      });
+    });
+    completedRef.current = [...completedRef.current.filter((s) => !supersededIds.has(s.id)), ...made];
+    outlinesRef.current = completedRef.current.map((s) => strokeOutline(s, settingsRef.current));
+    saveStrokes(completedRef.current);
+    setStrokeCount(completedRef.current.length);
+    setGlyphs((gs) => [
+      ...gs.filter((g) => !targets.has(g.name)),
+      ...results.map(
+        (r): Glyph => ({
+          id: `${stamp}-${r.name}`,
+          name: r.name,
+          kind: "base",
+          strokeIds: idsByName.get(r.name) ?? [],
+          createdAt: stamp,
+          leftBearing: DEFAULT_LEFT_BEARING,
+          rightBearing: DEFAULT_RIGHT_BEARING,
+          cellWidth: r.cellWidth,
+          cellHeight: r.cellHeight,
+          // Deliberately no unicode: "ㄱ.fin" is not a codepoint, so it gets
+          // no cmap entry and can never be typed — it only ever appears
+          // inside a composed syllable.
+        })
+      ),
+    ]);
+  }
 
   // Whether this script's letters currently carry DIFFERENT stroke weights
   // relative to their own size — which is what a reader sees, and what the
@@ -6911,6 +7006,50 @@ export default function Home() {
                 </div>
                 <button type="button" className={styles.syllableBtn} onClick={() => setSyllableSeed((n) => n + 1)}>
                   Other syllables
+                </button>
+              </SettingsSection>
+            )}
+
+            {/* The payoff for having drawn syllables at all. Shown only once
+                there is something to lift: an empty section here would be one
+                more thing to wonder about in a panel that already asks a lot. */}
+            {activeScript === "hangul" && harvestable.length > 0 && (
+              <SettingsSection id="harvest" title="Harvest" defaultOpen>
+                <p className={styles.settingsNote}>
+                  Lifts each batchim out of the syllable you drew it in, so every one of the 11,172 syllables carries
+                  your hand instead of a shrunken copy.
+                </p>
+                <ul className={styles.harvestList}>
+                  {harvestable.map((h) => (
+                    <li key={h.char} className={styles.harvestRow}>
+                      <span className={styles.harvestChar}>{h.char}</span>
+                      <span>
+                        {h.results.map((r) => r.name).join(", ")}
+                      </span>
+                      <span className={styles.val}>
+                        {h.results.reduce((n, r) => n + r.strokes.length, 0)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <label className={styles.sliderRow}>
+                  <span>Lighten</span>
+                  <input
+                    type="range"
+                    min={0.85}
+                    max={1}
+                    step={0.01}
+                    value={batchimLighten}
+                    onChange={(e) => setBatchimLighten(Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{Math.round((1 - batchimLighten) * 100)}%</span>
+                </label>
+                <p className={styles.settingsNote}>
+                  A dense batchim clots at full weight; real Korean faces take 5–15% out of it. 0% keeps exactly what
+                  you drew.
+                </p>
+                <button type="button" className={styles.clearBtn} onClick={harvestBatchim}>
+                  Harvest {harvestable.length} batchim
                 </button>
               </SettingsSection>
             )}
