@@ -2186,6 +2186,29 @@ export default function Home() {
   // a design decision, not a correction.
   const [batchimWeight, setBatchimWeight] = useState(1);
 
+  // Moving the slider used to change nothing until you pressed Harvest again,
+  // which is a slider that lies: the whole point of a weight control is
+  // watching the weight change. It now retunes the already-harvested strokes
+  // as it moves — thickness only, so nothing needs recomputing but the ink.
+  //
+  // Deliberately no undo snapshot per tick: a drag would bury the history, and
+  // the control is its own undo (drag it back).
+  function updateBatchimWeight(next: number) {
+    const factor = next / batchimWeight;
+    setBatchimWeight(next);
+    if (!Number.isFinite(factor) || factor === 1) return;
+    const harvestedIds = new Set(
+      glyphsRef.current.filter((g) => g.name.endsWith(".fin")).flatMap((g) => g.strokeIds)
+    );
+    if (harvestedIds.size === 0) return;
+    completedRef.current = completedRef.current.map((s) =>
+      harvestedIds.has(s.id) ? { ...s, widthScale: (s.widthScale ?? 1) * factor } : s
+    );
+    outlinesRef.current = completedRef.current.map((s) => strokeOutline(s, settingsRef.current));
+    saveStrokes(completedRef.current);
+    setGlyphs((gs) => [...gs]);
+  }
+
   // What could be lifted out of the syllables that are actually drawn. Also
   // the preview: every row here becomes one variant glyph, and seeing the
   // stroke counts before pressing anything is the only review this first
@@ -7193,14 +7216,14 @@ export default function Home() {
                     max={1.3}
                     step={0.01}
                     value={batchimWeight}
-                    onChange={(e) => setBatchimWeight(Number(e.target.value))}
+                    onChange={(e) => updateBatchimWeight(Number(e.target.value))}
                   />
                   <span className={styles.val}>{Math.round(batchimWeight * 100)}%</span>
                 </label>
                 <p className={styles.settingsNote}>
                   Thickness only — not one point moves. 100% is exactly the weight you drew; a dense batchim often
                   wants a little less so it doesn&rsquo;t clot, a sparse one a little more so it doesn&rsquo;t vanish.
-                  Harvest again to apply — it replaces, so nothing drifts.
+                  Applies to what is already harvested as you drag.
                 </p>
                 <button type="button" className={styles.clearBtn} onClick={harvestBatchim}>
                   Harvest {harvestable.length} batchim
