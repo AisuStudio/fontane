@@ -9,8 +9,10 @@ import { loadGlyphs, saveGlyphs, unicodeFor, nextAlternateName, type Glyph, type
 import {
   BASIC_CONSONANTS,
   BASIC_JAMO,
+  EM_BOX_FRACTION,
   JAMO_VARIANTS,
   allVariantSlots,
+  batchimPenLimit,
   coverage,
   frequentSyllables,
   harvestSyllables,
@@ -2119,6 +2121,34 @@ export default function Home() {
     }
     return out;
   }, [exportDoc, activeScript]);
+
+  // What the current pen can carry at the foot of a syllable.
+  //
+  // The batchim band is the tightest place in the writing system, so it is the
+  // one that decides the weight — a designer sets a face from its tightest
+  // counter, and this is that counter. Without the number you find out which
+  // batchim your pen cannot draw after you have drawn fourteen syllables at
+  // that pen, which is the expensive way round.
+  //
+  // Relative to the DISPLAYED em, because that is what the pen is measured
+  // against: a stroke drawn at zoom Z with pen P is stored as P / (canonical
+  // cell x Z), so the fraction is the same arithmetic the anchor does.
+  const penFit = useMemo(() => {
+    if (activeScript !== "hangul") return null;
+    const emPx = CANONICAL_CELL * zoom * EM_BOX_FRACTION;
+    if (emPx <= 0) return null;
+    const fraction = settings.size / emPx;
+    const carries: string[] = [];
+    const tooFatFor: string[] = [];
+    for (const jamo of BASIC_CONSONANTS) {
+      (batchimPenLimit(jamo) >= fraction ? carries : tooFatFor).push(jamo);
+    }
+    // The tightest of the ones that DON'T fit, named rather than averaged: a
+    // single "would need 4.5%" reads as if every one of them did, when ㄷ is
+    // happy at 10.8% and only ㅎ is that demanding.
+    const tightest = [...tooFatFor].sort((a, b) => batchimPenLimit(a) - batchimPenLimit(b))[0];
+    return { fraction, carries, tooFatFor, tightest, tightestLimit: tightest ? batchimPenLimit(tightest) : 0 };
+  }, [activeScript, zoom, settings.size]);
 
   // How much weight to take out of a harvested batchim. Real Korean faces do
   // take a little out of a dense one so the syllable doesn't clot — 5-15% is
@@ -5965,7 +5995,54 @@ export default function Home() {
               })}
             </div>
           )}
-          {activeStep && <p className={styles.gridStepGoal}>{activeStep.goal}</p>}
+          {activeStep && (
+            <p className={styles.gridStepGoal}>
+              {activeStep.goal}
+              {activeStep.id === "step-syllables" && penFit && (
+                <>
+                  {" "}
+                  <span className={styles.gridStepFit}>
+                    Your pen is {Math.round(penFit.fraction * 1000) / 10}% of the em — it carries{" "}
+                    {penFit.carries.length > 0 ? penFit.carries.join(" ") : "no batchim"} at the foot
+                    {penFit.tooFatFor.length > 0
+                      ? `, but not ${penFit.tooFatFor.join(" ")} — the tightest of those, ${penFit.tightest}, needs ${
+                          Math.round(penFit.tightestLimit * 1000) / 10
+                        }%.`
+                      : "."}
+                  </span>
+                </>
+              )}
+            </p>
+          )}
+          {/* The action belongs where the flow is, not only in the settings
+              panel: someone standing in front of 14 empty batchim cells is
+              exactly the person who needs to be told they fill themselves. */}
+          {activeStep?.id === "step-variants" && activeScript === "hangul" && (
+            <div className={styles.gridStepAction}>
+              {harvestable.length > 0 ? (
+                <button type="button" className={styles.clearBtn} onClick={harvestBatchim}>
+                  Harvest {harvestable.length} batchim from your syllables
+                </button>
+              ) : (
+                <span className={styles.gridStepGoal}>
+                  These fill themselves once you have drawn syllables in step 1 — they are not meant to be drawn by
+                  hand, which is why the band is so shallow.
+                </span>
+              )}
+            </div>
+          )}
+          {/* The end of the path, said once and where it happens. The counters
+              say 24 / 24; they don't say "and that is the whole writing
+              system, you can stop now". */}
+          {activeStep?.id === "step-jamo" && activeScript === "hangul" && jamoDrawn === BASIC_JAMO.length && (
+            <p className={styles.gridStepGoal}>
+              <span className={styles.gridStepFit}>
+                Complete — all {hangulCoverage.total.toLocaleString("en-US")} syllables are covered. File &rsaquo;
+                Export, or
+                try it in Typer first.
+              </span>
+            </p>
+          )}
           {/* The jump row survives, but only where it still has a job: two of
               the three steps hold a single group, and one destination is not a
               navigation. */}

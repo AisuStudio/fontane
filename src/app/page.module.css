@@ -1242,6 +1242,17 @@
   font-weight: 700;
 }
 
+/* The pen-fit sentence, on the same line as the step's goal but a shade
+   stronger: it is the one number in this view that changes what you should do
+   next, rather than describing what the step is. */
+.gridStepFit {
+  color: var(--color-grape);
+}
+
+.gridStepAction {
+  padding: var(--sp-xs) var(--sp-sm) 0;
+}
+
 .gridStepGoal {
   font-family: var(--font-sans);
   font-size: 0.75rem;

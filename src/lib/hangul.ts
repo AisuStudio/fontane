@@ -287,8 +287,41 @@ export type HarvestSyllable = {
 
 const UPRIGHT_VOWELS = BASIC_VOWELS.filter((v) => MEDIALS[v]?.kind === "vertical");
 
+// Roughly how many stroke widths of vertical room a consonant needs to still
+// read as itself. Three stacked bars (ㅎ = bar, bar, circle) need room for the
+// bars, the gaps between them and a counter that hasn't closed up; an L-shape
+// needs two strokes and a corner.
+//
+// Approximate by construction, and that is fine — it is used to ORDER the
+// practice sheet and to tell someone what their pen can carry, never to
+// reject a drawing.
+const BATCHIM_ROOM: Record<string, number> = {
+  "ㅎ": 6, "ㅍ": 5, "ㅌ": 5, "ㅊ": 5, "ㅈ": 4,
+  "ㅁ": 3, "ㅇ": 3, "ㅂ": 3.5, "ㄹ": 4,
+  "ㄱ": 2, "ㄴ": 2, "ㄷ": 2.5, "ㅅ": 2, "ㅋ": 2.5,
+};
+
+// The tightest place in the writing system, expressed as the widest pen that
+// still fits, as a fraction of the em.
+//
+// The batchim band is the whole reason this number is interesting: it is the
+// shortest slot in the layout, and whatever fits THERE fits everywhere. A
+// designer sets weight from the tightest counter; this is that counter, in a
+// number the app can show before fourteen drawings have gone by.
+export function batchimPenLimit(jamo: string): number {
+  return (DEFAULT_LAYOUT.VT.final?.h ?? 0.27) / (BATCHIM_ROOM[jamo] ?? 3);
+}
+
+// Hardest first.
+//
+// The pen that survives a three-bar batchim survives everything, so the
+// syllable that settles the question belongs at the top of the sheet rather
+// than at position eleven. Starting with 각 — two strokes, the easiest foot
+// in the set — lets someone draw thirteen syllables at a weight that cannot
+// work before meeting the one that proves it.
 export function harvestSyllables(): HarvestSyllable[] {
-  return BASIC_CONSONANTS.map((c, i) => {
+  const ordered = [...BASIC_CONSONANTS].sort((a, b) => (BATCHIM_ROOM[b] ?? 3) - (BATCHIM_ROOM[a] ?? 3));
+  return ordered.map((c, i) => {
     const l = COMPAT_L.indexOf(c);
     const v = COMPAT_V.indexOf(UPRIGHT_VOWELS[i % UPRIGHT_VOWELS.length]);
     const t = COMPAT_T.indexOf(c);
