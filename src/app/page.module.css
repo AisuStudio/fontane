@@ -1202,48 +1202,95 @@
 /* The step bar. Chips, not folder tabs: the script row above already uses the
    flat-pill idiom for "switch what you're looking at", and a third row of a
    third shape would be a third navigation to learn. */
+/* The step guide: a circle per step, a line between them, label and count
+   underneath. The circle's fill is the progress — untouched, part-drawn,
+   full — so the state of the whole process reads in one glance without any
+   text being parsed.
+
+   PLACEHOLDER COLOURS. The intended palette is blueberry on hazelnut /
+   mango-3 / pistachio, and the last two ship with Waffle. Only the two
+   custom properties below change when they land; nothing else here knows
+   which colour it is drawing. --step-done also carries its own foreground
+   because grape is dark — pistachio will take blueberry like the others. */
+:root {
+  --step-untouched: var(--color-hazelnut);
+  --step-progress: var(--color-lemon); /* -> mango-3 */
+  --step-done: var(--color-grape); /* -> pistachio */
+  --step-done-ink: var(--color-vanilla); /* -> var(--color-blueberry) */
+}
+
 .gridSteps {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--sp-sm);
-  align-items: center;
+  gap: var(--sp-xs);
+  align-items: flex-start;
   padding: var(--sp-sm) var(--sp-sm) 0;
 }
 
 .gridStep {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
+  width: 92px;
   font-family: var(--font-sans);
-  font-size: 0.8125rem;
-  padding: 5px 12px;
-  border: 1px solid transparent;
-  border-radius: 6px;
+  font-size: 0.75rem;
+  padding: 0;
+  border: 0;
   background: transparent;
   color: var(--color-blueberry);
-  opacity: 0.65;
   cursor: pointer;
 }
 
-.gridStep:hover:not(.gridStepActive) {
-  opacity: 1;
-  border-color: var(--color-hazelnut);
+/* The connector. Sits between two steps and lines up with the circles above
+   the labels, so the row reads as one path rather than three buttons. */
+.gridStepLink {
+  flex: 1;
+  min-width: 16px;
+  max-width: 90px;
+  height: 2px;
+  margin-top: 17px;
+  background: var(--color-hazelnut);
+  opacity: 0.5;
 }
 
-.gridStepActive {
-  background: var(--color-blueberry);
-  border-color: var(--color-blueberry);
-  color: var(--color-vanilla);
-  opacity: 1;
-  cursor: default;
+.gridStepDot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  font-size: 17px;
+  line-height: 1;
+  background: var(--step-untouched);
+  color: var(--color-blueberry);
+  box-shadow: 0 0 0 0 var(--color-blueberry);
+  transition: box-shadow 120ms ease;
 }
 
-/* The step number carries the recommended order on its own — that is the
-   entire "do this first" message, and it needs no badge. */
-.gridStepIndex {
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  opacity: 0.55;
+.gridStepDot_untouched {
+  background: var(--step-untouched);
+}
+
+.gridStepDot_progress {
+  background: var(--step-progress);
+}
+
+.gridStepDot_done {
+  background: var(--step-done);
+  color: var(--step-done-ink);
+}
+
+/* Where you are, as a ring rather than another fill — the fill is already
+   saying something else, and two meanings in one colour is how a legend
+   becomes necessary. */
+.gridStepActive .gridStepDot {
+  box-shadow: 0 0 0 3px var(--color-vanilla), 0 0 0 5px var(--color-blueberry);
+}
+
+.gridStep:hover:not(.gridStepActive) .gridStepDot {
+  box-shadow: 0 0 0 3px var(--color-vanilla), 0 0 0 5px var(--color-hazelnut);
 }
 
 .gridStepLabel {

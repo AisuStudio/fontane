@@ -6014,25 +6014,32 @@ export default function Home() {
             <div className={styles.gridSteps} role="tablist" aria-label="Steps">
               {gridSteps.map((step, i) => {
                 const active = step.id === activeStep?.id;
+                // Three states, from the step's own counters: nothing drawn,
+                // something drawn, all of it drawn.
+                const state = step.done === 0 ? "untouched" : step.done >= step.total ? "done" : "progress";
                 return (
-                  <button
-                    key={step.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    aria-current={active ? "step" : undefined}
-                    className={`${styles.gridStep} ${active ? styles.gridStepActive : ""}`}
-                    onClick={() => setGridStep(step.id)}
-                  >
-                    <span className={styles.gridStepIndex}>{i + 1}</span>
-                    <span className={styles.gridJumpExample}>{step.example}</span>
-                    <span className={styles.gridStepLabel}>{step.label}</span>
-                    <span className={styles.gridStepMeta}>
-                      {step.done === step.total && step.total > 0 ? "✓ " : ""}
-                      {step.done} / {step.total}
-                    </span>
-                    {step.id === recommendedStep && !active && <span className={styles.gridStepNext}>next</span>}
-                  </button>
+                  <Fragment key={step.id}>
+                    {i > 0 && <span className={styles.gridStepLink} aria-hidden="true" />}
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      aria-current={active ? "step" : undefined}
+                      className={`${styles.gridStep} ${active ? styles.gridStepActive : ""}`}
+                      onClick={() => setGridStep(step.id)}
+                    >
+                      <span className={`${styles.gridStepDot} ${styles[`gridStepDot_${state}`]}`}>
+                        {step.example}
+                      </span>
+                      <span className={styles.gridStepLabel}>{step.label}</span>
+                      <span className={styles.gridStepMeta}>
+                        {step.done} / {step.total}
+                        {step.id === recommendedStep && !active && (
+                          <span className={styles.gridStepNext}> · next</span>
+                        )}
+                      </span>
+                    </button>
+                  </Fragment>
                 );
               })}
             </div>
