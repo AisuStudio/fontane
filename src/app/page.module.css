@@ -1100,6 +1100,27 @@
   background: var(--color-vanilla);
   border-radius: 8px;
   box-shadow: 0 6px 20px rgba(31, 25, 52, 0.18), 0 1px 4px rgba(31, 25, 52, 0.12);
+  /* Spelled out rather than left to the platform: on macOS an overlay
+     scrollbar only appears while it is being used, so a composition running
+     past the fold gives no sign that there is more below it. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(31, 25, 52, 0.35) transparent;
+}
+
+.editorCanvasScroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.editorCanvasScroll::-webkit-scrollbar-thumb {
+  background: rgba(31, 25, 52, 0.3);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.editorCanvasScroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(31, 25, 52, 0.5);
+  background-clip: content-box;
 }
 
 /* Padding on the canvas element itself (not a wrapper) so the drawn content
@@ -1131,6 +1152,12 @@
   color: transparent;
   caret-color: transparent;
   outline: none;
+  /* It covers the canvas, so the wheel reaches IT, and a textarea holding
+     more text than fits scrolls itself — invisibly, while the handwriting
+     underneath stays put and the Typer looks like it cannot scroll at all.
+     Its own scrolling is switched off and the wheel is forwarded to the
+     canvas viewport instead (see EditorPanel's onWheel). */
+  overflow: hidden;
 }
 
 .charsetOption {

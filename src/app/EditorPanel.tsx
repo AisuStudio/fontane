@@ -206,6 +206,8 @@ export default function EditorPanel({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [caretIndex, setCaretIndex] = useState(0);
   const [caretVisible, setCaretVisible] = useState(true);
+  // Which caret position the viewport was last scrolled to follow.
+  const lastScrolledCaret = useRef(-1);
   const sizeFactor = (fontSize * PT_TO_PX) / REFERENCE_CAP_HEIGHT_PX;
 
   function syncCaret(e: { currentTarget: HTMLTextAreaElement }) {
@@ -408,6 +410,26 @@ export default function EditorPanel({
         }
       }
 
+      // Follow the caret when it moves, and only then: scrolling on every
+      // repaint would fight anyone who scrolled up to look at something while
+      // the blink timer kept firing.
+      if (caretDrawn && caretIndex !== lastScrolledCaret.current) {
+        lastScrolledCaret.current = caretIndex;
+        // The canvas's own CSS padding sits between the element's top and the
+        // drawing surface, so canvas coordinates need it added to become
+        // scroll coordinates.
+        const padTop = parseFloat(getComputedStyle(canvas!).paddingTop) || 0;
+        const top = padTop + caretTop;
+        const bottom = padTop + caretBottom;
+        const view = scrollEl!;
+        const margin = 24;
+        if (bottom > view.scrollTop + view.clientHeight - margin) {
+          view.scrollTop = bottom - view.clientHeight + margin;
+        } else if (top < view.scrollTop + margin) {
+          view.scrollTop = Math.max(0, top - margin);
+        }
+      }
+
       if (caretDrawn && caretVisible) {
         ctx!.save();
         ctx!.strokeStyle = INK_COLOR;
@@ -445,6 +467,14 @@ export default function EditorPanel({
           onKeyUp={syncCaret}
           onClick={syncCaret}
           onFocus={syncCaret}
+          // The input covers the canvas, so it is what the wheel reaches.
+          // Hand the scroll to the viewport underneath, which is the thing
+          // that actually has somewhere to go.
+          onWheel={(e) => {
+            const el = scrollRef.current;
+            if (!el) return;
+            el.scrollTop += e.deltaY;
+          }}
           placeholder=""
           spellCheck={false}
           autoFocus
