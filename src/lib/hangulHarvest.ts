@@ -176,15 +176,18 @@ export function variantCellSize(role: JamoRole, cellSize: number): { width: numb
 // started. widthScale is the same field the Scale tool bakes, for the same
 // reason.
 //
-// `lighten` is the one deliberate departure: real Korean faces do take a
-// little weight out of a dense batchim so the syllable doesn't clot, on the
-// order of 5-15%. Default 1 (none) — it is a design decision, not a default.
+// `weight` is the one deliberate departure, and the only knob that changes
+// how a harvested part looks: it multiplies thickness and nothing else, so no
+// point ever moves. 1 is exactly as drawn. Below it for a dense batchim, which
+// clots at full weight — real Korean faces take 5-15% out of one; above it for
+// a sparse one that would otherwise disappear into its band. A design
+// decision, which is why it has no opinionated default.
 export function harvestSlot(
   slot: HarvestSlot,
   strokes: HarvestStroke[],
   assignment: Record<string, SlotKey>,
   cellSize: number,
-  lighten = 1
+  weight = 1
 ): HarvestResult | null {
   if (!slot.role) return null;
   const mine = strokes.filter((s) => assignment[s.id] === slot.key);
@@ -202,7 +205,7 @@ export function harvestSlot(
     strokes: mine.map((s) => ({
       id: s.id,
       points: s.points.map((p) => [(p[0] - slot.rect.x) * k, (p[1] - slot.rect.y) * k, p[2] ?? 0.5]),
-      widthScale: (s.widthScale ?? 1) * k * lighten,
+      widthScale: (s.widthScale ?? 1) * k * weight,
     })),
   };
 }
@@ -215,11 +218,11 @@ export function harvestSyllable(
   cellHeight: number,
   cellSize: number,
   assignment?: Record<string, SlotKey>,
-  lighten = 1
+  weight = 1
 ): HarvestResult[] {
   const slots = harvestSlots(char, cellWidth, cellHeight);
   const map = assignment ?? assignStrokes(slots, strokes);
   return slots
-    .map((slot) => harvestSlot(slot, strokes, map, cellSize, lighten))
+    .map((slot) => harvestSlot(slot, strokes, map, cellSize, weight))
     .filter((r): r is HarvestResult => r !== null);
 }

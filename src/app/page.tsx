@@ -2124,7 +2124,7 @@ export default function Home() {
   // take a little out of a dense one so the syllable doesn't clot — 5-15% is
   // the range designers work in. 1 = none, which is the honest default: it is
   // a design decision, not a correction.
-  const [batchimLighten, setBatchimLighten] = useState(1);
+  const [batchimWeight, setBatchimWeight] = useState(1);
 
   // What could be lifted out of the syllables that are actually drawn. Also
   // the preview: every row here becomes one variant glyph, and seeing the
@@ -2150,12 +2150,12 @@ export default function Home() {
             g.cellHeight as number,
             CANONICAL_CELL,
             undefined,
-            batchimLighten
+            batchimWeight
           ),
         };
       })
       .filter((h) => h.results.length > 0);
-  }, [glyphs, activeScript, batchimLighten]);
+  }, [glyphs, activeScript, batchimWeight]);
 
   // Write the harvested parts out as variant glyphs.
   //
@@ -7033,20 +7033,21 @@ export default function Home() {
                   ))}
                 </ul>
                 <label className={styles.sliderRow}>
-                  <span>Lighten</span>
+                  <span>Weight</span>
                   <input
                     type="range"
-                    min={0.85}
-                    max={1}
+                    min={0.8}
+                    max={1.3}
                     step={0.01}
-                    value={batchimLighten}
-                    onChange={(e) => setBatchimLighten(Number(e.target.value))}
+                    value={batchimWeight}
+                    onChange={(e) => setBatchimWeight(Number(e.target.value))}
                   />
-                  <span className={styles.val}>{Math.round((1 - batchimLighten) * 100)}%</span>
+                  <span className={styles.val}>{Math.round(batchimWeight * 100)}%</span>
                 </label>
                 <p className={styles.settingsNote}>
-                  A dense batchim clots at full weight; real Korean faces take 5–15% out of it. 0% keeps exactly what
-                  you drew.
+                  Thickness only — not one point moves. 100% is exactly the weight you drew; a dense batchim often
+                  wants a little less so it doesn&rsquo;t clot, a sparse one a little more so it doesn&rsquo;t vanish.
+                  Harvest again to apply — it replaces, so nothing drifts.
                 </p>
                 <button type="button" className={styles.clearBtn} onClick={harvestBatchim}>
                   Harvest {harvestable.length} batchim
