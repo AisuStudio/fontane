@@ -63,6 +63,66 @@
   --color-cappuccino:#d9d7ce;   /* card / container background */
   --color-vanilla:   #eae8e0;   /* page background */
 
+  /* Flavor ramps — the TERTIARY tier: functional color, five flavors ×
+     five "juicyness" levels. Level 5 = full juice (most saturated / darkest),
+     level 1 = most diluted.
+     The six swatches above are primary (blueberry/grape/lemon — brand and
+     interaction) and secondary (hazelnut/cappuccino/vanilla — surfaces). These
+     are neither: they carry no brand and claim no interaction state, they only
+     encode meaning in content — sequential scales, heatmaps, intensity and
+     priority coding, categorical series. So never reach for a flavor to style
+     chrome (a button, a link, a border); that's what the tiers above are for.
+     For a categorical series, take one level across flavors (4 or 5 reads
+     strongest); for a sequential scale, walk one flavor 1 → 5.
+     Like the core swatches, these are raw values and do NOT repoint in dark
+     mode — only the semantic aliases below do. */
+  --color-pistachio-1: #c4ddb6;
+  --color-pistachio-2: #a6cd93;
+  --color-pistachio-3: #92c982;
+  --color-pistachio-4: #57a03a;
+  --color-pistachio-5: #3e7c1f;
+
+  --color-mango-1:     #f0d9a3;
+  --color-mango-2:     #efcc81;
+  --color-mango-3:     #f2b63c;
+  --color-mango-4:     #f0921a;
+  --color-mango-5:     #ec6608;
+
+  --color-strawberry-1:#f0aaa0;
+  --color-strawberry-2:#e9887b;
+  --color-strawberry-3:#e9634f;
+  --color-strawberry-4:#ee3d28;
+  --color-strawberry-5:#d80b0b;
+
+  --color-raspberry-1: #f5b3d6;
+  --color-raspberry-2: #f192c7;
+  --color-raspberry-3: #ee72b6;
+  --color-raspberry-4: #ea4e9f;
+  --color-raspberry-5: #e6187c;
+
+  --color-chocolate-1: #c2b3a5;
+  --color-chocolate-2: #9f8c7c;
+  --color-chocolate-3: #7a6250;
+  --color-chocolate-4: #4b3225;
+  --color-chocolate-5: #2b1611;
+
+  /* Bare flavor name = full juice, for the common "just give me the color" case */
+  --color-pistachio:  var(--color-pistachio-5);
+  --color-mango:      var(--color-mango-5);
+  --color-strawberry: var(--color-strawberry-5);
+  --color-raspberry:  var(--color-raspberry-5);
+  --color-chocolate:  var(--color-chocolate-5);
+
+  /* Text on a flavor fill — measured against --color-blueberry (ink) and
+     --color-vanilla, same method as the hazelnut fix below. WCAG AA body
+     text needs 4.5:1; large text (≥24px, or ≥18.7px bold) needs 3:1.
+       ink on:      pistachio 1–4 · mango 1–5 · strawberry 1–3 · raspberry 1–4 · chocolate 1–2
+       vanilla on:  chocolate 3–5
+     Four levels clear 3:1 but miss 4.5:1 — pistachio 5 (vanilla, 4.17),
+     strawberry 4 (ink, 4.28), strawberry 5 (vanilla, 4.31), raspberry 5
+     (ink, 3.84). Large text or non-text fills only; for body copy step one
+     level down, or put the label outside the fill. */
+
   /* Semantic aliases */
   --color-bg:       var(--color-vanilla);
   --color-surface:  var(--color-cappuccino);
