@@ -1234,16 +1234,13 @@
    full — so the state of the whole process reads in one glance without any
    text being parsed.
 
-   PLACEHOLDER COLOURS. The intended palette is blueberry on hazelnut /
-   mango-3 / pistachio, and the last two ship with Waffle. Only the two
-   custom properties below change when they land; nothing else here knows
-   which colour it is drawing. --step-done also carries its own foreground
-   because grape is dark — pistachio will take blueberry like the others. */
+   Blueberry on hazelnut, then mango, then pistachio — the same ink
+   throughout, so only the fill carries the meaning. Named here rather than
+   used inline so the three states stay one decision. */
 :root {
   --step-untouched: var(--color-hazelnut);
-  --step-progress: var(--color-lemon); /* -> mango-3 */
-  --step-done: var(--color-grape); /* -> pistachio */
-  --step-done-ink: var(--color-vanilla); /* -> var(--color-blueberry) */
+  --step-progress: var(--color-mango-3);
+  --step-done: var(--color-pistachio-3);
 }
 
 .gridSteps {
@@ -1306,7 +1303,6 @@
 
 .gridStepDot_done {
   background: var(--step-done);
-  color: var(--step-done-ink);
 }
 
 /* Where you are, as a ring rather than another fill — the fill is already

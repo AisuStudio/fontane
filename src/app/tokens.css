@@ -63,6 +63,24 @@
   --color-cappuccino:#d9d7ce;   /* card / container background */
   --color-vanilla:   #eae8e0;   /* page background */
 
+  /* Ramps, from waffle (waffle.aisu.studio) — copied in full rather than
+     just the two steps in use, so reaching for a lighter or darker one
+     later doesn't mean another trip to the design system. Blueberry reads
+     on every step up to 3. */
+  --color-pistachio-1: #c4ddb6;
+  --color-pistachio-2: #a6cd93;
+  --color-pistachio-3: #92c982;
+  --color-pistachio-4: #57a03a;
+  --color-pistachio-5: #3e7c1f;
+  --color-pistachio:   var(--color-pistachio-5);
+
+  --color-mango-1: #f0d9a3;
+  --color-mango-2: #efcc81;
+  --color-mango-3: #f2b63c;
+  --color-mango-4: #f0921a;
+  --color-mango-5: #ec6608;
+  --color-mango:   var(--color-mango-5);
+
   /* Semantic aliases */
   --color-bg:       var(--color-vanilla);
   --color-surface:  var(--color-cappuccino);
