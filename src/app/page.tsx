@@ -553,18 +553,43 @@ function fromAnchorSpace(
   if (!anchorWidth || !anchorHeight || (anchorWidth === currentWidth && anchorHeight === currentHeight)) {
     return points;
   }
-  let scaleX = currentWidth / anchorWidth;
-  let scaleY = currentHeight / anchorHeight;
-  if (keepProportions) scaleX = scaleY = Math.min(scaleX, scaleY);
+  const { scaleX, scaleY } = anchorScales(anchorWidth, anchorHeight, currentWidth, currentHeight, keepProportions);
   return points.map(([x, y, p]) => [x * scaleX, y * scaleY, p] as StrokePoint);
 }
 
-// Same scale fromAnchorSpace applies to a glyph's points, but as a single
-// number for stroke width — a non-uniform (keepProportions off) X/Y stretch
-// has no one "correct" width scale, so this uses the same geometric-mean
-// convention as the Scale tool's own widthScale bake-in (page.tsx's
-// handleTransformPointerDown), which is symmetric for a pure width- or
-// height-only change and a reasonable average otherwise.
+// The two axes a glyph is rescaled by, and the one place that decides how
+// Width interacts with them.
+//
+// Height carries only the zoom: a cell's height is cellSize x the script's
+// aspect and never consults the Width ratio, so scaleY is the uniform part
+// of the transform. Width is the deliberate distortion — an "m" wants more
+// room than an "i" — and it is horizontal, full stop. It must never reach
+// the vertical axis, which is what "keepProportions = min of both" used to
+// do: narrowing a cell shrank the letter's height with it.
+//
+// So keepProportions now means "ignore Width, stay undistorted" (scaleX
+// follows scaleY) rather than "let the narrower axis win". Either way the
+// vertical axis answers to the zoom alone.
+function anchorScales(
+  anchorWidth: number,
+  anchorHeight: number,
+  currentWidth: number,
+  currentHeight: number,
+  keepProportions: boolean
+): { scaleX: number; scaleY: number } {
+  const scaleY = currentHeight / anchorHeight;
+  return { scaleX: keepProportions ? scaleY : currentWidth / anchorWidth, scaleY };
+}
+
+// The same rescale expressed as one number for stroke thickness.
+//
+// Deliberately the VERTICAL scale, not the geometric mean of both: a stroke
+// stores a centreline, and the ink is laid along it at render time. Squeezing
+// a skeleton horizontally is what a compressed cut does, and it leaves the
+// pen alone — stems keep their weight, exactly as they do in a stroke-based
+// font. Folding the horizontal squeeze in (the old sqrt(scaleX * scaleY))
+// thinned every letter as the Width slider moved, which is a weight change
+// nobody asked a width control for.
 function anchorSpaceWidthScale(
   anchorWidth: number | undefined,
   anchorHeight: number | undefined,
@@ -573,10 +598,7 @@ function anchorSpaceWidthScale(
   keepProportions = false
 ): number {
   if (!anchorWidth || !anchorHeight) return 1;
-  let scaleX = currentWidth / anchorWidth;
-  let scaleY = currentHeight / anchorHeight;
-  if (keepProportions) scaleX = scaleY = Math.min(scaleX, scaleY);
-  return Math.sqrt(Math.abs(scaleX * scaleY));
+  return Math.abs(anchorScales(anchorWidth, anchorHeight, currentWidth, currentHeight, keepProportions).scaleY);
 }
 
 function toAnchorSpace(
@@ -590,9 +612,7 @@ function toAnchorSpace(
   if (!anchorWidth || !anchorHeight || (anchorWidth === currentWidth && anchorHeight === currentHeight)) {
     return points;
   }
-  let scaleX = currentWidth / anchorWidth;
-  let scaleY = currentHeight / anchorHeight;
-  if (keepProportions) scaleX = scaleY = Math.min(scaleX, scaleY);
+  const { scaleX, scaleY } = anchorScales(anchorWidth, anchorHeight, currentWidth, currentHeight, keepProportions);
   return points.map(([x, y, p]) => [x / scaleX, y / scaleY, p] as StrokePoint);
 }
 
@@ -618,9 +638,9 @@ function vectorShapeAcrossAnchorSpace(
   let scaleX = 1;
   let scaleY = 1;
   if (anchorWidth && anchorHeight) {
-    scaleX = currentWidth / anchorWidth;
-    scaleY = currentHeight / anchorHeight;
-    if (keepProportions) scaleX = scaleY = Math.min(scaleX, scaleY);
+    // Same two factors the strokes use, from the same place — vector shapes
+    // and ink share a cell and must never drift apart under Width or zoom.
+    ({ scaleX, scaleY } = anchorScales(anchorWidth, anchorHeight, currentWidth, currentHeight, keepProportions));
   }
   if (invert) {
     scaleX = 1 / scaleX;
