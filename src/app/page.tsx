@@ -2162,10 +2162,16 @@ export default function Home() {
   // version offers.
   const harvestable = useMemo(() => {
     if (activeScript !== "hangul") return [] as { char: string; results: HarvestResult[] }[];
-    const wanted = new Set(harvestSyllables().map((s) => s.char));
     const byId = new Map(completedRef.current.map((s) => [s.id, s]));
+    // Deliberately NOT filtered against the practice sheet. Matching names
+    // made the sheet's exact contents load-bearing, and reordering it (which
+    // also reshuffles which vowel each consonant gets) silently orphaned
+    // fourteen finished drawings: 혛 had been drawn, the new sheet asked for
+    // 핳, and the harvest simply stopped seeing them. Any drawn syllable with
+    // a batchim is a valid source — harvestSyllable returns nothing for the
+    // rest, which is the only filter needed.
     return glyphs
-      .filter((g) => wanted.has(g.name) && g.strokeIds.length > 0 && g.cellWidth && g.cellHeight)
+      .filter((g) => g.strokeIds.length > 0 && g.cellWidth && g.cellHeight)
       .map((g) => {
         const strokes = g.strokeIds.map((id) => byId.get(id)).filter((s): s is Stroke => Boolean(s));
         return {
