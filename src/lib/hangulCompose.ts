@@ -19,7 +19,7 @@ import {
   BASIC_CONSONANTS,
   BASIC_JAMO,
   BASIC_VOWELS,
-  DEFAULT_LAYOUT,
+  activeLayout,
   JAMO_OPTICAL_WEIGHT,
   SYLLABLE_BASE,
   SYLLABLE_LAST,
@@ -269,11 +269,11 @@ export function partTransform(
 // contexts; a vowel keeps to the orientation it is written in.
 function contextRectsFor(jamo: string): Rect[] {
   if (BASIC_CONSONANTS.includes(jamo)) {
-    return [DEFAULT_LAYOUT.V.initial, DEFAULT_LAYOUT.H.initial, DEFAULT_LAYOUT.VT.final!];
+    return [activeLayout().V.initial, activeLayout().H.initial, activeLayout().VT.final!];
   }
   if (!BASIC_VOWELS.includes(jamo)) return [];
   const cls = layoutClassFor(jamo, false);
-  const rect = cls === "V" ? DEFAULT_LAYOUT.V.medialV : DEFAULT_LAYOUT.H.medialH;
+  const rect = cls === "V" ? activeLayout().V.medialV : activeLayout().H.medialH;
   return rect ? [rect] : [];
 }
 

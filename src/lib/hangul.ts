@@ -203,11 +203,41 @@ const VARIANT_CLASSES: Record<JamoRole, LayoutClass[]> = {
   fin: ["VT", "HT", "MT"],
 };
 
+// ---------------------------------------------------------------------------
+// The table in force, which is not always the guessed one
+// ---------------------------------------------------------------------------
+//
+// DEFAULT_LAYOUT is a guess (see its comment). hangulMeasure.ts can read the
+// real proportions off someone's own drawn syllables, and once it has, THOSE
+// are the numbers every part of the app has to use — placement, the variant
+// cell shapes, the pen-fit advice, the harvest. One value, read from one
+// place, or the parts of a syllable stop agreeing about where they are.
+//
+// Module state rather than a threaded parameter, deliberately: there is
+// exactly one document open at a time, and the alternative is passing a table
+// through every call in the export, the preview, the Typer and the harvest so
+// that four call sites can pass the same thing. Callers that genuinely want a
+// different table still pass one — placementFor's parameter is unchanged.
+let layoutInForce: LayoutTable = DEFAULT_LAYOUT;
+
+export function activeLayout(): LayoutTable {
+  return layoutInForce;
+}
+
+// Replace the VT class only. That is the one the measurement can actually
+// read — every syllable on the practice sheet has a batchim, which is what
+// makes it class VT — and inventing the other five from it would be the same
+// guessing this exists to end. Pass null to go back to the table as shipped.
+export function setMeasuredLayout(vt: ClassLayout | null) {
+  layoutInForce = vt ? { ...DEFAULT_LAYOUT, VT: vt } : DEFAULT_LAYOUT;
+}
+
 // Derived from the layout table rather than typed out, so a cell can't end up
 // shaped unlike the slot it feeds. The representative class is the first one
 // the context covers.
 function slotSize(cls: LayoutClass, which: "initial" | "final"): { w: number; h: number } {
-  const rect = which === "initial" ? DEFAULT_LAYOUT[cls].initial : DEFAULT_LAYOUT[cls].final!;
+  const layout = activeLayout()[cls];
+  const rect = which === "initial" ? layout.initial : layout.final!;
   return { w: rect.w, h: rect.h };
 }
 
@@ -231,9 +261,14 @@ function slotSize(cls: LayoutClass, which: "initial" | "final"): { w: number; h:
 //
 // If an initial ever does turn out to need one, it comes back as TWO contexts,
 // with and without a batchim — which is the split that would actually work.
-export const JAMO_VARIANTS: JamoVariant[] = [
-  { role: "fin", label: "Batchim · under the syllable", example: "각", ...slotSize("VT", "final") },
-];
+// A function, not a constant, and that matters more than it looks: a variant
+// cell takes its shape FROM the slot it will fill, and that shared factor is
+// the whole mechanism keeping the stroke weight even. Evaluated once at import
+// it would keep the shipped guess forever, so adopting a measured layout would
+// silently leave every batchim cell shaped for the table it replaced.
+export function jamoVariants(): JamoVariant[] {
+  return [{ role: "fin", label: "Batchim · under the syllable", example: "각", ...slotSize("VT", "final") }];
+}
 
 // Variants are named, not encoded: "ㄱ.fin" is not a single codepoint, so
 // unicodeFor() gives it no cmap entry and it can't be typed — exactly right
@@ -245,7 +280,7 @@ export function variantName(jamo: string, role: JamoRole): string {
 }
 
 export function allVariantSlots(): { name: string; base: string; role: JamoRole; w: number; h: number }[] {
-  return JAMO_VARIANTS.flatMap((v) =>
+  return jamoVariants().flatMap((v) =>
     BASIC_CONSONANTS.map((jamo) => ({
       name: variantName(jamo, v.role),
       base: jamo,
@@ -309,7 +344,7 @@ const BATCHIM_ROOM: Record<string, number> = {
 // designer sets weight from the tightest counter; this is that counter, in a
 // number the app can show before fourteen drawings have gone by.
 export function batchimPenLimit(jamo: string): number {
-  return (DEFAULT_LAYOUT.VT.final?.h ?? 0.27) / (BATCHIM_ROOM[jamo] ?? 3);
+  return (activeLayout().VT.final?.h ?? 0.27) / (BATCHIM_ROOM[jamo] ?? 3);
 }
 
 // Hardest first.
@@ -473,7 +508,7 @@ export type JamoPlacement = {
 // composed?" test without a second range check.
 export function placementFor(
   codepoint: number,
-  layout: LayoutTable = DEFAULT_LAYOUT,
+  layout: LayoutTable = activeLayout(),
   // "does a glyph by this name exist and have ink" — supplied by whoever holds
   // the document. Omitted means "no variants", which is what every caller saw
   // before variants existed.

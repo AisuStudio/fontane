@@ -11,7 +11,9 @@ import {
   BASIC_JAMO,
   DEFAULT_LAYOUT,
   EM_BOX_FRACTION,
-  JAMO_VARIANTS,
+  setMeasuredLayout,
+  type ClassLayout,
+  jamoVariants,
   allVariantSlots,
   batchimPenLimit,
   coverage,
@@ -247,6 +249,10 @@ const SLOT_COLOUR: Record<SlotKey, string> = {
   final: "#d8ff01",
 };
 const STRAY_COLOUR = "#ff8b6b";
+
+// Where a measured layout table is remembered. One per document, like every
+// other fontane.*.v1 key.
+const MEASURED_LAYOUT_KEY = "fontane.hangulLayout.v1";
 
 const CANONICAL_CELL = 240;
 const MIN_ZOOM = 0.25;
@@ -1841,7 +1847,7 @@ export default function Home() {
             first: syllableSlots[0]?.name,
           },
           { id: "grp-basic", label: "Jamo · the basics", example: "ㄱ", count: BASIC_JAMO.length, first: setSlots[0]?.name },
-          ...JAMO_VARIANTS.map((v) => ({
+          ...jamoVariants().map((v) => ({
             id: `grp-${v.role}`,
             label: v.label,
             example: v.example,
@@ -2202,6 +2208,45 @@ export default function Home() {
     if (measured.length === 0) return null;
     return { measured, summary: summarise(measured) };
   }, [glyphs, activeScript]);
+
+  // Whether the measured table is the one in force.
+  //
+  // Applied straight from the lazy initializer rather than an effect: the
+  // layout has to be right on the FIRST render, or the first paint of every
+  // Hangul cell uses the shipped guess and then jumps. Safe against hydration
+  // for the same reason the script tabs are — activeScript starts "latin" on
+  // both sides, so no Hangul geometry is ever rendered on the server.
+  const [measuredLayoutOn, setMeasuredLayoutOn] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const raw = window.localStorage.getItem(MEASURED_LAYOUT_KEY);
+      if (!raw) return false;
+      setMeasuredLayout(JSON.parse(raw) as ClassLayout);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  function applyMeasuredLayout() {
+    const s = layoutMeasurement?.summary;
+    if (!s?.initial || !s?.medial || !s?.final) return;
+    const rect = (r: { x: number; y: number; w: number; h: number }) => ({ x: r.x, y: r.y, w: r.w, h: r.h });
+    const vt: ClassLayout = { initial: rect(s.initial), medialV: rect(s.medial), final: rect(s.final) };
+    setMeasuredLayout(vt);
+    window.localStorage.setItem(MEASURED_LAYOUT_KEY, JSON.stringify(vt));
+    setMeasuredLayoutOn(true);
+    // Nothing recomputes on its own: the table lives in a module, so every
+    // cell, preview and readout has to be told to look again.
+    setGlyphs((gs) => [...gs]);
+  }
+
+  function revertMeasuredLayout() {
+    setMeasuredLayout(null);
+    window.localStorage.removeItem(MEASURED_LAYOUT_KEY);
+    setMeasuredLayoutOn(false);
+    setGlyphs((gs) => [...gs]);
+  }
 
   // How much weight to take out of a harvested batchim. Real Korean faces do
   // take a little out of a dense one so the syllable doesn't clot — 5-15% is
@@ -7300,8 +7345,18 @@ export default function Home() {
                     </ul>
                     <p className={styles.settingsNote}>
                       Read from {layoutMeasurement.summary.final.n} of your syllables (yours, then the table&rsquo;s
-                      guess). Nothing is applied — changing the table moves the parts of all 11,172 syllables.
+                      guess). Adopting them moves the parts of all 11,172 syllables — and stops strokes falling
+                      outside every slot, which is where the guessed marks above come from.
                     </p>
+                    {measuredLayoutOn ? (
+                      <button type="button" className={styles.clearBtn} onClick={revertMeasuredLayout}>
+                        Back to the shipped layout
+                      </button>
+                    ) : (
+                      <button type="button" className={styles.clearBtn} onClick={applyMeasuredLayout}>
+                        Use my layout
+                      </button>
+                    )}
                   </>
                 )}
               </SettingsSection>

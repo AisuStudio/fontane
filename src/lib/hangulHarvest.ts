@@ -17,8 +17,8 @@
 // cell too, exactly as overshoot does everywhere else in the app.
 
 import {
-  DEFAULT_LAYOUT,
-  JAMO_VARIANTS,
+  activeLayout,
+  jamoVariants,
   decompose,
   emBox,
   layoutClassFor,
@@ -64,7 +64,7 @@ export function harvestSlots(char: string, cellWidth: number, cellHeight: number
     h: r.h * box.size,
   });
 
-  const layout = DEFAULT_LAYOUT[cls];
+  const layout = activeLayout()[cls];
   const out: HarvestSlot[] = [];
   if (layout.initial) out.push({ key: "initial", role: initialRole(cls), base: parts.initial, rect: toCell(layout.initial) });
   if (layout.medialV) out.push({ key: "medialV", role: null, base: parts.medial, rect: toCell(layout.medialV) });
@@ -179,7 +179,7 @@ export type HarvestResult = {
 // shared factor IS the even stroke weight. Do not "fix" this by giving the
 // cells a common width.
 export function variantCellSize(role: JamoRole, cellSize: number): { width: number; height: number } {
-  const v = JAMO_VARIANTS.find((x) => x.role === role);
+  const v = jamoVariants().find((x) => x.role === role);
   if (!v) return { width: cellSize, height: cellSize };
   return { width: cellSize * v.w, height: cellSize * v.h };
 }
