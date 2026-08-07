@@ -2,9 +2,10 @@ import { BASIC_CONSONANTS, BASIC_VOWELS } from "./hangul";
 
 // Which writing system a set belongs to. Not a taxonomy for its own sake —
 // it decides cell geometry: Latin, Cyrillic and Greek all sit on the same
-// baseline with an x-height above it, so they share one Grid tab and one set
-// of metrics. Hangul doesn't have a baseline at all; a syllable fills a
-// square em box. Those two facts can't live in the same grid.
+// baseline with an x-height above it, so they share one set of metrics.
+// Hangul doesn't have a baseline at all; a syllable fills a square em box.
+// Those two facts can't live in the same grid. Which TAB a set appears
+// under is a separate, coarser-grained choice — see GRID_TABS below.
 export type ScriptId = "latin" | "hangul";
 
 export type Script = {
@@ -29,6 +30,29 @@ export function scriptById(id: ScriptId): Script {
   return SCRIPTS.find((s) => s.id === id) ?? SCRIPTS[0];
 }
 
+// What the Grid's tab row switches between. A tab is NOT a script: Cyrillic
+// and Greek share Latin's cell geometry and metrics (same baseline, same
+// x-height), but each is its own complete drawing job — an alphabet you
+// finish, not an extension of A–Z. So once switched on they get their own
+// tab instead of lengthening the Latin wall, while accent/figure/symbol
+// sets stay inside the Latin tab because they only make sense next to it.
+export type GridTabId = "latin" | "cyrillic" | "greek" | "hangul";
+
+export type GridTab = { id: GridTabId; label: string; script: ScriptId };
+
+export const GRID_TABS: GridTab[] = [
+  { id: "latin", label: "Latin", script: "latin" },
+  { id: "cyrillic", label: "Cyrillic", script: "latin" },
+  { id: "greek", label: "Greek", script: "latin" },
+  { id: "hangul", label: "Hangul", script: "hangul" },
+];
+
+export const DEFAULT_TAB: GridTabId = "latin";
+
+export function gridTabById(id: GridTabId): GridTab {
+  return GRID_TABS.find((t) => t.id === id) ?? GRID_TABS[0];
+}
+
 export type CharacterSet = {
   id: string;
   label: string;
@@ -36,10 +60,17 @@ export type CharacterSet = {
   // Undefined means "latin" — every set that existed before Hangul stays
   // untouched rather than getting a field added to each one.
   script?: ScriptId;
+  // Which Grid tab the set's cells appear under. Undefined = derived: the
+  // Latin tab for latin-script sets, the Hangul tab for hangul ones.
+  tab?: GridTabId;
 };
 
 export function scriptOf(set: CharacterSet): ScriptId {
   return set.script ?? "latin";
+}
+
+export function tabOf(set: CharacterSet): GridTabId {
+  return set.tab ?? (scriptOf(set) === "hangul" ? "hangul" : "latin");
 }
 
 const LATIN_BASIC: string[] = [
@@ -143,8 +174,8 @@ export const CHARACTER_SETS: CharacterSet[] = [
   { id: "latin-basic", label: "Latin Basic", chars: LATIN_BASIC },
   { id: "central-european", label: "Central European", chars: CENTRAL_EUROPEAN_EXTRA },
   { id: "western-european", label: "Western European", chars: WESTERN_EUROPEAN_EXTRA },
-  { id: "cyrillic", label: "Cyrillic", chars: CYRILLIC },
-  { id: "greek", label: "Greek", chars: GREEK },
+  { id: "cyrillic", label: "Cyrillic", chars: CYRILLIC, tab: "cyrillic" },
+  { id: "greek", label: "Greek", chars: GREEK, tab: "greek" },
   { id: "numbers", label: "Numbers", chars: NUMBERS },
   { id: "punctuation", label: "Punctuation", chars: PUNCTUATION },
   { id: "symbols", label: "Symbols", chars: SYMBOLS },
@@ -155,13 +186,13 @@ export function setsForScript(script: ScriptId): CharacterSet[] {
   return CHARACTER_SETS.filter((s) => scriptOf(s) === script);
 }
 
-// Which scripts the user currently has switched on, in SCRIPTS order. The
-// Grid's script tab row keys off this: with one script active there is
-// nothing to switch between, so no tab row is drawn at all and a Latin-only
-// user never sees that the concept exists.
-export function activeScripts(activeSetIds: Set<string>): ScriptId[] {
-  return SCRIPTS.map((s) => s.id).filter((id) =>
-    CHARACTER_SETS.some((set) => activeSetIds.has(set.id) && scriptOf(set) === id)
+// Which tabs the user's switched-on sets currently span, in GRID_TABS order.
+// The Grid's tab row keys off this: with one tab active there is nothing to
+// switch between, so no tab row is drawn at all and a Latin-only user never
+// sees that the concept exists.
+export function activeTabs(activeSetIds: Set<string>): GridTabId[] {
+  return GRID_TABS.map((t) => t.id).filter((id) =>
+    CHARACTER_SETS.some((set) => activeSetIds.has(set.id) && tabOf(set) === id)
   );
 }
 

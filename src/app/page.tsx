@@ -119,11 +119,14 @@ import BetaBadge from "./BetaBadge";
 import {
   CHARACTER_SETS,
   DEFAULT_CHARACTER_SET_IDS,
-  DEFAULT_SCRIPT,
+  DEFAULT_TAB,
   SCRIPTS,
-  activeScripts,
+  activeTabs,
+  gridTabById,
   scriptById,
   scriptOf,
+  tabOf,
+  type GridTabId,
   type ScriptId,
 } from "@/lib/charsets";
 import AnimatePanel from "./AnimatePanel";
@@ -888,6 +891,30 @@ function cellAspectFor(script: ScriptId): number {
   return scriptById(script).aspect;
 }
 
+// Cells are per tab, not one flat wall: Latin and Hangul cells have
+// different proportions and different guides, and Cyrillic/Greek — same
+// geometry as Latin — are their own drawing jobs with their own tab.
+// Fixed sets carry their tab explicitly; user-created slots (tagged in
+// Free, or added by hand) are filed by what they're actually written in:
+// Cyrillic U+0400–04FF and Greek-and-Coptic U+0370–03FF cover every char
+// in the fixed sets (ё, the tonos forms and final sigma included) plus
+// what a user would plausibly hand-add for either alphabet.
+function slotTab(name: string): GridTabId {
+  if (isHangulChar(name)) return "hangul";
+  const cp = name.codePointAt(0) ?? 0;
+  if (cp >= 0x0400 && cp <= 0x04ff) return "cyrillic";
+  if (cp >= 0x0370 && cp <= 0x03ff) return "greek";
+  return "latin";
+}
+
+// Geometry family of a slot, for the places that reason about cell shape
+// and stroke weight rather than grid membership: Latin, Cyrillic and Greek
+// letters end up in the same running text, so weight-evenness checks must
+// keep spanning all three tabs the way they did when tabs WERE scripts.
+function slotScript(name: string): ScriptId {
+  return gridTabById(slotTab(name)).script;
+}
+
 // A context variant is drawn in a cell shaped like the slot it will fill: the
 // batchim cell is a wide band, the beside-a-vertical-vowel cell is tall and
 // narrow. That is the entire mechanism by which variants keep their stroke
@@ -1307,7 +1334,13 @@ export default function Home() {
 
   // Which script's cells the Grid is showing. Only meaningful when more than
   // one script is switched on — see activeScripts() in charsets.ts.
-  const [activeScript, setActiveScript] = useState<ScriptId>(DEFAULT_SCRIPT);
+  const [activeTab, setActiveTab] = useState<GridTabId>(DEFAULT_TAB);
+  // Geometry follows the tab: Cyrillic and Greek draw on Latin cells; only
+  // the Hangul tab switches to em-square cells. Everything that cares about
+  // cell shape or Hangul-only machinery keys off this derived value, which
+  // is why those call sites didn't change when tabs stopped being 1:1 with
+  // scripts.
+  const activeScript: ScriptId = gridTabById(activeTab).script;
   // Extra Grid cells beyond the fixed character sets — this is the only way
   // to get a ligature/alternate slot into Grid view at all (Free mode's
   // Assign panel already supports both kinds via lasso-tagging; Grid drawing
@@ -1535,11 +1568,11 @@ export default function Home() {
     // Follow the user to whatever they just switched on — turning on the
     // Jamo set and then still staring at Latin cells reads as the toggle
     // having done nothing. Switching one off can equally strand the Grid on
-    // a script with no cells left, so fall back to whatever remains.
+    // a tab with no cells left, so fall back to whatever remains.
     const set = CHARACTER_SETS.find((s) => s.id === id);
-    const scripts = activeScripts(next);
-    if (turnedOn && set) setActiveScript(scriptOf(set));
-    else if (!scripts.includes(activeScript)) setActiveScript(scripts[0] ?? DEFAULT_SCRIPT);
+    const tabs = activeTabs(next);
+    if (turnedOn && set) setActiveTab(tabOf(set));
+    else if (!tabs.includes(activeTab)) setActiveTab(tabs[0] ?? DEFAULT_TAB);
   }
 
   function updateMetric(key: keyof Metrics, value: number) {
@@ -1796,20 +1829,13 @@ export default function Home() {
     )
     .map((g): GridSlot => ({ name: g.name, kind: g.kind, components: g.components, alternateOf: g.alternateOf }));
 
-  // Cells are per script, not one flat wall: Latin and Hangul cells have
-  // different proportions and different guides, so they can't share a grid
-  // even when the same font contains both. Fixed sets carry their script
-  // explicitly; user-created slots (tagged in Free, or added by hand) are
-  // filed by what they're actually written in.
-  const slotScript = (name: string): ScriptId => (isHangulChar(name) ? "hangul" : "latin");
-
   // The cells that come from a switched-on character set — the 24 jamo for
   // Hangul, A-Z and friends for Latin. Named rather than inlined because
   // gridGroups below has to point at this list's first cell specifically: it
   // used to read gridSlots[0], which meant "whatever happens to be first",
   // and putting the syllables in front would have labelled a syllable "Jamo".
   const setSlots: GridSlot[] = CHARACTER_SETS.filter(
-    (s) => activeSetIds.has(s.id) && scriptOf(s) === activeScript
+    (s) => activeSetIds.has(s.id) && tabOf(s) === activeTab
   )
     .flatMap((s) => s.chars)
     .map((name): GridSlot => ({ name, kind: "base" }));
@@ -1823,31 +1849,31 @@ export default function Home() {
     ...syllableSlots,
     ...setSlots,
     ...variantSlots,
-    ...taggedSlots.filter((s) => slotScript(s.name) === activeScript),
-    ...extraGridSlots.filter((s) => slotScript(s.name) === activeScript),
+    ...taggedSlots.filter((s) => slotTab(s.name) === activeTab),
+    ...extraGridSlots.filter((s) => slotTab(s.name) === activeTab),
   ];
 
   // Same hydration guard as panelReady/firstStepReady below: activeSetIds is
   // read from localStorage in a lazy initializer, so the server renders the
   // default (Latin only) while a returning Hangul user's client render has
-  // two scripts — and a tab row that exists on one side and not the other is
-  // a hydration mismatch. Only the row is gated, not the cells: activeScript
+  // two tabs — and a tab row that exists on one side and not the other is
+  // a hydration mismatch. Only the row is gated, not the cells: activeTab
   // starts at "latin" either way, so the cells themselves match.
-  const [scriptsReady, setScriptsReady] = useState(false);
+  const [tabsReady, setTabsReady] = useState(false);
   useEffect(() => {
-    setScriptsReady(true);
-    // ...and land on a script that actually has cells. activeScript starts at
+    setTabsReady(true);
+    // ...and land on a tab that actually has cells. activeTab starts at
     // "latin" on both sides of hydration by design, but a project whose only
     // active set is Hangul then opens on an empty Latin grid with no tab row
-    // to escape it — the row only appears once there are two scripts to
+    // to escape it — the row only appears once there are two tabs to
     // switch between.
-    const available = activeScripts(activeSetIds);
-    if (available.length > 0 && !available.includes(activeScript)) setActiveScript(available[0]);
+    const available = activeTabs(activeSetIds);
+    if (available.length > 0 && !available.includes(activeTab)) setActiveTab(available[0]);
     // Once, on mount: later set changes go through toggleCharacterSet, which
-    // already follows the user to the script they just switched on.
+    // already follows the user to the tab they just switched on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const gridScripts = scriptsReady ? activeScripts(activeSetIds) : [DEFAULT_SCRIPT];
+  const gridTabs = tabsReady ? activeTabs(activeSetIds) : [DEFAULT_TAB];
 
   // Headings only where a wall of cells stops being self-explanatory: 66
   // Hangul cells in one flow give no clue where the basics end and which
@@ -1945,8 +1971,8 @@ export default function Home() {
                   // stops a cell from vanishing.
                   [
                     ...setSlots,
-                    ...taggedSlots.filter((s) => slotScript(s.name) === activeScript),
-                    ...extraGridSlots.filter((s) => slotScript(s.name) === activeScript),
+                    ...taggedSlots.filter((s) => slotTab(s.name) === activeTab),
+                    ...extraGridSlots.filter((s) => slotTab(s.name) === activeTab),
                   ],
           done:
             step.id === "step-syllables" ? syllablesDrawn : step.id === "step-variants" ? variantsDrawn : jamoDrawn,
@@ -6088,15 +6114,15 @@ export default function Home() {
         </div>
       )}
 
-      {/* Script tabs appear only once a second script is switched on. With
-          Latin alone there is nothing to switch between, so a Latin-only
-          user never meets the concept — the same reason the Grid stopped
-          gating on a setup overlay. */}
-      {topMode === "draw" && drawStyle === "grid" && gridScripts.length > 1 && (
-        <div className={styles.scriptTabs} role="tablist" aria-label="Script">
-          {gridScripts.map((id) => {
-            const script = scriptById(id);
-            const active = id === activeScript;
+      {/* Alphabet tabs appear only once a second alphabet is switched on
+          (Cyrillic, Greek or Hangul). With Latin alone there is nothing to
+          switch between, so a Latin-only user never meets the concept — the
+          same reason the Grid stopped gating on a setup overlay. */}
+      {topMode === "draw" && drawStyle === "grid" && gridTabs.length > 1 && (
+        <div className={styles.scriptTabs} role="tablist" aria-label="Alphabet">
+          {gridTabs.map((id) => {
+            const tab = gridTabById(id);
+            const active = id === activeTab;
             return (
               <button
                 key={id}
@@ -6104,13 +6130,13 @@ export default function Home() {
                 role="tab"
                 aria-selected={active}
                 className={`${styles.scriptTab} ${active ? styles.scriptTabActive : ""}`}
-                onClick={() => setActiveScript(id)}
+                onClick={() => setActiveTab(id)}
               >
-                {script.label}
+                {tab.label}
               </button>
             );
           })}
-          {activeScript === "hangul" && (
+          {activeTab === "hangul" && (
             <span className={styles.scriptTabNote}>
               {jamoDrawn} / {BASIC_JAMO.length} jamo · {variantsDrawn} / {allVariantSlots().length} variants ·{" "}
               {hangulCoverage.covered.toLocaleString("en-US")} of {hangulCoverage.total.toLocaleString("en-US")}{" "}
