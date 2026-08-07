@@ -1832,7 +1832,19 @@ export default function Home() {
   // a hydration mismatch. Only the row is gated, not the cells: activeScript
   // starts at "latin" either way, so the cells themselves match.
   const [scriptsReady, setScriptsReady] = useState(false);
-  useEffect(() => setScriptsReady(true), []);
+  useEffect(() => {
+    setScriptsReady(true);
+    // ...and land on a script that actually has cells. activeScript starts at
+    // "latin" on both sides of hydration by design, but a project whose only
+    // active set is Hangul then opens on an empty Latin grid with no tab row
+    // to escape it — the row only appears once there are two scripts to
+    // switch between.
+    const available = activeScripts(activeSetIds);
+    if (available.length > 0 && !available.includes(activeScript)) setActiveScript(available[0]);
+    // Once, on mount: later set changes go through toggleCharacterSet, which
+    // already follows the user to the script they just switched on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const gridScripts = scriptsReady ? activeScripts(activeSetIds) : [DEFAULT_SCRIPT];
 
   // Headings only where a wall of cells stops being self-explanatory: 66
@@ -4670,7 +4682,17 @@ export default function Home() {
   // there is no way to tell the two apart after the fact — so it is a button
   // someone presses, never something that runs on its own. Undo covers it.
   function evenOutStrokeWeights() {
-    const reference = cellSize;
+    // CANONICAL_CELL, not the displayed cell size. Rendered thickness is
+    // size x widthScale x (liveCell / anchor), so a glyph's weight relative to
+    // itself is widthScale / anchor — and normalising against the DISPLAYED
+    // size made that ratio cancel the zoom out entirely: repaired glyphs would
+    // have stayed a fixed number of screen pixels while freshly drawn ones
+    // scale with the view. Evening out would have introduced a second kind of
+    // divergence while fixing the first.
+    //
+    // Against the canonical cell, a glyph drawn today (anchor 240, widthScale
+    // 1) is already normal, and everything older lands on the same ratio.
+    const reference = CANONICAL_CELL;
     const mine = glyphs.filter(
       (g) => slotScript(g.name) === activeScript && g.cellWidth && g.cellHeight && g.strokeIds.length > 0
     );
