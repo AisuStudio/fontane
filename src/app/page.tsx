@@ -2398,14 +2398,16 @@ export default function Home() {
   function harvestBatchim() {
     if (harvestable.length === 0) return;
     pushUndoSnapshot();
-    // First one wins for the jamo: the practice sheet rotates five vowels over
-    // fourteen syllables, so ㅏ turns up three times, and writing it three
-    // times would leave whichever syllable happened to be last.
-    const seenJamo = new Set<string>();
-    const results = harvestable.flatMap((h) => [
-      ...h.results,
-      ...h.jamo.filter((r) => !seenJamo.has(r.name) && (seenJamo.add(r.name), true)),
-    ]);
+    // First one wins, for every target and not just the jamo. Two syllables
+    // can share a final — ㄱ is the batchim of both 각 and 억 — and the sheet
+    // rotates five vowels over fourteen syllables, so ㅏ turns up three times.
+    // Deduping only the jamo left a glyph per SOURCE rather than per target:
+    // nineteen drawn syllables produced nineteen batchim for fourteen names,
+    // which is what the step counter was faithfully reporting as 19 / 14.
+    const seen = new Set<string>();
+    const results = [...harvestable.flatMap((h) => [...h.results, ...h.jamo])].filter(
+      (r) => !seen.has(r.name) && (seen.add(r.name), true)
+    );
     const targets = new Set(results.map((r) => r.name));
     const sourceById = new Map(completedRef.current.map((s) => [s.id, s]));
     const supersededIds = new Set(
