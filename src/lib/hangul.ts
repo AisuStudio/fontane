@@ -586,6 +586,63 @@ export function placementFor(
   return out;
 }
 
+// Every slot a basic jamo can actually be composed into.
+//
+// This is what the weight badge in the grid reports a range over, and the
+// range is only as honest as this list. It used to name three rectangles for a
+// consonant and ONE for a vowel — which made a flat vowel's badge a single
+// number, when ㅡ lands in four differently shaped bands and the fit for a
+// wide thin bar is driven by its length. Measured on composed outlines, ㅡ
+// arrives in 는 at more than twice the pen weight of the ㄴ above it, and the
+// badge said nothing.
+//
+// Derived by walking the syllable structure rather than typed out: which
+// classes a jamo reaches, and whether it shares its slot with a second shape,
+// are facts about Korean already encoded in MEDIALS and CONSONANT_PARTS. A
+// hand-written list would be a fourth place for them to drift.
+export function slotsFor(jamo: string): Rect[] {
+  const layout = activeLayout();
+  const classes: LayoutClass[] = ["V", "VT", "H", "HT", "M", "MT"];
+  const out: Rect[] = [];
+
+  if (BASIC_CONSONANTS.includes(jamo)) {
+    // A consonant is an initial in every class, and a final in the three that
+    // have one — and in a cluster (ㄲ, ㄺ) it gets a share of that slot rather
+    // than the whole of it, which is a narrower box and a lighter stroke. That
+    // narrower case is real and belongs in the range.
+    for (const cls of classes) {
+      for (const source of [COMPAT_L, COMPAT_T]) {
+        const which = source === COMPAT_L ? layout[cls].initial : layout[cls].final;
+        if (!which) continue;
+        for (const whole of source) {
+          if (!whole) continue;
+          const parts = consonantParts(whole);
+          const i = parts.indexOf(jamo);
+          if (i >= 0) out.push(splitRow(which, parts)[i]);
+        }
+      }
+    }
+    return out;
+  }
+
+  if (!BASIC_VOWELS.includes(jamo)) return [];
+  // A vowel reaches whichever classes the compound vowels put it in: ㅗ is the
+  // wide half of ㅘ as well as a vowel in its own right, so it also lands in
+  // the wrapping classes, where the band is both shorter and narrower.
+  for (const cls of classes) {
+    for (const medial of COMPAT_V) {
+      const shape = MEDIALS[medial];
+      if (!shape || layoutClassFor(medial, cls.endsWith("T")) !== cls) continue;
+      if (shape.horizontal === jamo && layout[cls].medialH) out.push(layout[cls].medialH!);
+      if (shape.vertical && layout[cls].medialV) {
+        const i = shape.vertical.indexOf(jamo);
+        if (i >= 0) out.push(splitRow(layout[cls].medialV!, shape.vertical)[i]);
+      }
+    }
+  }
+  return out;
+}
+
 // Powers the Grid's progress line ("18 of 24 jamo drawn -> 6.412 of 11.172
 // syllables covered"). Brute-forces all 11.172 rather than deriving a closed
 // form: it runs in a couple of milliseconds, and a closed form would have to

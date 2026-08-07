@@ -16,20 +16,17 @@
 
 import type { CompiledDocument, CompiledGlyph } from "./exportFont";
 import {
-  BASIC_CONSONANTS,
   BASIC_JAMO,
-  BASIC_VOWELS,
   activeLayout,
   JAMO_OPTICAL_WEIGHT,
   SYLLABLE_BASE,
   SYLLABLE_LAST,
   emBox,
   frequentSyllables,
-  layoutClassFor,
   placementFor,
+  slotsFor,
   type JamoPlacement,
   type LayoutTable,
-  type Rect,
 } from "./hangul";
 
 // The composed em box, in the same y-down space the compiled contours already
@@ -267,16 +264,6 @@ export function partTransform(
 
 // The slots a basic jamo actually has to fit into. Consonants get all three
 // contexts; a vowel keeps to the orientation it is written in.
-function contextRectsFor(jamo: string): Rect[] {
-  if (BASIC_CONSONANTS.includes(jamo)) {
-    return [activeLayout().V.initial, activeLayout().H.initial, activeLayout().VT.final!];
-  }
-  if (!BASIC_VOWELS.includes(jamo)) return [];
-  const cls = layoutClassFor(jamo, false);
-  const rect = cls === "V" ? activeLayout().V.medialV : activeLayout().H.medialH;
-  return rect ? [rect] : [];
-}
-
 // How much of its drawn stroke weight a basic jamo keeps once it is composed.
 //
 // 1.0 is "as heavy as if it had been drawn inside a syllable" — the reference
@@ -293,7 +280,7 @@ export function composedScaleRange(jamo: string, drawing: JamoDrawing): { min: n
   if (!drawing.cellWidth || !drawing.cellHeight) return null;
   const ink = boundsOf(drawing.contours);
   if (!ink) return null;
-  const rects = contextRectsFor(jamo);
+  const rects = slotsFor(jamo);
   if (rects.length === 0) return null;
   const emPx = emBox(drawing.cellWidth, drawing.cellHeight).size;
   const weight = JAMO_OPTICAL_WEIGHT[jamo] ?? 1;
