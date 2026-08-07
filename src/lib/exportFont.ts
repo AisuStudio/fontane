@@ -52,6 +52,19 @@ export type CompiledDocument = {
   version: number;
   glyphs: CompiledGlyph[];
   metrics?: DocMetrics;
+  // The Hangul layout table this document's syllables were composed with.
+  //
+  // Written by composeHangul, and only for documents that actually contain
+  // Hangul. It is not read back here — the browser bakes the geometry into the
+  // contours it emits — it exists so the OFFLINE path can agree with what was
+  // on screen. font-build/spike-hangul.mjs runs composition again in Node,
+  // where the measured table (a browser localStorage setting) does not exist,
+  // and would otherwise quietly re-lay every syllable with the shipped guess.
+  //
+  // Typed loosely on purpose: exportFont.ts is the boundary between the app
+  // and its file format, and importing the layout types here would make the
+  // format depend on the geometry module rather than the other way round.
+  hangulLayout?: Record<string, unknown>;
 };
 
 type RawCommand =

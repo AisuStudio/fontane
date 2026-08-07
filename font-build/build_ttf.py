@@ -10,6 +10,14 @@ of round-tripping through a UFO and a cubic-curve compiler.
 
 Usage:
     python3 build_ttf.py fontane-document.json output.ttf
+
+On the Hangul layout table: this script never needs it. Both composition modes
+bake the geometry in before it gets here - "outline" writes finished contours,
+"components" writes each part's final scale and offset - so a document composed
+with a measured layout arrives already laid out that way. The document does
+carry the table it was composed with, under "hangulLayout", but that is for
+font-build/spike-hangul.mjs, which composes and therefore has to be told. It is
+ignored here on purpose, not by omission.
 """
 
 import json

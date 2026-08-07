@@ -29,7 +29,7 @@
 //   python3 font-build/build_ttf.py hangul-doc.json out.ttf
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { BASIC_JAMO } from "../src/lib/hangul.ts";
+import { BASIC_JAMO, setMeasuredLayout } from "../src/lib/hangul.ts";
 import { composeHangul, jamoFrom } from "../src/lib/hangulCompose.ts";
 
 function parseArgs(argv) {
@@ -54,6 +54,24 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv);
 const doc = JSON.parse(readFileSync(args.in, "utf8"));
+
+// The layout the app was actually using.
+//
+// This is where the offline path used to disagree with the screen, silently.
+// The measured table — read off the user's own drawn syllables — lives in the
+// browser's localStorage, so composing again out here started from the shipped
+// guess and moved every part of every syllable back to where the guess put it.
+// The app now records the table it composed with in the document, and honouring
+// it is the whole fix: same module, same numbers, same geometry.
+//
+// A document exported before this existed has no field and keeps the old
+// behaviour, which is correct — it was built with the shipped table.
+if (doc.hangulLayout) {
+  setMeasuredLayout(doc.hangulLayout);
+  console.log(`layout: from the document (${Object.keys(doc.hangulLayout).join(" ")})`);
+} else {
+  console.log("layout: shipped default — this document records none");
+}
 
 const source = jamoFrom(doc);
 const missing = BASIC_JAMO.filter((j) => !source.has(j));

@@ -505,5 +505,10 @@ export function composeHangul(doc: CompiledDocument, options: ComposeOptions = {
     });
   }
 
-  return { ...doc, glyphs: [...rest, ...composed] };
+  // Record the table these syllables were laid out with, so the offline path
+  // can reproduce them. The FULL table in force, not just the part that was
+  // measured: this is a statement about the geometry this document already
+  // has, and it has to keep meaning that even if DEFAULT_LAYOUT is retuned
+  // later. Seventy numbers against a multi-megabyte document.
+  return { ...doc, glyphs: [...rest, ...composed], hangulLayout: options.layout ?? activeLayout() };
 }
