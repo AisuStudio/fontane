@@ -96,8 +96,18 @@ function bounds(points: HarvestPoint[]) {
   return { xmin, ymin, xmax, ymax };
 }
 
-function inside(r: Rect, x: number, y: number) {
-  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+// Squared distance from a point to a rectangle; 0 anywhere inside it.
+//
+// The slots do not tile the em box — they are the tight boxes each part is
+// PLACED in, so there are gaps between them, and a hand writes straight
+// through those gaps. Measured on real drawings: the initial's box ends at
+// 0.60 of the em and the batchim's starts at 0.68, and strokes sit squarely
+// in between. Asking "is this point inside a slot" answers no for all of
+// them; asking "which slot is it nearest" always answers something sensible.
+function distanceToRect(r: Rect, x: number, y: number): number {
+  const dx = Math.max(r.x - x, 0, x - (r.x + r.w));
+  const dy = Math.max(r.y - y, 0, y - (r.y + r.h));
+  return dx * dx + dy * dy;
 }
 
 // Which slot each stroke belongs to.
@@ -125,35 +135,38 @@ export function assignStrokesDetailed(slots: HarvestSlot[], strokes: HarvestStro
   if (slots.length === 0) return out;
   for (const stroke of strokes) {
     if (stroke.points.length === 0) continue;
-    let best: SlotKey | null = null;
-    let bestScore = 0;
-    for (const slot of slots) {
-      let hits = 0;
-      for (const p of stroke.points) if (inside(slot.rect, p[0], p[1])) hits++;
-      const score = hits / stroke.points.length;
-      if (score > bestScore) {
-        bestScore = score;
-        best = slot.key;
-      }
-    }
-    if (!best) {
-      const b = bounds(stroke.points);
-      const cx = (b.xmin + b.xmax) / 2;
-      const cy = (b.ymin + b.ymax) / 2;
-      let nearest = slots[0];
-      let nearestD = Infinity;
+    // Every point votes for the slot it is NEAREST to, which for a point
+    // inside one is that one. Counting only containment made a stroke written
+    // through the gap between two slots belong to neither, and the whole
+    // stroke then fell to a single nearest-CENTRE guess for its bounding box —
+    // which is how an initial ended up in the batchim cell.
+    const votes = new Map<SlotKey, number>();
+    let contained = 0;
+    for (const p of stroke.points) {
+      let best: SlotKey = slots[0].key;
+      let bestD = Infinity;
       for (const slot of slots) {
-        const dx = slot.rect.x + slot.rect.w / 2 - cx;
-        const dy = slot.rect.y + slot.rect.h / 2 - cy;
-        const d = dx * dx + dy * dy;
-        if (d < nearestD) {
-          nearestD = d;
-          nearest = slot;
+        const d = distanceToRect(slot.rect, p[0], p[1]);
+        if (d < bestD) {
+          bestD = d;
+          best = slot.key;
         }
       }
-      best = nearest.key;
+      if (bestD === 0) contained++;
+      votes.set(best, (votes.get(best) ?? 0) + 1);
     }
-    out.push({ id: stroke.id, slot: best, score: bestScore });
+    let winner = slots[0].key;
+    let most = -1;
+    for (const [key, n] of votes) {
+      if (n > most) {
+        most = n;
+        winner = key;
+      }
+    }
+    // The score still means "how much of this stroke actually landed in a
+    // slot", so the panel keeps warning about ink the layout doesn't cover —
+    // it just no longer decides where the stroke goes.
+    out.push({ id: stroke.id, slot: winner, score: contained / stroke.points.length });
   }
   return out;
 }
