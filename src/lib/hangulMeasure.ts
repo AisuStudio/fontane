@@ -85,42 +85,41 @@ function bboxOf(strokes: MeasureStroke[]) {
   return xmin === Infinity ? null : { xmin, ymin, xmax, ymax };
 }
 
-function rectOf(strokes: MeasureStroke[], box: { x: number; y: number; size: number }): Rect | null {
-  const b = bboxOf(strokes);
+// One stroke's own extent, in em fractions. Computed ONCE per stroke, which is
+// the whole performance story of this file — see the loop below.
+type Extent = { x0: number; y0: number; x1: number; y1: number };
+
+function extentOf(stroke: MeasureStroke, box: { x: number; y: number; size: number }): Extent | null {
+  const b = bboxOf([stroke]);
   if (!b) return null;
   return {
-    x: (b.xmin - box.x) / box.size,
-    y: (b.ymin - box.y) / box.size,
-    w: (b.xmax - b.xmin) / box.size,
-    h: (b.ymax - b.ymin) / box.size,
+    x0: (b.xmin - box.x) / box.size,
+    y0: (b.ymin - box.y) / box.size,
+    x1: (b.xmax - box.x) / box.size,
+    y1: (b.ymax - box.y) / box.size,
   };
 }
 
-// The box enclosing everything written so far. A part is separated from ALL of
-// its predecessors, not just the last one: the batchim of 강 sits below the
+// The box around strokes [from, to). Also serves as "everything written so
+// far" when called with from = 0: a part is separated from ALL its
+// predecessors, not just the last one — the batchim of 강 sits below the
 // initial and the vowel together, and the upright half of ㅘ sits to the right
 // of both the initial and the wide half.
-function unionOf(rects: Rect[]): Rect {
-  const x = Math.min(...rects.map((r) => r.x));
-  const y = Math.min(...rects.map((r) => r.y));
-  return {
-    x,
-    y,
-    w: Math.max(...rects.map((r) => r.x + r.w)) - x,
-    h: Math.max(...rects.map((r) => r.y + r.h)) - y,
-  };
+function spanRect(ext: Extent[], from: number, to: number): Rect {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = from; i < to; i++) {
+    if (ext[i].x0 < x0) x0 = ext[i].x0;
+    if (ext[i].y0 < y0) y0 = ext[i].y0;
+    if (ext[i].x1 > x1) x1 = ext[i].x1;
+    if (ext[i].y1 > y1) y1 = ext[i].y1;
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
-// Every way of cutting `count` contiguous runs out of a list, each run holding
-// at least one stroke. Contiguity is the whole constraint — anything else and
-// this would be searching for a partition rather than choosing a boundary.
-function contiguousSplits<T>(items: T[], count: number): T[][][] {
-  if (count === 1) return [[items]];
-  const out: T[][][] = [];
-  for (let i = 1; i <= items.length - (count - 1); i++)
-    for (const rest of contiguousSplits(items.slice(i), count - 1)) out.push([items.slice(0, i), ...rest]);
-  return out;
-}
+// Above this many strokes the enumeration stops being worth its cost, and a
+// syllable drawn with that many is not going to be read reliably anyway. No
+// measurement is a state the panel already handles; a frozen tab is not.
+const MAX_STROKES = 40;
 
 // Read one drawn syllable's own geometry.
 //
@@ -146,7 +145,24 @@ export function measureSyllable(
   const box = emBox(cellWidth, cellHeight);
   const keys = WRITING_ORDER[cls];
   const axes = SEPARATED_BY[cls];
-  if (strokes.length < keys.length) return null;
+  if (strokes.length < keys.length || strokes.length > MAX_STROKES) return null;
+
+  // Each stroke's extent, once. The first version of this loop re-derived
+  // every run's box from its POINTS for every candidate split, so the work was
+  // (number of splits) x (every point in the syllable) — and going from three
+  // parts to four multiplied the number of splits by the stroke count. On a
+  // syllable of twenty strokes that is roughly a thousand splits over a couple
+  // of thousand points, recomputed on every stroke drawn, for every syllable
+  // in the document. It made the grid crawl.
+  //
+  // With the extents precomputed a split costs O(strokes) instead of
+  // O(points), which is two orders of magnitude on real drawings.
+  const ext: Extent[] = [];
+  for (const s of strokes) {
+    const e = extentOf(s, box);
+    if (!e) return null;
+    ext.push(e);
+  }
 
   // Looking for the widest empty band instead (the obvious first idea) breaks
   // on exactly the letters this exists for: a three-bar ㅍ at the foot has
@@ -163,10 +179,17 @@ export function measureSyllable(
   // reading, and a stroke in the wrong slot can be clicked into the right one.
   let best: { rects: Rect[]; score: number; gap: number } | null = null;
 
-  for (const runs of contiguousSplits(strokes, keys.length)) {
-    const maybe = runs.map((r) => rectOf(r, box));
-    if (maybe.some((r) => r === null)) continue;
-    const rects = maybe as Rect[];
+  const n = strokes.length;
+  const cuts = new Array<number>(keys.length - 1);
+
+  const evaluate = () => {
+    const rects: Rect[] = [];
+    let from = 0;
+    for (let i = 0; i < keys.length; i++) {
+      const to = i === keys.length - 1 ? n : cuts[i];
+      rects.push(spanRect(ext, from, to));
+      from = to;
+    }
 
     // Two things make a split the right split, and both are needed:
     //
@@ -182,8 +205,8 @@ export function measureSyllable(
     // collapses to a single line.
     let score = 0;
     let smallest = Infinity;
-    for (let i = 1; i < rects.length; i++) {
-      const before = unionOf(rects.slice(0, i));
+    for (let i = 1; i < keys.length; i++) {
+      const before = spanRect(ext, 0, cuts[i - 1]);
       const gap =
         axes[i - 1] === "x" ? rects[i].x - (before.x + before.w) : rects[i].y - (before.y + before.h);
       score += gap;
@@ -194,7 +217,23 @@ export function measureSyllable(
       if (keys[i] === "medialH") score += rects[i].w;
     }
     if (!best || score > best.score) best = { rects, score, gap: smallest };
-  }
+  };
+
+  // Every way of cutting the strokes into as many contiguous runs as the class
+  // has parts, each run holding at least one. Contiguity is the whole
+  // constraint — anything else and this would be searching for a partition
+  // rather than choosing a boundary. Walked as indices into one reused array
+  // rather than materialised as lists of lists, which for four parts was
+  // allocating thousands of sliced arrays per syllable.
+  const walk = (depth: number, start: number) => {
+    if (depth === cuts.length) return evaluate();
+    const last = n - (cuts.length - depth);
+    for (let i = start; i <= last; i++) {
+      cuts[depth] = i;
+      walk(depth + 1, i + 1);
+    }
+  };
+  walk(0, 1);
   if (!best) return null;
 
   const chosen = best as { rects: Rect[]; score: number; gap: number };
