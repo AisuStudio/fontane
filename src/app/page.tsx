@@ -7495,8 +7495,8 @@ export default function Home() {
                         {h.spills.map((r) => (
                           <span key={r.name} className={styles.harvestStray}>
                             {" "}
-                            · {r.name} held back, {Math.round(r.overflow.worst * 100)}% of a cell past the{" "}
-                            {spillEdge(r.overflow)}
+                            · {r.name} held back, {Math.round(r.overflow.worst * 100)}% past the{" "}
+                            {spillEdge(r.overflow)} edge
                           </span>
                         ))}
                       </span>
@@ -7593,10 +7593,10 @@ export default function Home() {
                 </button>
                 {heldBack > 0 && (
                   <p className={styles.settingsNote}>
-                    {heldBack} part{heldBack === 1 ? "" : "s"} held back for reaching far outside the cell
-                    {heldBack === 1 ? " it" : " they"} landed in — almost always a stroke filed under the wrong slot.
-                    Click it in the map above to move it, or adopt your own layout so the slots sit where you drew
-                    them.
+                    {heldBack} part{heldBack === 1 ? "" : "s"} held back for reaching far outside the space
+                    {heldBack === 1 ? " it" : " they"} belong to — almost always a stroke filed under the wrong
+                    slot, which is also how a batchim ends up inside a vowel. Click it in the map above to move it,
+                    or adopt your own layout so the slots sit where you drew them.
                   </p>
                 )}
               </SettingsSection>

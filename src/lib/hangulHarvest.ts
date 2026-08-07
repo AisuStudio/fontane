@@ -188,8 +188,9 @@ export type HarvestResult = {
   cellWidth: number;
   cellHeight: number;
   strokes: HarvestStroke[];
-  // How far this part sticks out of the cell it landed in. See overflowOf.
+  // How far this part sticks out, and how far it is allowed to. See overflowOf.
   overflow: Overflow;
+  overflowLimit: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -215,7 +216,21 @@ export type HarvestResult = {
 // or adopt the measured layout so the slots sit where they drew them.
 export type Overflow = { left: number; right: number; top: number; bottom: number; worst: number };
 
+// Two limits, because the two checks measure against rectangles we know
+// differently well.
+//
+// CELL is a box this code constructed from the variant's own slot fractions.
+// Ink outside it came from outside, and half a cell is already far beyond any
+// overshoot a hand produces.
+//
+// SLOT is a box out of the layout table — which is a GUESS, and demonstrably a
+// poor one for some hands, since strokes falling outside it is the whole
+// reason the measurement exists. Judging a drawing against a rectangle we
+// admit is wrong has to be generous or it will hold back honest work: a vowel
+// slot is barely a third of an em wide, so an arm reaching a little further
+// left is normal. A full slot clear of the edge is not.
 export const OVERFLOW_LIMIT = 0.5;
+export const SLOT_OVERFLOW_LIMIT = 1;
 
 export function overflowOf(result: {
   cellWidth: number;
@@ -236,7 +251,7 @@ export function overflowOf(result: {
 }
 
 export function isSpill(result: HarvestResult): boolean {
-  return result.overflow.worst > OVERFLOW_LIMIT;
+  return result.overflow.worst > result.overflowLimit;
 }
 
 // Which edge it went through, for a message that says something. "0.62 out"
@@ -302,7 +317,7 @@ export function harvestSlot(
       widthScale: (s.widthScale ?? 1) * k * weight,
     })),
   };
-  return { ...out, overflow: overflowOf(out) };
+  return { ...out, overflow: overflowOf(out), overflowLimit: OVERFLOW_LIMIT };
 }
 
 // The standalone jamo a drawn syllable also contains.
@@ -360,11 +375,27 @@ export function harvestJamo(
         widthScale: (s.widthScale ?? 1) * scale,
       })),
     };
-    // Fitted to its cell, so this is 0 by construction — measured anyway
-    // rather than asserted, because "it can't happen" is how the batchim smear
-    // survived as long as it did, and a jamo and a variant now carry the same
-    // field for the same check.
-    out.push({ ...one, overflow: overflowOf(one) });
+    // The overflow is measured against the SLOT the ink came out of, not the
+    // cell it went into — and that difference is the whole guard here.
+    //
+    // A variant is mapped rigidly into its cell, so ink that came from the
+    // wrong slot lands outside the cell and the check after the fact sees it.
+    // A jamo is FITTED: whatever it was given is scaled to fill the cell, so
+    // by construction nothing ever sticks out. Measuring the result would
+    // report 0 for every case, including the one that brought this up — a
+    // batchim stroke that voted for the vowel's slot travelled into the vowel
+    // cell, the fit shrank the pair to make room, and out came a ㅕ with a bar
+    // under it. Against the slot that stray bar is a mile wide, and it is held
+    // back with everything else that spills.
+    const local = {
+      cellWidth: slot.rect.w,
+      cellHeight: slot.rect.h,
+      strokes: mine.map((s) => ({
+        id: s.id,
+        points: s.points.map((p) => [p[0] - slot.rect.x, p[1] - slot.rect.y, p[2] ?? 0.5]),
+      })),
+    };
+    out.push({ ...one, overflow: overflowOf(local), overflowLimit: SLOT_OVERFLOW_LIMIT });
   }
   return out;
 }
