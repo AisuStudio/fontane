@@ -6307,7 +6307,18 @@ export default function Home() {
                     .filter((s): s is Stroke => Boolean(s))
                 : [];
               const needsFit = glyph && !(glyph.cellWidth && glyph.cellHeight);
-              const slotSize = cellSizeForSlot(name, activeScript, cellSize, glyph?.widthRatio ?? cellWidthRatio);
+              // Hangul cells ignore the width ratio outright. A syllable
+              // advances exactly one em whatever the cell looks like, so the
+              // ratio changes nothing the export will honour — but the em box
+              // is min(width, height), so a ratio above 1 shrinks the box in
+              // BOTH directions while the drawing keeps its full height, and
+              // the syllable spills out of the square it is measured against.
+              const slotSize = cellSizeForSlot(
+                name,
+                activeScript,
+                cellSize,
+                activeScript === "hangul" ? 1 : glyph?.widthRatio ?? cellWidthRatio
+              );
               const cellHeightPx = slotSize.height;
               // A glyph's own widthRatio (dragged per-cell — see the width
               // handle in GridCell) overrides the global Width slider just
@@ -6725,12 +6736,14 @@ export default function Home() {
                     </button>
                   </>
                 )}
-                {/* A batchim cell takes both its dimensions from the slot it
-                    will fill (cellSizeForSlot's variant branch) — that shared
-                    factor is what keeps the stroke weight even, so Width is
-                    ignored there by construction. A control that cannot move
-                    what is on screen is worse than no control. */}
-                {activeStep?.id !== "step-variants" && (
+                {/* Not for Hangul at all. A syllable advances exactly one em
+                    however wide its cell is, so the ratio changes nothing the
+                    export honours — and because the em box is min(width,
+                    height), anything above 1 shrinks the box while the drawing
+                    keeps its height, and the syllable spills out of the square
+                    it is measured against. A control that cannot do what it
+                    says, and quietly does damage instead, is worse than none. */}
+                {activeScript !== "hangul" && (
                   <label className={styles.sliderRow}>
                     <span>Width</span>
                     <input
