@@ -556,6 +556,19 @@ type Props = {
   onErase: (ids: Set<string>) => void;
   onStrokesChange: (updates: { id: string; points: StrokePoint[]; widthScale?: number }[]) => void;
   strokeOptions: StrokeOptions;
+  // How much bigger this cell is on screen than the space its glyph is stored
+  // in. Every FINISHED stroke arrives with this already folded into its
+  // widthScale, so the cell can draw it at the size it is showing — and the
+  // stroke being drawn right now has to be inked at the same factor, or it
+  // visibly thickens the instant it is let go.
+  //
+  // Which direction to fix that in is a real choice, and this is the one that
+  // keeps the pen inside the drawing space: zoom in and the pen looks fatter,
+  // exactly as the letters do, and the weight a glyph ends up with does not
+  // depend on the zoom it happened to be drawn at. Making the pen a constant
+  // number of screen pixels instead would put the zoom back in charge of
+  // stroke weight, which is the bug the canonical cell exists to prevent.
+  inkScale?: number;
   // The Calligraphy tool's broad nib (src/lib/calligraphy.ts). Separate from
   // strokeOptions because it isn't a perfect-freehand option set — the two
   // never apply to the same stroke.
@@ -663,6 +676,7 @@ export default function GridCell({
   onErase,
   onStrokesChange,
   strokeOptions,
+  inkScale = 1,
   nib,
   vectorRenderMode,
   vectorStrokeWidth,
@@ -696,6 +710,7 @@ export default function GridCell({
   const onEraseRef = useRef(onErase);
   const onStrokesChangeRef = useRef(onStrokesChange);
   const strokeOptionsRef = useRef(strokeOptions);
+  const inkScaleRef = useRef(inkScale);
   const nibRef = useRef(nib);
   const vectorRenderModeRef = useRef(vectorRenderMode);
   const vectorStrokeWidthRef = useRef(vectorStrokeWidth);
@@ -780,6 +795,7 @@ export default function GridCell({
   onEraseRef.current = onErase;
   onStrokesChangeRef.current = onStrokesChange;
   strokeOptionsRef.current = strokeOptions;
+  inkScaleRef.current = inkScale;
   nibRef.current = nib;
   vectorRenderModeRef.current = vectorRenderMode;
   vectorStrokeWidthRef.current = vectorStrokeWidth;
@@ -889,9 +905,17 @@ export default function GridCell({
       }
       renderVectorShapes(ctx, vectorShapesRef.current, strokesRef.current.length > 0, selectedIdsRef.current);
       if (pointsRef.current.length > 0) {
+        // Same factor the finished strokes above carry in their widthScale —
+        // otherwise the stroke jumps thickness the moment the pen lifts.
+        const live = { id: "live", points: pointsRef.current, widthScale: inkScaleRef.current };
         fillOutline(
           ctx,
-          outlineFor(pointsRef.current, strokeOptionsRef.current, nibRef.current, strokeKindFor(toolRef.current))
+          outlineFor(
+            pointsRef.current,
+            effectiveOptionsFor(live, strokeOptionsRef.current),
+            effectiveNibFor(live, nibRef.current),
+            strokeKindFor(toolRef.current)
+          )
         );
       }
       if (lassoRef.current.length > 1) {
@@ -949,12 +973,15 @@ export default function GridCell({
         drawVectorAffordances(ctx, vectorShapesRef.current, editingShapeIdRef.current);
       }
       if (INK_TOOLS.has(toolRef.current) && lastPointerPosRef.current) {
+        // The cursor promises a thickness; it has to promise the one that
+        // will actually be laid down.
+        const pen = { id: "cursor", points: [], widthScale: inkScaleRef.current };
         drawBrushCursor(
           ctx,
           lastPointerPosRef.current.x,
           lastPointerPosRef.current.y,
-          strokeOptionsRef.current,
-          nibRef.current,
+          effectiveOptionsFor(pen, strokeOptionsRef.current),
+          effectiveNibFor(pen, nibRef.current),
           strokeKindFor(toolRef.current)
         );
       }

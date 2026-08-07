@@ -6357,6 +6357,12 @@ export default function Home() {
                   onErase={(ids) => deleteStrokes(ids)}
                   onStrokesChange={(updates) => handleGridStrokesChange(slot, updates, liveWidth, liveHeight)}
                   strokeOptions={optionsFor(settings)}
+                  // The same factor the finished strokes above carry, so the
+                  // stroke being drawn is inked at the thickness it will keep.
+                  // A cell with no glyph yet has no anchor to measure against —
+                  // the one its first stroke will establish is the canonical
+                  // cell, so the factor is simply the zoom.
+                  inkScale={glyph?.cellWidth && glyph?.cellHeight ? fitScale.scale : zoom}
                   nib={nibFor(settings)}
                   vectorRenderMode={settings.vectorRenderMode}
                   vectorStrokeWidth={settings.vectorStrokeWidth}
