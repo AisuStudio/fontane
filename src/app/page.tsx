@@ -7392,26 +7392,6 @@ export default function Home() {
                     </li>
                   ))}
                 </ul>
-                <label className={styles.sliderRow}>
-                  <span>Batchim weight</span>
-                  <input
-                    type="range"
-                    min={0.8}
-                    max={1.3}
-                    step={0.01}
-                    value={batchimWeight}
-                    onChange={(e) => updateBatchimWeight(Number(e.target.value))}
-                  />
-                  <span className={styles.val}>{Math.round(batchimWeight * 100)}%</span>
-                </label>
-                <p className={styles.settingsNote}>
-                  Weight only — not one point moves, and nothing but the batchim changes. 100% is exactly the
-                  weight you drew it at; a dense one often wants a little less so it doesn&rsquo;t clot, a sparse one
-                  a little more so it doesn&rsquo;t vanish. Applies to what is already harvested as you drag.
-                </p>
-                <button type="button" className={styles.clearBtn} onClick={harvestBatchim}>
-                  Harvest from {harvestable.length} syllable{harvestable.length === 1 ? "" : "s"}
-                </button>
                 {/* Measured against guessed, side by side. Every "guessed" marker
                     above is a stroke that fell outside a rectangle these numbers
                     placed; this is where they should have been. */}
@@ -7448,6 +7428,26 @@ export default function Home() {
                         Use my layout
                       </button>
                     )}
+                <label className={styles.sliderRow}>
+                  <span>Batchim weight</span>
+                  <input
+                    type="range"
+                    min={0.8}
+                    max={1.3}
+                    step={0.01}
+                    value={batchimWeight}
+                    onChange={(e) => updateBatchimWeight(Number(e.target.value))}
+                  />
+                  <span className={styles.val}>{Math.round(batchimWeight * 100)}%</span>
+                </label>
+                <p className={styles.settingsNote}>
+                  Weight only — not one point moves, and nothing but the batchim changes. 100% is exactly the
+                  weight you drew it at; a dense one often wants a little less so it doesn&rsquo;t clot, a sparse one
+                  a little more so it doesn&rsquo;t vanish. Applies to what is already harvested as you drag.
+                </p>
+                <button type="button" className={styles.clearBtn} onClick={harvestBatchim}>
+                  Harvest from {harvestable.length} syllable{harvestable.length === 1 ? "" : "s"}
+                </button>
                   </>
                 )}
               </SettingsSection>
