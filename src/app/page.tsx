@@ -4839,7 +4839,28 @@ export default function Home() {
         currentCellHeight,
         keepProportions
       );
-      completedRef.current[idx] = { ...completedRef.current[idx], points, ...(widthScale !== undefined ? { widthScale } : {}) };
+      // ...and the same conversion for the thickness, for exactly the same
+      // reason. A cell is HANDED strokes whose widthScale already includes the
+      // anchor-to-live-cell factor (see the cellStrokes map in the Grid
+      // render) so it can draw them at the size it is showing. It reports that
+      // same number back on every commit, so storing it verbatim bakes the
+      // display factor in, and the next render multiplies by it again — a
+      // stroke got thicker on every reposition, and at 300% zoom it tripled.
+      //
+      // Only for a glyph that already has an anchor. One being promoted from
+      // Free (no cellWidth yet) is having its FITTED points written back as
+      // its real ones, so its fitted thickness is its real thickness too.
+      const anchored = Boolean(glyph?.cellWidth && glyph?.cellHeight);
+      const displayScale = anchored
+        ? anchorSpaceWidthScale(anchorWidth, anchorHeight, currentCellWidth, currentCellHeight, keepProportions)
+        : 1;
+      const storedWidthScale =
+        widthScale !== undefined && displayScale > 0 ? widthScale / displayScale : widthScale;
+      completedRef.current[idx] = {
+        ...completedRef.current[idx],
+        points,
+        ...(storedWidthScale !== undefined ? { widthScale: storedWidthScale } : {}),
+      };
       outlinesRef.current[idx] = strokeOutline(completedRef.current[idx], settingsRef.current);
     }
     saveStrokes(completedRef.current);
