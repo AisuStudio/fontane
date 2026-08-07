@@ -49,3 +49,6 @@ __pycache__/
 
 # research/spike notes — intentionally not part of the repo
 /docs/
+
+# generated VF-spike input — rebuild with: node font-build/gen-vf-masters.mjs <in.fff>
+/font-build/vf-masters.json
