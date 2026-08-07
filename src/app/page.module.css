@@ -880,11 +880,24 @@
    in the wrong box is visible here in a second; without it the first sign is
    a burst glyph after the write. */
 .harvestMap {
-  width: 40px;
-  height: 40px;
+  width: 64px;
+  height: 64px;
   flex-shrink: 0;
   background: rgba(0, 0, 0, 0.18);
   border-radius: 3px;
+}
+
+/* Each stroke in the map is a target: clicking sends it to the next slot.
+   The visible line is thin, so a transparent fat one underneath does the
+   catching — the same trick the canvases use for their own hit-testing. */
+.harvestStrokeHit {
+  cursor: pointer;
+  stroke-linecap: round;
+  paint-order: stroke;
+}
+
+.harvestStrokeHit:hover {
+  stroke: var(--color-vanilla);
 }
 
 .harvestSlotRect {

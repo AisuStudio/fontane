@@ -255,6 +255,8 @@ const STRAY_COLOUR = "#ff8b6b";
 // Where a measured layout table is remembered. One per document, like every
 // other fontane.*.v1 key.
 const MEASURED_LAYOUT_KEY = "fontane.hangulLayout.v1";
+// Hand corrections to the stroke-to-slot reading, per stroke id.
+const SLOT_OVERRIDE_KEY = "fontane.hangulAssign.v1";
 
 const CANONICAL_CELL = 240;
 const MIN_ZOOM = 0.25;
@@ -2262,6 +2264,35 @@ export default function Home() {
     setGlyphs((gs) => [...gs]);
   }
 
+  // Where a stroke goes when the automatic reading gets it wrong.
+  //
+  // The assignment is a guess about handwriting, so it needs a way to be
+  // overruled — the same way Sketcher lets a lasso say which glyph a stroke
+  // belongs to. Keyed by stroke id, so it survives redrawing a neighbour and
+  // means nothing once that stroke is gone.
+  const [slotOverrides, setSlotOverrides] = useState<Record<string, SlotKey>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      return JSON.parse(window.localStorage.getItem(SLOT_OVERRIDE_KEY) ?? "{}") as Record<string, SlotKey>;
+    } catch {
+      return {};
+    }
+  });
+
+  // Click a stroke in the map to send it to the next slot along. Cycling
+  // rather than a menu: there are two or three slots in a syllable, and a
+  // menu for three items you can also just tap through is ceremony.
+  function cycleSlot(strokeId: string, slots: { key: SlotKey }[], current: SlotKey) {
+    const i = slots.findIndex((s) => s.key === current);
+    const next = slots[(i + 1) % slots.length]?.key;
+    if (!next) return;
+    setSlotOverrides((prev) => {
+      const merged = { ...prev, [strokeId]: next };
+      window.localStorage.setItem(SLOT_OVERRIDE_KEY, JSON.stringify(merged));
+      return merged;
+    });
+  }
+
   // How much weight to take out of a harvested batchim. Real Korean faces do
   // take a little out of a dense one so the syllable doesn't clot — 5-15% is
   // the range designers work in. 1 = none, which is the honest default: it is
@@ -2319,7 +2350,13 @@ export default function Home() {
         const cw = g.cellWidth as number;
         const ch = g.cellHeight as number;
         const slots = harvestSlots(g.name, cw, ch);
-        const assignment = assignStrokesDetailed(slots, strokes);
+        // The automatic reading, then any hand corrections on top of it.
+        const assignment = assignStrokesDetailed(slots, strokes).map((a) =>
+          slotOverrides[a.id] && slots.some((s) => s.key === slotOverrides[a.id])
+            ? { ...a, slot: slotOverrides[a.id], score: 1 }
+            : a
+        );
+        const assignMap = Object.fromEntries(assignment.map((a) => [a.id, a.slot]));
         return {
           char: g.name,
           cw,
@@ -2335,7 +2372,7 @@ export default function Home() {
           // CANONICAL_CELL, not the displayed cell size: a harvested glyph is
           // written straight to storage and has to land in the same space
           // every drawn glyph does, whatever the zoom happens to be.
-          results: harvestSyllable(g.name, strokes, cw, ch, CANONICAL_CELL, undefined, batchimWeight),
+          results: harvestSyllable(g.name, strokes, cw, ch, CANONICAL_CELL, assignMap, batchimWeight),
           // The standalone jamo the same syllable contains. Only ones nobody
           // has drawn — overwriting a cell someone worked on would be the
           // rudest thing this button could do, and the point is to spare
@@ -2343,7 +2380,7 @@ export default function Home() {
           jamo: harvestJamo(
             slots,
             strokes,
-            Object.fromEntries(assignment.map((a) => [a.id, a.slot])),
+            assignMap,
             BASIC_JAMO.filter((j) => !drawnJamo.has(j)),
             CANONICAL_CELL,
             CANONICAL_CELL * cellAspectFor("hangul")
@@ -2351,7 +2388,7 @@ export default function Home() {
         };
       })
       .filter((h) => h.results.length > 0 || h.jamo.length > 0);
-  }, [glyphs, activeScript, batchimWeight, drawnJamo]);
+  }, [glyphs, activeScript, batchimWeight, drawnJamo, slotOverrides]);
 
   // Write the harvested parts out as variant glyphs.
   //
@@ -7355,7 +7392,7 @@ export default function Home() {
                 <ul className={styles.harvestList}>
                   {harvestable.map((h) => (
                     <li key={h.char} className={styles.harvestRow}>
-                      <svg viewBox={`0 0 ${h.cw} ${h.ch}`} className={styles.harvestMap} aria-hidden="true">
+                      <svg viewBox={`0 0 ${h.cw} ${h.ch}`} className={styles.harvestMap}>
                         {h.slots.map((s) => (
                           <rect
                             key={s.key}
@@ -7368,6 +7405,7 @@ export default function Home() {
                         ))}
                         {h.strokes.map((s) => {
                           const a = h.assignment.find((x) => x.id === s.id);
+                          const slot = a?.slot ?? h.slots[0]?.key;
                           return (
                             <polyline
                               key={s.id}
@@ -7377,7 +7415,11 @@ export default function Home() {
                               strokeWidth={Math.max(h.cw, h.ch) * 0.035}
                               strokeLinecap="round"
                               strokeLinejoin="round"
-                            />
+                              className={styles.harvestStrokeHit}
+                              onClick={() => slot && cycleSlot(s.id, h.slots, slot)}
+                            >
+                              <title>{`${slot} — click to move to the next slot`}</title>
+                            </polyline>
                           );
                         })}
                       </svg>
