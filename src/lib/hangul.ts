@@ -354,14 +354,33 @@ export function batchimPenLimit(jamo: string): number {
 // than at position eleven. Starting with 각 — two strokes, the easiest foot
 // in the set — lets someone draw thirteen syllables at a weight that cannot
 // work before meeting the one that proves it.
+const FLAT_VOWELS = BASIC_VOWELS.filter((v) => MEDIALS[v]?.kind === "horizontal");
+
 export function harvestSyllables(): HarvestSyllable[] {
   const ordered = [...BASIC_CONSONANTS].sort((a, b) => (BATCHIM_ROOM[b] ?? 3) - (BATCHIM_ROOM[a] ?? 3));
-  return ordered.map((c, i) => {
+  const withBatchim = ordered.map((c, i) => {
     const l = COMPAT_L.indexOf(c);
     const v = COMPAT_V.indexOf(UPRIGHT_VOWELS[i % UPRIGHT_VOWELS.length]);
     const t = COMPAT_T.indexOf(c);
     return { char: compose(l, v, t), teaches: [{ role: "fin" as JamoRole, base: c }] };
   });
+
+  // Five more, purely for the vowels. Every syllable above needs an upright
+  // vowel — that is what puts it in class VT, which is what gives it a
+  // batchim — so ㅗ ㅛ ㅜ ㅠ ㅡ never appear, and the five of them are exactly
+  // the jamo the harvest could not reach: 19 of 24 fell out of the sheet, and
+  // these are the missing 5.
+  //
+  // No batchim on these (그 not 극): a flat vowel plus a batchim is class HT,
+  // which stacks three bands instead of two and has nothing to teach that the
+  // fourteen above don't already. Whichever consonant sits on top is one that
+  // has already been drawn, so it costs a stroke and teaches a vowel.
+  const forVowels = FLAT_VOWELS.map((vowel, i) => ({
+    char: compose(COMPAT_L.indexOf(ordered[i % ordered.length]), COMPAT_V.indexOf(vowel), 0),
+    teaches: [] as { role: JamoRole; base: string }[],
+  }));
+
+  return [...withBatchim, ...forVowels];
 }
 
 // Which context a given slot in a given class is, or null where no variant

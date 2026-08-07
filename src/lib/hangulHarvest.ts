@@ -80,9 +80,13 @@ export function harvestSlots(char: string, cellWidth: number, cellHeight: number
 // weight this whole exercise is about. So a syllable with a batchim teaches
 // its batchim and nothing else, until initV is split in two.
 function initialRole(cls: LayoutClass): JamoRole | null {
-  if (cls === "V") return "initV";
-  if (cls === "H") return "initH";
-  return null;
+  const role = cls === "V" ? "initV" : cls === "H" ? "initH" : null;
+  // ...and only if that context still exists as a variant. It does not today —
+  // jamoVariants() is the batchim alone — and naming a role nothing declares
+  // would have the harvest write a glyph into a cell the grid never shows.
+  // The practice sheet gained flat-vowel syllables (class H) for the vowels'
+  // sake, which is exactly what would have started producing those phantoms.
+  return role && jamoVariants().some((v) => v.role === role) ? role : null;
 }
 
 function bounds(points: HarvestPoint[]) {
