@@ -224,12 +224,17 @@ export function activeLayout(): LayoutTable {
   return layoutInForce;
 }
 
-// Replace the VT class only. That is the one the measurement can actually
-// read — every syllable on the practice sheet has a batchim, which is what
-// makes it class VT — and inventing the other five from it would be the same
-// guessing this exists to end. Pass null to go back to the table as shipped.
-export function setMeasuredLayout(vt: ClassLayout | null) {
-  layoutInForce = vt ? { ...DEFAULT_LAYOUT, VT: vt } : DEFAULT_LAYOUT;
+// Replace whichever classes have actually been measured, and leave the rest as
+// shipped. It took only VT for a while, because the practice sheet was nothing
+// but VT syllables; now that the sheet also carries flat-vowel ones the reading
+// covers more, and a class nobody has drawn still has to keep the guess rather
+// than have one invented for it from a class that is shaped differently.
+//
+// Merged over DEFAULT_LAYOUT rather than replacing it wholesale, so a table
+// stored by an older version — or by an offline document that only recorded
+// what it changed — still loads into a complete table.
+export function setMeasuredLayout(measured: Partial<LayoutTable> | null) {
+  layoutInForce = measured ? { ...DEFAULT_LAYOUT, ...measured } : DEFAULT_LAYOUT;
 }
 
 // Derived from the layout table rather than typed out, so a cell can't end up

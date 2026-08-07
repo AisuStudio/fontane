@@ -188,7 +188,67 @@ export type HarvestResult = {
   cellWidth: number;
   cellHeight: number;
   strokes: HarvestStroke[];
+  // How far this part sticks out of the cell it landed in. See overflowOf.
+  overflow: Overflow;
 };
+
+// ---------------------------------------------------------------------------
+// The emergency brake
+// ---------------------------------------------------------------------------
+//
+// Every step before this one is a guess about handwriting: which slot a stroke
+// belongs to, where the slots are, whether the layout table matches the hand
+// that drew the syllable. When those guesses go wrong they don't go wrong
+// quietly — a whole initial assigned to the batchim slot gets positioned
+// relative to a rectangle it sits a third of an em ABOVE, and arrives in the
+// variant cell as a smear reaching several cell-heights past the top edge.
+//
+// That case is not ambiguous and it should never be written. Overshoot IS
+// normal — a generous batchim pokes a few percent past its cell the same way
+// ink overshoots everywhere else in the app — so the threshold is set far
+// above anything a hand produces and far below the failure: half a cell
+// clear of an edge is not a drawn letter, it is ink that came from somewhere
+// else.
+//
+// Reported, never silently dropped. A part held back is a part the user has to
+// be told about, because the fix is theirs: move the stroke to the right slot,
+// or adopt the measured layout so the slots sit where they drew them.
+export type Overflow = { left: number; right: number; top: number; bottom: number; worst: number };
+
+export const OVERFLOW_LIMIT = 0.5;
+
+export function overflowOf(result: {
+  cellWidth: number;
+  cellHeight: number;
+  strokes: HarvestStroke[];
+}): Overflow {
+  const pts = result.strokes.flatMap((s) => s.points);
+  if (pts.length === 0) return { left: 0, right: 0, top: 0, bottom: 0, worst: 0 };
+  const b = bounds(pts);
+  // Each side as a fraction of the dimension it crosses, so the number means
+  // the same thing whatever shape the cell is — a batchim cell is three times
+  // as wide as it is tall, and "0.5 out" has to be half a cell either way.
+  const left = Math.max(0, -b.xmin) / result.cellWidth;
+  const right = Math.max(0, b.xmax - result.cellWidth) / result.cellWidth;
+  const top = Math.max(0, -b.ymin) / result.cellHeight;
+  const bottom = Math.max(0, b.ymax - result.cellHeight) / result.cellHeight;
+  return { left, right, top, bottom, worst: Math.max(left, right, top, bottom) };
+}
+
+export function isSpill(result: HarvestResult): boolean {
+  return result.overflow.worst > OVERFLOW_LIMIT;
+}
+
+// Which edge it went through, for a message that says something. "0.62 out"
+// is a number; "reaches 62% of a cell past the top" is a diagnosis, and the
+// top edge in particular is the signature of an initial that landed in the
+// batchim slot.
+export function spillEdge(o: Overflow): "left" | "right" | "top" | "bottom" {
+  if (o.worst === o.top) return "top";
+  if (o.worst === o.bottom) return "bottom";
+  if (o.worst === o.left) return "left";
+  return "right";
+}
 
 // The cell a harvested variant lands in, in pixels. Both dimensions come from
 // the variant's own slot fractions against one shared cellSize, which is what
@@ -230,7 +290,7 @@ export function harvestSlot(
   const cell = variantCellSize(slot.role, cellSize);
   const k = cell.width / slot.rect.w;
 
-  return {
+  const out = {
     name: variantName(slot.base, slot.role),
     role: slot.role,
     base: slot.base,
@@ -242,6 +302,7 @@ export function harvestSlot(
       widthScale: (s.widthScale ?? 1) * k * weight,
     })),
   };
+  return { ...out, overflow: overflowOf(out) };
 }
 
 // The standalone jamo a drawn syllable also contains.
@@ -285,9 +346,9 @@ export function harvestJamo(
     const scale = Math.min(w > 0 ? (target.size * fill) / w : Infinity, h > 0 ? (target.size * fill) / h : Infinity);
     const dx = target.x + (target.size - w * scale) / 2 - ink.xmin * scale;
     const dy = target.y + (target.size - h * scale) / 2 - ink.ymin * scale;
-    out.push({
+    const one = {
       name: slot.base,
-      role: "fin", // unused for a standalone jamo; the name is the whole identity
+      role: "fin" as JamoRole, // unused for a standalone jamo; the name is the whole identity
       base: slot.base,
       cellWidth: targetWidth,
       cellHeight: targetHeight,
@@ -298,7 +359,12 @@ export function harvestJamo(
         // otherwise a jamo scaled up to fill its cell arrives too thin.
         widthScale: (s.widthScale ?? 1) * scale,
       })),
-    });
+    };
+    // Fitted to its cell, so this is 0 by construction — measured anyway
+    // rather than asserted, because "it can't happen" is how the batchim smear
+    // survived as long as it did, and a jamo and a variant now carry the same
+    // field for the same check.
+    out.push({ ...one, overflow: overflowOf(one) });
   }
   return out;
 }

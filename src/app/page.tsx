@@ -12,7 +12,8 @@ import {
   DEFAULT_LAYOUT,
   EM_BOX_FRACTION,
   setMeasuredLayout,
-  type ClassLayout,
+  type LayoutClass,
+  type LayoutTable,
   jamoVariants,
   allVariantSlots,
   batchimPenLimit,
@@ -23,12 +24,20 @@ import {
   variantName,
 } from "@/lib/hangul";
 import { HANGUL_STEPS, recommendedStepId } from "@/lib/hangulSteps";
-import { measureSyllable, summarise, type MeasuredSyllable } from "@/lib/hangulMeasure";
+import {
+  asLayout,
+  measureSyllable,
+  summarise,
+  type MeasuredClass,
+  type MeasuredSyllable,
+} from "@/lib/hangulMeasure";
 import {
   assignStrokesDetailed,
   harvestJamo,
   harvestSlots,
   harvestSyllable,
+  isSpill,
+  spillEdge,
   type HarvestResult,
   type SlotKey,
 } from "@/lib/hangulHarvest";
@@ -242,6 +251,7 @@ type HarvestRow = {
   strays: number;
   results: HarvestResult[];
   jamo: HarvestResult[];
+  spills: HarvestResult[];
 };
 
 const SLOT_COLOUR: Record<SlotKey, string> = {
@@ -251,6 +261,26 @@ const SLOT_COLOUR: Record<SlotKey, string> = {
   final: "#d8ff01",
 };
 const STRAY_COLOUR = "#ff8b6b";
+
+// A syllable per layout class, for the same reason jamoVariants carries one:
+// "upright vowel with a batchim" has to be read and pictured, 강 already is the
+// picture. "VT" alone names nothing to anyone who hasn't read the source.
+const LAYOUT_CLASS_EXAMPLE: Record<LayoutClass, string> = {
+  V: "가",
+  VT: "강",
+  H: "고",
+  HT: "곰",
+  M: "과",
+  MT: "관",
+};
+
+// Positions, not linguistics — the same choice the variant labels make.
+const SLOT_LABEL: Record<SlotKey, string> = {
+  initial: "initial",
+  medialV: "vowel, upright",
+  medialH: "vowel, wide",
+  final: "batchim",
+};
 
 // Where a measured layout table is remembered. One per document, like every
 // other fontane.*.v1 key.
@@ -2237,7 +2267,11 @@ export default function Home() {
     try {
       const raw = window.localStorage.getItem(MEASURED_LAYOUT_KEY);
       if (!raw) return false;
-      setMeasuredLayout(JSON.parse(raw) as ClassLayout);
+      const stored = JSON.parse(raw) as Record<string, unknown>;
+      // Older versions could only measure VT and stored that one class bare.
+      // A table is keyed by class name, so "does it have an initial at the top
+      // level" tells the two apart without a version number.
+      setMeasuredLayout(("initial" in stored ? { VT: stored } : stored) as Partial<LayoutTable>);
       return true;
     } catch {
       return false;
@@ -2246,11 +2280,13 @@ export default function Home() {
 
   function applyMeasuredLayout() {
     const s = layoutMeasurement?.summary;
-    if (!s?.initial || !s?.medial || !s?.final) return;
-    const rect = (r: { x: number; y: number; w: number; h: number }) => ({ x: r.x, y: r.y, w: r.w, h: r.h });
-    const vt: ClassLayout = { initial: rect(s.initial), medialV: rect(s.medial), final: rect(s.final) };
-    setMeasuredLayout(vt);
-    window.localStorage.setItem(MEASURED_LAYOUT_KEY, JSON.stringify(vt));
+    if (!s || Object.keys(s).length === 0) return;
+    // Every class that was read, not just VT. A class nobody drew stays absent
+    // and keeps the shipped guess — inventing one from a class shaped
+    // differently is the guessing this exists to end.
+    const table = asLayout(s);
+    setMeasuredLayout(table);
+    window.localStorage.setItem(MEASURED_LAYOUT_KEY, JSON.stringify(table));
     setMeasuredLayoutOn(true);
     // Nothing recomputes on its own: the table lives in a module, so every
     // cell, preview and readout has to be told to look again.
@@ -2357,6 +2393,22 @@ export default function Home() {
             : a
         );
         const assignMap = Object.fromEntries(assignment.map((a) => [a.id, a.slot]));
+        // CANONICAL_CELL, not the displayed cell size: a harvested glyph is
+        // written straight to storage and has to land in the same space every
+        // drawn glyph does, whatever the zoom happens to be.
+        const results = harvestSyllable(g.name, strokes, cw, ch, CANONICAL_CELL, assignMap, batchimWeight);
+        // The standalone jamo the same syllable contains. Only ones nobody has
+        // drawn — overwriting a cell someone worked on would be the rudest
+        // thing this button could do, and the point is to spare drawing, not to
+        // replace it.
+        const jamo = harvestJamo(
+          slots,
+          strokes,
+          assignMap,
+          BASIC_JAMO.filter((j) => !drawnJamo.has(j)),
+          CANONICAL_CELL,
+          CANONICAL_CELL * cellAspectFor("hangul")
+        );
         return {
           char: g.name,
           cw,
@@ -2369,26 +2421,44 @@ export default function Home() {
           // would be worse — but it is a guess, and a guess is exactly what
           // put a whole initial into the batchim cell.
           strays: assignment.filter((a) => a.score === 0).length,
-          // CANONICAL_CELL, not the displayed cell size: a harvested glyph is
-          // written straight to storage and has to land in the same space
-          // every drawn glyph does, whatever the zoom happens to be.
-          results: harvestSyllable(g.name, strokes, cw, ch, CANONICAL_CELL, assignMap, batchimWeight),
-          // The standalone jamo the same syllable contains. Only ones nobody
-          // has drawn — overwriting a cell someone worked on would be the
-          // rudest thing this button could do, and the point is to spare
-          // drawing, not to replace it.
-          jamo: harvestJamo(
-            slots,
-            strokes,
-            assignMap,
-            BASIC_JAMO.filter((j) => !drawnJamo.has(j)),
-            CANONICAL_CELL,
-            CANONICAL_CELL * cellAspectFor("hangul")
-          ),
+          results,
+          jamo,
+          // Parts that came out reaching far outside the cell they landed in.
+          // Held back rather than written (see isSpill), and named here so the
+          // row can say which and which way — a part that spills through the
+          // TOP of a batchim cell is an initial that was assigned to the
+          // batchim slot, which is a sentence the user can act on.
+          spills: [...results, ...jamo].filter(isSpill),
         };
       })
       .filter((h) => h.results.length > 0 || h.jamo.length > 0);
   }, [glyphs, activeScript, batchimWeight, drawnJamo, slotOverrides]);
+
+  // Exactly what pressing Harvest will write. One place, read by both the
+  // button's label and the write itself, so the count on the button cannot
+  // disagree with what lands in the grid.
+  const harvestPlan = useMemo(() => {
+    // First one wins, for every target and not just the jamo. Two syllables
+    // can share a final — ㄱ is the batchim of both 각 and 억 — and the sheet
+    // rotates five vowels over nineteen syllables, so ㅏ turns up three times.
+    // Deduping only the jamo left a glyph per SOURCE rather than per target:
+    // nineteen drawn syllables produced nineteen batchim for fourteen names,
+    // which is what the step counter was faithfully reporting as 19 / 14.
+    const seen = new Set<string>();
+    const write = harvestable
+      .flatMap((h) => [...h.results, ...h.jamo])
+      // The emergency brake. A part reaching half a cell past an edge did not
+      // come out of the slot it was filed under, and writing it would replace
+      // a cell the user may have drawn by hand with a smear.
+      //
+      // Before the dedupe, deliberately: a spilling ㄱ.fin from one syllable
+      // must not claim the name and lock out a clean one from another.
+      .filter((r) => !isSpill(r))
+      .filter((r) => !seen.has(r.name) && (seen.add(r.name), true));
+    return { write, heldBack: harvestable.reduce((n, h) => n + h.spills.length, 0) };
+  }, [harvestable]);
+  const harvestWrites = harvestPlan.write.length;
+  const heldBack = harvestPlan.heldBack;
 
   // Write the harvested parts out as variant glyphs.
   //
@@ -2396,18 +2466,11 @@ export default function Home() {
   // of the same batchim in one cell, and redrawing a syllable and harvesting
   // again should simply supersede what the last run produced.
   function harvestBatchim() {
-    if (harvestable.length === 0) return;
+    const results = harvestPlan.write;
+    // Nothing survived. No undo step either — a snapshot for a no-op is one
+    // press of Undo that appears to do nothing.
+    if (results.length === 0) return;
     pushUndoSnapshot();
-    // First one wins, for every target and not just the jamo. Two syllables
-    // can share a final — ㄱ is the batchim of both 각 and 억 — and the sheet
-    // rotates five vowels over fourteen syllables, so ㅏ turns up three times.
-    // Deduping only the jamo left a glyph per SOURCE rather than per target:
-    // nineteen drawn syllables produced nineteen batchim for fourteen names,
-    // which is what the step counter was faithfully reporting as 19 / 14.
-    const seen = new Set<string>();
-    const results = [...harvestable.flatMap((h) => [...h.results, ...h.jamo])].filter(
-      (r) => !seen.has(r.name) && (seen.add(r.name), true)
-    );
     const targets = new Set(results.map((r) => r.name));
     const sourceById = new Map(completedRef.current.map((s) => [s.id, s]));
     const supersededIds = new Set(
@@ -7429,6 +7492,13 @@ export default function Home() {
                       <span>
                         {[...h.results, ...h.jamo].map((r) => r.name).join(", ") || "—"}
                         {h.strays > 0 && <span className={styles.harvestStray}> · {h.strays} guessed</span>}
+                        {h.spills.map((r) => (
+                          <span key={r.name} className={styles.harvestStray}>
+                            {" "}
+                            · {r.name} held back, {Math.round(r.overflow.worst * 100)}% of a cell past the{" "}
+                            {spillEdge(r.overflow)}
+                          </span>
+                        ))}
                       </span>
                       <span className={styles.val}>
                         {h.results.reduce((n, r) => n + r.strokes.length, 0)}
@@ -7439,29 +7509,49 @@ export default function Home() {
                 {/* Measured against guessed, side by side. Every "guessed" marker
                     above is a stroke that fell outside a rectangle these numbers
                     placed; this is where they should have been. */}
-                {layoutMeasurement?.summary.final && (
+                {layoutMeasurement && Object.keys(layoutMeasurement.summary).length > 0 && (
                   <>
                     <div className={styles.settingsSubLabel}>Your layout vs the table</div>
                     <ul className={styles.harvestList}>
-                      {(
-                        [
-                          ["batchim top", layoutMeasurement.summary.final.y, DEFAULT_LAYOUT.VT.final?.y ?? 0],
-                          ["batchim height", layoutMeasurement.summary.final.h, DEFAULT_LAYOUT.VT.final?.h ?? 0],
-                          ["initial width", layoutMeasurement.summary.initial?.w ?? 0, DEFAULT_LAYOUT.VT.initial.w],
-                          ["initial height", layoutMeasurement.summary.initial?.h ?? 0, DEFAULT_LAYOUT.VT.initial.h],
-                        ] as [string, number, number][]
-                      ).map(([label, mine, table]) => (
-                        <li key={label} className={styles.harvestRow}>
-                          <span>{label}</span>
-                          <span className={styles.val}>{mine.toFixed(2)}</span>
-                          <span className={styles.harvestStray}>{table.toFixed(2)}</span>
-                        </li>
-                      ))}
+                      {(Object.entries(layoutMeasurement.summary) as [LayoutClass, MeasuredClass][]).flatMap(
+                        ([cls, m]) => [
+                          <li key={cls} className={styles.harvestRow}>
+                            <span className={styles.harvestChar}>{LAYOUT_CLASS_EXAMPLE[cls]}</span>
+                            <span>
+                              {cls}
+                              <span className={styles.harvestStray}>
+                                {" "}
+                                · read from {m.n} drawing{m.n === 1 ? "" : "s"}
+                              </span>
+                            </span>
+                          </li>,
+                          ...(["initial", "medialV", "medialH", "final"] as const).flatMap((key) => {
+                            const mine = m[key];
+                            const table = DEFAULT_LAYOUT[cls][key];
+                            if (!mine || !table) return [];
+                            return [
+                              <li key={`${cls}-${key}`} className={styles.harvestRow}>
+                                <span>{SLOT_LABEL[key]}</span>
+                                {/* Top edge and height, the two numbers that decide
+                                    whether a stroke lands inside a slot or outside
+                                    every one of them. */}
+                                <span className={styles.val}>
+                                  {mine.y.toFixed(2)} / {mine.h.toFixed(2)}
+                                </span>
+                                <span className={styles.harvestStray}>
+                                  {table.y.toFixed(2)} / {table.h.toFixed(2)}
+                                </span>
+                              </li>,
+                            ];
+                          }),
+                        ]
+                      )}
                     </ul>
                     <p className={styles.settingsNote}>
-                      Read from {layoutMeasurement.summary.final.n} of your syllables (yours, then the table&rsquo;s
-                      guess). Adopting them moves the parts of all 11,172 syllables — and stops strokes falling
-                      outside every slot, which is where the guessed marks above come from.
+                      Top edge and height of each part, as fractions of the em — yours, then the table&rsquo;s guess.
+                      Adopting them moves the parts of all 11,172 syllables, and stops strokes falling outside every
+                      slot, which is where the guessed marks above come from. A class you haven&rsquo;t drawn keeps
+                      the shipped numbers rather than having some invented for it.
                     </p>
                     {measuredLayoutOn ? (
                       <button type="button" className={styles.clearBtn} onClick={revertMeasuredLayout}>
@@ -7472,6 +7562,8 @@ export default function Home() {
                         Use my layout
                       </button>
                     )}
+                  </>
+                )}
                 <label className={styles.sliderRow}>
                   <span>Batchim weight</span>
                   <input
@@ -7489,10 +7581,23 @@ export default function Home() {
                   weight you drew it at; a dense one often wants a little less so it doesn&rsquo;t clot, a sparse one
                   a little more so it doesn&rsquo;t vanish. Applies to what is already harvested as you drag.
                 </p>
-                <button type="button" className={styles.clearBtn} onClick={harvestBatchim}>
-                  Harvest from {harvestable.length} syllable{harvestable.length === 1 ? "" : "s"}
+                {/* Outside the measurement block, which it used to be inside —
+                    so a document with syllables to harvest but nothing
+                    measurable in them (flat-vowel ones teach jamo and have no
+                    batchim to read a layout off) showed the list and then no
+                    way to act on it. */}
+                <button type="button" className={styles.clearBtn} onClick={harvestBatchim} disabled={harvestWrites === 0}>
+                  {harvestWrites === 0
+                    ? "Nothing to harvest — every part was held back"
+                    : `Harvest ${harvestWrites} part${harvestWrites === 1 ? "" : "s"} from ${harvestable.length} syllable${harvestable.length === 1 ? "" : "s"}`}
                 </button>
-                  </>
+                {heldBack > 0 && (
+                  <p className={styles.settingsNote}>
+                    {heldBack} part{heldBack === 1 ? "" : "s"} held back for reaching far outside the cell
+                    {heldBack === 1 ? " it" : " they"} landed in — almost always a stroke filed under the wrong slot.
+                    Click it in the map above to move it, or adopt your own layout so the slots sit where you drew
+                    them.
+                  </p>
                 )}
               </SettingsSection>
             )}
