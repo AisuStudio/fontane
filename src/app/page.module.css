@@ -1160,6 +1160,20 @@
   overflow: hidden;
 }
 
+/* Transparent text and a transparent caret still leave one thing visible: the
+   selection FILL, which the browser paints regardless of the text colour. It
+   lands wherever the textarea's OWN wrapping puts it — nothing to do with
+   where the handwriting sits — so selecting a line at the bottom drew a
+   second, blue band across an unrelated line near the top. The canvas paints
+   the real selection; this one has no business being seen. */
+.editorHiddenInput::selection {
+  background: transparent;
+}
+
+.editorHiddenInput::-moz-selection {
+  background: transparent;
+}
+
 .charsetOption {
   display: inline-flex;
   align-items: center;
